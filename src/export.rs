@@ -345,13 +345,122 @@ pub fn build_args(input: &str, output: &str, s: &ExportSettings) -> Vec<String> 
     a
 }
 
+/// Does the file have an audio stream? (Timeline export needs to know before
+/// building the filter graph.)
+pub fn has_audio_stream(path: &str) -> bool {
+    std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=index", "-of", "csv=p=0", path])
+        .output()
+        .map(|o| o.status.success() && !o.stdout.is_empty())
+        .unwrap_or(false)
+}
+
+/// ffmpeg args that render an EDIT: segments of (source, in_point, duration)
+/// are trimmed and concatenated (video + audio in lockstep when the sources
+/// have sound), then encoded with the chosen video codec settings. This is
+/// the timeline export — the cut itself becomes the file.
+pub fn build_timeline_args(
+    segments: &[(String, f64, f64)],
+    output: &str,
+    s: &ExportSettings,
+    with_audio: bool,
+) -> Vec<String> {
+    let mut a: Vec<String> = Vec::new();
+    // One -i per unique source, in first-appearance order.
+    let mut sources: Vec<&str> = Vec::new();
+    for (src, _, _) in segments {
+        if !sources.contains(&src.as_str()) {
+            sources.push(src);
+        }
+    }
+    for src in &sources {
+        a.extend(["-i".into(), (*src).into()]);
+    }
+
+    let mut graph = String::new();
+    for (k, (src, in_point, duration)) in segments.iter().enumerate() {
+        let i = sources.iter().position(|s| s == src).unwrap();
+        graph.push_str(&format!(
+            "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS[v{k}];"
+        ));
+        if with_audio {
+            graph.push_str(&format!(
+                "[{i}:a]atrim=start={in_point:.4}:duration={duration:.4},asetpts=PTS-STARTPTS[a{k}];"
+            ));
+        }
+    }
+    for k in 0..segments.len() {
+        graph.push_str(&format!("[v{k}]"));
+        if with_audio {
+            graph.push_str(&format!("[a{k}]"));
+        }
+    }
+    graph.push_str(&format!(
+        "concat=n={}:v=1:a={}[vcat]",
+        segments.len(),
+        if with_audio { "1[acat]" } else { "0" }
+    ));
+    let vout = if let Some(h) = s.resolution.height() {
+        graph.push_str(&format!(";[vcat]scale=-2:{h}:flags=lanczos[vout]"));
+        "[vout]"
+    } else {
+        "[vcat]"
+    };
+    a.extend(["-filter_complex".into(), graph, "-map".into(), vout.into()]);
+    if with_audio {
+        a.extend(["-map".into(), "[acat]".into()]);
+    }
+
+    match s.codec {
+        Codec::H265 => a.extend(["-c:v".into(), "libx265".into(), "-preset".into(), "medium".into(), "-tag:v".into(), "hvc1".into()]),
+        Codec::Av1 => a.extend(["-c:v".into(), "libsvtav1".into(), "-preset".into(), "6".into()]),
+        Codec::Vp9 => a.extend(["-c:v".into(), "libvpx-vp9".into(), "-b:v".into(), "0".into(), "-row-mt".into(), "1".into()]),
+        // Everything else (incl. non-video codecs handed in by mistake)
+        // renders as H.264 — the safe default for a timeline.
+        _ => a.extend(["-c:v".into(), "libx264".into(), "-preset".into(), "medium".into()]),
+    }
+    let crf_codec = if matches!(s.codec, Codec::H265 | Codec::Av1 | Codec::Vp9) { s.codec } else { Codec::H264 };
+    a.extend(["-crf".into(), crf_codec.crf(s.quality).to_string()]);
+    if with_audio {
+        let (codec, kbps) = if s.codec == Codec::Vp9 { ("libopus", 128) } else { ("aac", 160) };
+        a.extend(["-c:a".into(), codec.into(), "-b:a".into(), format!("{kbps}k")]);
+    }
+    if s.codec != Codec::Vp9 {
+        a.extend(["-movflags".into(), "+faststart".into()]);
+    }
+    a.push(output.into());
+    a
+}
+
+/// Start a timeline (edit) export. Progress is driven by the cut's total
+/// duration = the sum of segment durations.
+pub fn start_timeline(
+    segments: &[(String, f64, f64)],
+    output: &str,
+    settings: &ExportSettings,
+) -> Result<ExportJob> {
+    if segments.is_empty() {
+        return Err(anyhow!("the timeline is empty"));
+    }
+    if Path::new(output).exists() {
+        return Err(anyhow!("output already exists: {output}"));
+    }
+    let with_audio = segments.iter().all(|(src, _, _)| has_audio_stream(src));
+    let total: f64 = segments.iter().map(|(_, _, d)| d).sum();
+    let args = build_timeline_args(segments, output, settings, with_audio);
+    spawn_job(args, output, total)
+}
+
 /// Start an export on a worker thread. `duration` is the source duration in
 /// seconds (drives the progress fraction).
 pub fn start(input: &str, output: &str, settings: &ExportSettings, duration: f64) -> Result<ExportJob> {
     if Path::new(output).exists() {
         return Err(anyhow!("output already exists: {output}"));
     }
-    let args = build_args(input, output, settings);
+    spawn_job(build_args(input, output, settings), output, duration)
+}
+
+fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob> {
     let state = Arc::new(Mutex::new(ExportState::default()));
     let cancel = Arc::new(AtomicBool::new(false));
     let (t_state, t_cancel) = (state.clone(), cancel.clone());
@@ -512,6 +621,71 @@ mod tests {
         assert!(Codec::for_kind(MediaKind::Video).contains(&Codec::Mp3)); // extract audio
         assert!(!Codec::for_kind(MediaKind::Audio).contains(&Codec::H264));
         assert_eq!(Codec::for_kind(MediaKind::Image), &[Codec::Png, Codec::Jpeg, Codec::WebpImage]);
+    }
+
+    #[test]
+    fn timeline_graph_trims_and_concats_in_order() {
+        let segs = vec![
+            ("/m/a.mp4".to_string(), 0.0, 2.0),
+            ("/m/a.mp4".to_string(), 5.0, 1.5),
+            ("/m/b.mp4".to_string(), 1.0, 3.0),
+        ];
+        let s = ExportSettings::default();
+        let a = build_timeline_args(&segs, "out.mp4", &s, true);
+        let joined = a.join(" ");
+        // One -i per unique source (a.mp4 reused, not re-added).
+        assert_eq!(a.iter().filter(|x| *x == "-i").count(), 2);
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(graph.contains("[0:v]trim=start=0.0000:duration=2.0000"));
+        assert!(graph.contains("[0:v]trim=start=5.0000:duration=1.5000"));
+        assert!(graph.contains("[1:v]trim=start=1.0000:duration=3.0000"));
+        assert!(graph.contains("concat=n=3:v=1:a=1[acat]"), "{graph}");
+        assert!(joined.contains("-map [vcat]") && joined.contains("-map [acat]"));
+    }
+
+    #[test]
+    fn timeline_graph_without_audio_or_with_scale() {
+        let segs = vec![("/m/a.mp4".to_string(), 0.0, 2.0)];
+        let s = ExportSettings { resolution: Resolution::H720, ..Default::default() };
+        let a = build_timeline_args(&segs, "out.mp4", &s, false);
+        let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(!graph.contains("atrim"), "no audio legs when sources are silent");
+        assert!(graph.contains("concat=n=1:v=1:a=0"));
+        assert!(graph.contains("[vcat]scale=-2:720"));
+        assert!(a.join(" ").contains("-map [vout]"));
+        assert!(!a.join(" ").contains("-c:a"));
+    }
+
+    /// The whole point: a two-piece cut with the middle removed must render
+    /// to a file whose duration is the SUM OF THE PIECES, not the source.
+    #[test]
+    fn renders_a_real_cut_from_the_fixture() {
+        let out = std::env::temp_dir().join(format!("reel-cut-test-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // fixture is ~2s; take 0.0–0.4 and 1.4–1.8 → expect ≈0.8s.
+        let segs = vec![
+            (fixture(), 0.0, 0.4),
+            (fixture(), 1.4, 0.4),
+        ];
+        let s = ExportSettings { quality: Quality::Small, ..Default::default() };
+        let job = start_timeline(&segs, &out.to_string_lossy(), &s).expect("start timeline export");
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "timeline export error: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "timeline export timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe cut");
+        assert!(
+            info.duration > 0.6 && info.duration < 1.1,
+            "cut should be ≈0.8s (the two kept pieces), got {}",
+            info.duration
+        );
+        let _ = std::fs::remove_file(&out);
     }
 
     #[test]

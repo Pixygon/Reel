@@ -4,6 +4,19 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.14.0] — 2026-08-27
+
+### Added
+- You can now export your edited timeline directly, not just the original source file. When a project has a cut on the timeline, the export dialog offers a choice between exporting the source or exporting the edit — trimmed clips are stitched together into a single rendered video. _(301d253)_
+- Timeline exports get a smart default output name (e.g. "project-cut.mp4"), automatically avoiding overwriting existing files by adding a number suffix. _(301d253)_
+
+### Changed
+- When exporting the edited timeline, only standard video codecs (H.264, H.265, AV1, VP9) are offered, since a rendered cut is always a video file. _(301d253)_
+
+### Improved
+- The export dialog now shows how many clips and how many seconds are in your edit before you export it, and automatically carries over audio from your clips when rendering a timeline. _(301d253)_
+
+
 ## [0.13.2] — 2026-08-27
 
 ### Added

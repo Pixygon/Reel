@@ -38,6 +38,8 @@ pub struct ReelApp {
     /// Output path shown in the dialog; refreshed when source/codec changes.
     pub export_out: String,
     pub export: Option<ExportJob>,
+    /// Export the edited timeline rather than the source file.
+    pub export_timeline: bool,
 
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
@@ -71,6 +73,8 @@ pub struct ReelApp {
     pub quit_requested: bool,
     /// A system tray is registered — capture lives there, not in the app UI.
     pub tray_available: bool,
+    /// REEL_DEBUG_OPEN=export — open the dialog once media is ready.
+    debug_open_export: bool,
 }
 
 impl ReelApp {
@@ -90,6 +94,7 @@ impl ReelApp {
             export_settings: ExportSettings::default(),
             export_out: String::new(),
             export: None,
+            export_timeline: false,
             picker: None,
             opening: None,
             shot_rx: None,
@@ -108,6 +113,7 @@ impl ReelApp {
             status_prev: String::new(),
             quit_requested: false,
             tray_available: false,
+            debug_open_export: false,
         }
     }
 
@@ -126,6 +132,8 @@ impl ReelApp {
     /// Linux desktop integration: make sure "Open with Reel" exists, and show
     /// the make-me-default banner exactly once. Call after window creation.
     pub fn init_integration(&mut self) {
+        // Test hook: open a panel for visual verification once media lands.
+        self.debug_open_export = std::env::var("REEL_DEBUG_OPEN").as_deref() == Ok("export");
         #[cfg(target_os = "linux")]
         {
             if let Err(e) = crate::integration::install_desktop_entry() {
@@ -329,6 +337,10 @@ impl ReelApp {
 
     /// Land a player opened on the worker thread.
     pub fn poll_opening(&mut self) {
+        if self.debug_open_export && self.player.is_some() {
+            self.debug_open_export = false;
+            self.open_export();
+        }
         let Some(rx) = &self.opening else { return };
         match rx.try_recv() {
             Ok(Ok(p)) => {
@@ -531,6 +543,53 @@ impl ReelApp {
             Some(id) => egui.update_registered(id, &gpu.device, &tex.view),
             None => self.tex_id = Some(egui.register_texture(&gpu.device, &tex.view)),
         }
+    }
+
+    /// Open the export dialog, defaulting to whatever the user is most
+    /// likely to want: in the editor with clips on the timeline, that's the
+    /// EDIT; in the player, the source file.
+    pub fn open_export(&mut self) {
+        let has_cut = !self.project.export_segments().is_empty();
+        let is_image = self.image.is_some();
+        self.export_timeline = self.mode == Mode::Editor && has_cut && !is_image;
+        self.export_out = if self.export_timeline {
+            self.timeline_output()
+        } else if let Some(src) = self.media_path() {
+            export::default_output(&src, self.export_settings.codec)
+        } else {
+            String::new()
+        };
+        self.export_open = true;
+    }
+
+    /// A sensible default output path for a timeline export: the project
+    /// name (or first source) with a `-cut` suffix, never clobbering.
+    pub fn timeline_output(&self) -> String {
+        let base = self
+            .editor
+            .project_path
+            .clone()
+            .or_else(|| {
+                self.project
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.clips.iter())
+                    .map(|c| c.source.clone())
+                    .next()
+            })
+            .unwrap_or_else(|| "timeline".into());
+        let p = std::path::Path::new(&base);
+        let stem = p.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "timeline".into());
+        let dir = p.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let ext = self.export_settings.codec.extension();
+        let ext = if matches!(ext, "mp4" | "webm") { ext } else { "mp4" };
+        let mut candidate = dir.join(format!("{stem}-cut.{ext}"));
+        let mut n = 1;
+        while candidate.exists() {
+            candidate = dir.join(format!("{stem}-cut-{n}.{ext}"));
+            n += 1;
+        }
+        candidate.to_string_lossy().into_owned()
     }
 
     /// Enter the editor with the playhead where the player is.

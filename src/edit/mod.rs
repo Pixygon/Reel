@@ -219,6 +219,20 @@ impl Project {
             .map(|c| c.start + (pos - c.in_point))
     }
 
+    /// The edit flattened for export: V1 clips in timeline order as
+    /// (source, in_point, duration). Gaps are collapsed — exactly how editor
+    /// playback sequences the cut.
+    pub fn export_segments(&self) -> Vec<(String, f64, f64)> {
+        let mut clips: Vec<&Clip> = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .flat_map(|t| t.clips.iter())
+            .collect();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        clips.into_iter().map(|c| (c.source.clone(), c.in_point, c.duration)).collect()
+    }
+
     pub fn save(&self, path: &str) -> anyhow::Result<()> {
         std::fs::write(path, serde_json::to_string_pretty(self)?)?;
         Ok(())

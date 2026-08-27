@@ -690,7 +690,7 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         app.mode = Mode::Player;
     }
     if open_export {
-        app.export_open = true;
+        app.open_export();
     }
     if toggle_fullscreen {
         app.fullscreen = !app.fullscreen;
@@ -723,6 +723,32 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 RichText::new(std::path::Path::new(&source).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or(source.clone()))
                     .color(theme::STAR),
             );
+
+            // What are we exporting — the source file, or the edit?
+            let segments = app.project.export_segments();
+            let cut_len: f64 = segments.iter().map(|(_, _, d)| d).sum();
+            let can_timeline = kind != crate::media::MediaKind::Image && !segments.is_empty();
+            if can_timeline && app.export.is_none() {
+                ui.add_space(4.0);
+                let before = app.export_timeline;
+                ui.horizontal(|ui| {
+                    ui.selectable_value(&mut app.export_timeline, false, "Source file");
+                    ui.selectable_value(
+                        &mut app.export_timeline,
+                        true,
+                        format!("✂ The edit ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len),
+                    );
+                });
+                if app.export_timeline != before {
+                    app.export_out = if app.export_timeline {
+                        app.timeline_output()
+                    } else {
+                        export::default_output(&source, app.export_settings.codec)
+                    };
+                }
+            } else if !can_timeline {
+                app.export_timeline = false;
+            }
             ui.add_space(6.0);
 
             // A job in flight (or just finished) owns the dialog.
@@ -751,15 +777,25 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     }
                     if ui.button("OK").clicked() {
                         app.export = None;
-                        app.export_out = export::default_output(&source, app.export_settings.codec);
+                        app.export_out = if app.export_timeline {
+                            app.timeline_output()
+                        } else {
+                            export::default_output(&source, app.export_settings.codec)
+                        };
                     }
                 }
                 return;
             }
 
+            let timeline_mode = app.export_timeline;
             let s = &mut app.export_settings;
-            // Keep the codec legal for what's open (kind can change between opens).
-            let codecs = Codec::for_kind(kind);
+            // Keep the codec legal for what's open. A rendered timeline is
+            // always a video file — audio-only/remux targets don't apply.
+            let codecs: &[Codec] = if timeline_mode {
+                &[Codec::H264, Codec::H265, Codec::Av1, Codec::Vp9]
+            } else {
+                Codec::for_kind(kind)
+            };
             if !codecs.contains(&s.codec) {
                 s.codec = codecs[0];
             }
@@ -820,7 +856,16 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     ui.end_row();
                 }
 
-                if is_video_out {
+                if is_video_out && timeline_mode {
+                    // Timeline renders carry the sources' audio automatically.
+                    ui.label("Audio");
+                    ui.label(
+                        RichText::new("from the clips")
+                            .small()
+                            .color(egui::Color32::from_gray(150)),
+                    );
+                    ui.end_row();
+                } else if is_video_out {
                     ui.label("Audio");
                     egui::ComboBox::from_id_salt("audio")
                         .selected_text(match s.audio {
@@ -842,7 +887,11 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             });
 
             if s.codec != prev_codec {
-                app.export_out = export::default_output(&source, s.codec);
+                app.export_out = if timeline_mode {
+                    app.timeline_output()
+                } else {
+                    export::default_output(&source, s.codec)
+                };
             }
 
             ui.add_space(8.0);
@@ -850,7 +899,12 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 [ui.available_width(), 28.0],
                 egui::Button::new(RichText::new("Start export").color(theme::STAR).strong()),
             );
-            if start.clicked() {
+            if start.clicked() && app.export_timeline {
+                match export::start_timeline(&segments, &app.export_out, &app.export_settings) {
+                    Ok(job) => app.export = Some(job),
+                    Err(e) => app.status = format!("Export: {e}"),
+                }
+            } else if start.clicked() {
                 // ffmpeg can't read SVG — hand it the rasterized copy instead.
                 let input = if crate::media::is_svg_path(&source) {
                     app.image.as_ref().map(|img| img.write_temp_png())
