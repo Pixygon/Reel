@@ -1,5 +1,6 @@
 //! Reel — a cross-platform video player and editor. Linux-first.
-//! Native stack: winit + wgpu + egui (the Pixygon app stack), ffmpeg for decode.
+//! Native stack: winit + wgpu + egui (the Pixygon app stack); playback via
+//! libmpv when present, ffmpeg-subprocess fallback otherwise.
 //!
 //! v0.1 goal: open and play a video with frame-accurate scrubbing, and show the
 //! editor timeline. The road to "better than VLC / Premiere-class" is in
@@ -116,9 +117,10 @@ impl ApplicationHandler for Reel {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // Keep frames flowing while playing; otherwise sit idle until an event
-        // (egui repaint request) wakes us — no busy loop when paused.
-        if self.app.is_playing() {
+        // Keep frames flowing while playing (plus a short grace after open/seek
+        // so async frames land); otherwise sit idle until an event (egui
+        // repaint request) wakes us — no busy loop when paused.
+        if self.app.wants_redraw() {
             if let Some(window) = &self.window {
                 window.request_redraw();
             }

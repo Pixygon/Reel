@@ -15,14 +15,19 @@ foundation, narrow feature set.
 The subprocess decoder is the v0.1 crutch; the performance bar needs the frame
 never leaving the GPU.
 
-- [ ] Replace subprocess decode with **libmpv** (render API) or **libav + libplacebo**
-      as the hot path — behind the existing `video::Player` API, so the UI is untouched.
-- [ ] **Hardware decode** (VA-API on Linux, D3D11VA/VideoToolbox elsewhere) → GPU
-      frames with zero CPU copy.
-- [ ] **libplacebo-class rendering**: correct colour management, HDR tone-mapping,
-      high-bit-depth, debanding — the things that actually make it look better than VLC.
-- [ ] Frame-accurate seek (decode from keyframe, step to exact frame), gapless A/V sync.
-- [ ] Audio out (device + passthrough), subtitle rendering, track selection.
+- [x] Replace subprocess decode with **libmpv** (render API) as the hot path —
+      behind the existing `video::Player` API, UI untouched. libmpv is dlopen'd
+      at runtime; the subprocess decoder stays as the universal fallback
+      (`REEL_BACKEND=ffmpeg` forces it).
+- [x] **Hardware decode** (`hwdec=auto-copy-safe`: VA-API on Linux, D3D11VA
+      elsewhere) — copy-back for now; the zero-CPU-copy step is below.
+- [ ] **Zero-copy GPU surface**: move off mpv's software render target onto the
+      render API's GL/Vulkan path (libplacebo-class output: colour management,
+      HDR tone-mapping, high-bit-depth, debanding). The frame must not touch
+      system memory between decoder and screen.
+- [x] Frame-accurate seek (`seek absolute+exact`) and A/V sync on mpv's own clock.
+- [x] Audio out + subtitle rendering (via mpv). — [ ] track selection UI,
+      audio passthrough.
 
 ## Milestone 2 — an editor you'd actually cut in
 

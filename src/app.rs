@@ -37,10 +37,12 @@ impl ReelApp {
     }
 
     /// Open a media path as the active player source, and register it on the
-    /// timeline so the editor has something to work with.
+    /// timeline so the editor has something to work with. Playback starts
+    /// immediately — opening a video means you want to watch it.
     pub fn open(&mut self, path: &str) {
         match Player::open(path) {
-            Ok(p) => {
+            Ok(mut p) => {
+                p.toggle_play();
                 let name = std::path::Path::new(path)
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
@@ -50,8 +52,9 @@ impl ReelApp {
                 self.project.width = p.info.width;
                 self.project.height = p.info.height;
                 self.status = format!(
-                    "{name} — {}×{} @ {:.2}fps, {:.1}s",
-                    p.info.width, p.info.height, p.info.fps, p.info.duration
+                    "{name} — {}×{} @ {:.2}fps, {:.1}s [{}]",
+                    p.info.width, p.info.height, p.info.fps, p.info.duration,
+                    p.backend_name()
                 );
                 self.player = Some(p);
             }
@@ -91,8 +94,9 @@ impl ReelApp {
         }
     }
 
-    /// Is playback active (used to decide whether to keep requesting redraws)?
-    pub fn is_playing(&self) -> bool {
-        self.player.as_ref().map(|p| p.playing).unwrap_or(false)
+    /// Should the run loop keep requesting redraws (playing, or a frame is
+    /// expected to land shortly after an open/seek)?
+    pub fn wants_redraw(&self) -> bool {
+        self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
     }
 }

@@ -8,9 +8,13 @@ not the finished tool, but real, honest v0.1 you can build and run today.
 
 ## What works in v0.1
 
-- **Plays video.** Open a file and it decodes and displays, aspect-fit, with a
-  transport bar: play/pause, a live position/duration readout, and a seek
-  slider that scrubs (input-seek, jumps to the nearest keyframe).
+- **Plays video — through libmpv when present.** Open a file and it plays
+  immediately, aspect-fit, with a transport bar: play/pause, live
+  position/duration, and a seek slider. With libmpv (the Milestone 1 hot
+  path, auto-detected at runtime): hardware decode, correct colour
+  conversion, **audio with real A/V sync**, subtitles, and **frame-exact
+  seek**. Without it, the v0.1 ffmpeg-subprocess decoder still works
+  everywhere (keyframe seek, video only).
 - **Editor timeline.** A real NLE data model (Project → Tracks → Clips), drawn
   as a multi-track timeline with a time ruler, clip blocks and a playhead.
   Opening a file drops it onto the V1 track. Trimming/drag/effects/export are
@@ -28,8 +32,11 @@ cargo run --release                            # or open from the UI
 cargo test                                     # decode-pipeline tests
 ```
 
-Requires a system **ffmpeg** on `PATH` (used for decode in v0.1) and a GPU with
-Vulkan/Metal/DX12.
+Requires a GPU with Vulkan/Metal/DX12. **libmpv** (`mpv` package) is strongly
+recommended — it is the real playback engine when found (dlopen'd at runtime,
+never linked). A system **ffmpeg** on `PATH` is the universal fallback and is
+what `cargo test`'s decode-pipeline tests exercise. `REEL_BACKEND=ffmpeg`
+forces the fallback.
 
 ## Architecture
 
@@ -39,8 +46,9 @@ src/
 ├── gpu.rs          wgpu context + VideoTexture (RGBA frame → GPU)
 ├── egui_backend.rs egui-wgpu integration (egui draws the whole UI incl. the video)
 ├── video/
-│   ├── decoder.rs  ffmpeg subprocess → raw RGBA frames over a bounded channel; ffprobe metadata
-│   └── player.rs   play/pause/seek, wall-clock-paced frame pull
+│   ├── player.rs   the stable playback API (play/pause/seek/update) over two backends
+│   ├── mpv.rs      libmpv backend (dlopen'd): hw decode, A/V sync, audio, exact seek
+│   └── decoder.rs  fallback: ffmpeg subprocess → raw RGBA frames over a bounded channel
 ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)
 ├── ui.rs           player transport + editor timeline (all egui)
 └── theme.rs        Pixygon design tokens → egui visuals
@@ -53,11 +61,13 @@ because beating VLC on playback needs a **zero-copy GPU video surface**, which a
 web renderer can't give you. wgpu+egui gives us that surface and a fast UI in one
 language, and slots straight into `pearl build`'s cross-platform pipeline.
 
-v0.1 decodes via the **system ffmpeg as a subprocess** (codec-complete and
-rock-solid; ffmpeg 9 / libav 63 is too new for the Rust bindings anyway). The
-[ROADMAP](ROADMAP.md) moves the hot path onto libmpv / libav + libplacebo for
-the beat-VLC performance bar — behind the same `Player` API, so nothing above it
-changes.
+Playback now runs on **libmpv** where available — hardware decode
+(VA-API/D3D11VA, copy-back for now), mpv's colour conversion, audio out with
+real A/V sync, subtitles, frame-exact seek — behind the same `Player` API the
+v0.1 subprocess decoder sits under, which remains the universal fallback.
+Current seam: mpv's software render target (mpv decodes and converts, Reel
+uploads RGBA to wgpu). The [ROADMAP](ROADMAP.md)'s next step keeps the frame
+on the GPU end-to-end (render API GL/Vulkan interop, libplacebo-class output).
 
 ## Status
 

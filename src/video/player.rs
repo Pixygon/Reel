@@ -1,58 +1,109 @@
-//! Playback state machine over the decoder: play/pause/seek, wall-clock paced
-//! frame pull, with the most-recent decoded frame kept for display.
+//! Playback state machine the UI talks to: play/pause/seek, one current frame.
+//! Two backends live underneath, invisible above this API (the roadmap's
+//! non-negotiable): **libmpv** when present (hardware decode, real A/V sync,
+//! audio, frame-exact seek) and the v0.1 **ffmpeg-subprocess** decoder as the
+//! universal fallback. `REEL_BACKEND=ffmpeg` forces the fallback.
 
 use super::decoder::{self, DecodeHandle, Frame, VideoInfo};
+use super::mpv::{self, MpvPlayer};
 use anyhow::Result;
-use std::time::Instant;
+use std::time::{Duration, Instant};
+
+enum Backend {
+    Mpv(MpvPlayer),
+    /// ffmpeg subprocess: decode handle + wall-clock anchor (instant, media
+    /// time at that instant) that paces the frame pull.
+    Subprocess {
+        decode: Option<DecodeHandle>,
+        anchor: Option<(Instant, f64)>,
+    },
+}
 
 pub struct Player {
     pub path: String,
     pub info: VideoInfo,
-    decode: Option<DecodeHandle>,
+    backend: Backend,
     pub playing: bool,
     /// Playback position in seconds.
     pub position: f64,
     /// The most recently decoded frame ready to show (RGBA8).
     pub current: Option<Frame>,
-    /// True once the decoder has run dry at end of file.
+    /// True once playback has run out at end of file.
     pub ended: bool,
-    /// Wall-clock anchor: (instant, media-time-at-that-instant).
-    anchor: Option<(Instant, f64)>,
     dirty: bool,
+    /// Redraws are requested until this instant even while paused, so frames
+    /// that land asynchronously (open, seek) reach the screen.
+    active_until: Instant,
 }
 
 impl Player {
     pub fn open(path: &str) -> Result<Self> {
-        let info = decoder::probe(path)?;
-        let decode = decoder::spawn(path, 0.0, &info)?;
+        let (info, backend) = match mpv::lib().map(|lib| MpvPlayer::open(lib, path)) {
+            Some(Ok(p)) => {
+                let info = p.info.clone();
+                (info, Backend::Mpv(p))
+            }
+            Some(Err(e)) => {
+                log::warn!("libmpv open failed ({e}); falling back to ffmpeg subprocess");
+                Self::open_subprocess(path)?
+            }
+            None => Self::open_subprocess(path)?,
+        };
         Ok(Self {
             path: path.to_string(),
             info,
-            decode: Some(decode),
+            backend,
             playing: false,
             position: 0.0,
             current: None,
             ended: false,
-            anchor: None,
             dirty: true,
+            active_until: Instant::now() + Duration::from_millis(500),
         })
     }
 
+    fn open_subprocess(path: &str) -> Result<(VideoInfo, Backend)> {
+        let info = decoder::probe(path)?;
+        let decode = decoder::spawn(path, 0.0, &info)?;
+        Ok((info, Backend::Subprocess { decode: Some(decode), anchor: None }))
+    }
+
+    /// Which decode backend is live — for the status line / logs.
+    pub fn backend_name(&self) -> &'static str {
+        match self.backend {
+            Backend::Mpv(_) => "mpv",
+            Backend::Subprocess { .. } => "ffmpeg",
+        }
+    }
+
     pub fn toggle_play(&mut self) {
+        if self.ended && !self.playing {
+            self.seek(0.0); // replay from the top, VLC-style
+        }
         self.playing = !self.playing;
-        self.anchor = None; // re-anchor on next update
+        match &mut self.backend {
+            Backend::Mpv(m) => m.set_pause(!self.playing),
+            Backend::Subprocess { anchor, .. } => *anchor = None, // re-anchor on next update
+        }
+        self.touch();
     }
 
     pub fn seek(&mut self, secs: f64) {
         let target = secs.clamp(0.0, self.info.duration.max(0.0));
         self.position = target;
         self.ended = false;
-        self.anchor = None;
-        // Restart decode from the seek point (drops the old handle → stops it).
-        if let Ok(d) = decoder::spawn(&self.path, target, &self.info) {
-            self.decode = Some(d);
+        match &mut self.backend {
+            Backend::Mpv(m) => m.seek(target),
+            Backend::Subprocess { decode, anchor } => {
+                *anchor = None;
+                // Restart decode from the seek point (drops the old handle → stops it).
+                if let Ok(d) = decoder::spawn(&self.path, target, &self.info) {
+                    *decode = Some(d);
+                }
+            }
         }
         self.dirty = true;
+        self.touch();
     }
 
     /// Whether a fresh frame was produced since the last `take_dirty`.
@@ -60,17 +111,54 @@ impl Player {
         std::mem::take(&mut self.dirty)
     }
 
-    /// Advance playback. Call once per UI frame. Pulls decoded frames up to the
-    /// current wall-clock target and keeps the latest for display.
+    /// Should the app keep requesting redraws? True while playing, and for a
+    /// short grace window after open/seek/toggle so async frames get shown.
+    pub fn wants_redraw(&self) -> bool {
+        self.playing || Instant::now() < self.active_until
+    }
+
+    fn touch(&mut self) {
+        self.active_until = Instant::now() + Duration::from_millis(500);
+    }
+
+    /// Advance playback. Call once per UI frame.
     pub fn update(&mut self) {
-        let Some(decode) = &self.decode else { return };
+        match &mut self.backend {
+            Backend::Mpv(_) => self.update_mpv(),
+            Backend::Subprocess { .. } => self.update_subprocess(),
+        }
+    }
+
+    fn update_mpv(&mut self) {
+        let Backend::Mpv(m) = &mut self.backend else { return };
+        if m.update(&mut self.current) {
+            if let Some(f) = &self.current {
+                self.position = f.pts;
+            }
+            self.dirty = true;
+            self.active_until = Instant::now() + Duration::from_millis(500);
+        } else if self.playing {
+            self.position = m.position();
+        }
+        if m.eof_reached() {
+            if self.playing {
+                m.set_pause(true);
+            }
+            self.playing = false;
+            self.ended = true;
+        }
+    }
+
+    fn update_subprocess(&mut self) {
+        let Backend::Subprocess { decode, anchor } = &mut self.backend else { return };
+        let Some(decode) = decode else { return };
 
         // Anchor wall-clock to media time when (re)starting playback.
         let target = if self.playing {
-            match self.anchor {
-                Some((inst, base)) => base + inst.elapsed().as_secs_f64(),
+            match anchor {
+                Some((inst, base)) => *base + inst.elapsed().as_secs_f64(),
                 None => {
-                    self.anchor = Some((Instant::now(), self.position));
+                    *anchor = Some((Instant::now(), self.position));
                     self.position
                 }
             }

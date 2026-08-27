@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.1.0"
+version = "0.6.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -24,6 +24,11 @@ bytemuck = { version = "1.18", features = ["derive"] }
 # the subprocess path is codec-complete and rock-solid. The roadmap moves the
 # hot path to libmpv / libav + libplacebo for the beat-VLC performance bar.
 ffmpeg-sidecar = "2"
+
+# Milestone 1: libmpv is dlopen'd at runtime when present (hardware decode,
+# A/V sync, audio, exact seek) — never linked, so builds and machines without
+# it fall back to the subprocess decoder.
+libloading = "0.8"
 
 anyhow = "1"
 crossbeam-channel = "0.5"
