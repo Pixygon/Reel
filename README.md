@@ -60,10 +60,8 @@ not the finished tool, but real, honest software you can build and run today.
   are used opportunistically where they're better; ffmpeg gdigrab covers
   Windows — and if ffmpeg itself is missing, Reel downloads a private
   static build on first launch.
-- **Editor timeline.** A real NLE data model (Project → Tracks → Clips), drawn
-  as a multi-track timeline with a time ruler, clip blocks and a playhead.
-  Opening a file drops it onto the V1 track. Trimming/drag/effects/export are
-  the next steps (see ROADMAP).
+- **Projects are files.** Ctrl+S saves the cut as a `.reel` document;
+  double-clicking one reopens the edit with its media loaded at the playhead.
 - **Native Pixygon stack.** winit + wgpu + egui — the same stack as Infinite —
   themed in the Pixygon master-brand voice (void grounds, signal cyan, ember).
 - **One binary, three platforms.** Builds to Linux + Windows via `pearl build`
@@ -120,9 +118,11 @@ on the GPU end-to-end (render API GL/Vulkan interop, libplacebo-class output).
 
 ## Status
 
-A capable daily driver for playing, converting and capturing; the deep-edit
-milestones (trim/composite/timeline-export) are the current frontier. See
-[ROADMAP.md](ROADMAP.md) for the path to the stated bar.
+A capable daily driver for playing, converting, capturing — and now cutting:
+trim/split/move, in-out ranges, multi-source timelines and GPU-accelerated
+renders of the edit all work. The frontier is compositing (effects,
+transitions, multi-track blending on the GPU) and the zero-copy playback
+surface. See [ROADMAP.md](ROADMAP.md) for the path to the stated bar.
 
 **Download & docs: [reel.pixygon.io](https://reel.pixygon.io)** — one-line
 Linux install, Arch repo, Windows zip.
