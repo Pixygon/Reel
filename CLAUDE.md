@@ -79,6 +79,14 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Textures handed to egui MUST be premultiplied-alpha (egui's blend mode
   assumes it). ImageDoc stays straight-alpha for exports; `sync_frame`
   premultiplies the uploaded copy. Transparent stills get the checkerboard.
+- Editor rules: `EditorState.playhead` is TIMELINE time; source↔timeline
+  mapping goes through `Project::source_to_timeline` / clip in_points —
+  never treat player.position as timeline time. Editor ops (split/delete/
+  drag) snapshot via `editor.push_undo` FIRST. egui layout traps to respect:
+  a painter-only canvas must `allocate_exact_size` its rect (else the
+  resizable panel collapses), and chrome/columns must only ever see bounded
+  Uis. Glyphs: egui's font lacks many arrows (⧏⧐↶↷ render as boxes) — test
+  new icons visually under Xvfb before shipping.
 - Cold-open speed rules (measured with the `timing!` macro — keep it):
   video/audio opens go through `app.opening` (worker thread; MpvPlayer is
   deliberately `unsafe impl Send`) so the window/UI never blocks on a

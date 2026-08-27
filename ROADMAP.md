@@ -63,11 +63,19 @@ never leaving the GPU.
 
 ## Milestone 2 — an editor you'd actually cut in
 
-- [ ] Trim handles on clips; drag to move; snapping; ripple/roll.
-- [ ] Multi-track compositing on the GPU (blend, opacity, transform).
-- [ ] Playhead scrub renders the **composited timeline**, not just one source clip.
-- [ ] Cut/copy/paste, undo/redo (command history over the serde model).
-- [ ] Save/open `.reel` project documents (the model is already serde-ready).
+- [x] Trim handles on clips (edge-drag adjusts in-point/duration); drag to
+      move with edge/playhead snapping; split at playhead (S); delete;
+      selection; zoomable/pannable timeline with an adaptive ruler.
+- [x] Undo/redo (whole-model snapshots over the serde model).
+- [x] Save/open `.reel` project documents — double-clicking a .reel opens
+      straight into the editor with the source loaded at the playhead.
+- [x] Editor playback **sequences the cut**: the timeline playhead is
+      timeline-time (not source-time), previews the frame under it while
+      scrubbing, and playback jumps clip→clip across trims and gaps.
+- [ ] Ripple/roll edits; cut/copy/paste; multi-source timelines (opening a
+      second file while editing).
+- [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
+      then the preview shows the V1 source frame.
 
 ## Milestone 3 — finish & polish
 
