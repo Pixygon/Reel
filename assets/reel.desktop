@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Reel
+GenericName=Media Player
+Comment=Play, edit, convert and capture media
+Exec=reel %f
+Icon=reel
+Terminal=false
+Categories=AudioVideo;Player;Video;Audio;Graphics;
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;video/x-msvideo;video/mpeg;video/ogg;video/x-flv;video/x-ms-wmv;video/mp2t;video/3gpp;audio/mpeg;audio/flac;audio/ogg;audio/opus;audio/x-wav;audio/wav;audio/mp4;audio/aac;audio/x-m4a;audio/webm;image/png;image/jpeg;image/webp;image/bmp;image/svg+xml;image/tiff;image/gif;

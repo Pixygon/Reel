@@ -12,9 +12,13 @@ mod edit;
 mod egui_backend;
 mod export;
 mod gpu;
+#[cfg(target_os = "linux")]
+mod integration;
 mod media;
 #[cfg(target_os = "linux")]
 mod portal;
+#[cfg(target_os = "linux")]
+mod runtime;
 mod theme;
 mod ui;
 mod video;
@@ -59,6 +63,7 @@ impl ApplicationHandler for Reel {
         if let Some(path) = self.initial_open.take() {
             self.app.open(&path);
         }
+        self.app.init_integration();
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {

@@ -37,9 +37,10 @@ fn save_token(token: &str) {
     let _ = std::fs::write(f, token);
 }
 
-fn runtime() -> Result<tokio::runtime::Runtime> {
-    Ok(tokio::runtime::Builder::new_current_thread().enable_all().build()?)
-}
+// All ashpd calls share the process-wide runtime (runtime.rs) — ashpd caches
+// its D-Bus connection against the first reactor it sees, so per-call
+// runtimes break every call after the first.
+use crate::runtime::rt;
 
 /// Is a portal likely reachable at all (a Wayland/X11 desktop session)?
 pub fn available() -> bool {
@@ -50,8 +51,7 @@ pub fn available() -> bool {
 /// Interactive screenshot through the portal — the system dialog offers
 /// screen / window / region. Returns the captured file (moved into `dest`).
 pub fn screenshot_interactive(dest: PathBuf) -> Result<PathBuf> {
-    let rt = runtime()?;
-    let uri = rt.block_on(async {
+    let uri = rt().block_on(async {
         let resp = ashpd::desktop::screenshot::Screenshot::request()
             .interactive(true)
             .modal(false)
@@ -146,8 +146,7 @@ pub fn start_recording(out: PathBuf) -> Result<PortalRecorder> {
     use ashpd::desktop::screencast::{CursorMode, Screencast, SourceType};
     use ashpd::desktop::PersistMode;
 
-    let rt = runtime()?;
-    let (session, node_id, fd) = rt.block_on(async {
+    let (session, node_id, fd) = rt().block_on(async {
         let proxy = Screencast::new().await?;
         let session = proxy.create_session().await?;
         proxy
@@ -181,9 +180,9 @@ pub fn start_recording(out: PathBuf) -> Result<PortalRecorder> {
     let t_shared = shared.clone();
     let t_stopped = stopped.clone();
     std::thread::spawn(move || {
-        // Keep the D-Bus session alive for the duration of the recording.
+        // Keep the portal session object alive for the recording's duration
+        // (its runtime is the process-wide one and never dies).
         let _session_keepalive = session;
-        let _rt_keepalive = rt;
         let result = run_pipewire_capture(fd, node_id, out.clone(), t_shared, t_stopped, stop_rx);
         let _ = done_tx.send(result.map_err(|e| e.to_string()));
     });

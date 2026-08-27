@@ -15,6 +15,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     shortcuts(ctx, app);
 
     top_bar(ctx, app);
+    defaults_banner(ctx, app);
     egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new(&app.status).color(theme::CYAN).small());
@@ -27,6 +28,71 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     }
 
     export_window(ctx, app);
+    defaults_window(ctx, app);
+}
+
+/// One-time nudge: Reel's front door is a double-click on a media file, so
+/// becoming the default handler is the setup step that matters.
+fn defaults_banner(ctx: &egui::Context, app: &mut ReelApp) {
+    if !app.defaults_banner {
+        return;
+    }
+    egui::TopBottomPanel::top("defaults_banner").show(ctx, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("Open your media with Reel by default?").color(theme::STAR));
+            ui.checkbox(&mut app.def_video, "Video");
+            ui.checkbox(&mut app.def_audio, "Music");
+            ui.checkbox(&mut app.def_images, "Images");
+            if ui.button(RichText::new("Make default").color(theme::CYAN)).clicked() {
+                app.status = app.apply_defaults();
+            }
+            if ui.button("Later").clicked() {
+                app.finish_defaults_prompt();
+                app.status = "You can set defaults any time under ⚙ → Default apps.".into();
+            }
+        });
+    });
+}
+
+/// ⚙ → Default apps — same choices as the banner, reachable forever.
+fn defaults_window(ctx: &egui::Context, app: &mut ReelApp) {
+    if !app.defaults_open {
+        return;
+    }
+    let mut keep_open = app.defaults_open;
+    egui::Window::new("Default apps")
+        .open(&mut keep_open)
+        .collapsible(false)
+        .resizable(false)
+        .show(ctx, |ui| {
+            ui.label("Open these with Reel when you double-click them:");
+            ui.add_space(6.0);
+            #[cfg(target_os = "linux")]
+            {
+                let current = |m: &str| {
+                    if crate::integration::is_default_for(m) { "  (current default: Reel)" } else { "" }
+                };
+                ui.checkbox(&mut app.def_video, format!("Video — mp4, mkv, webm, …{}", current("video/mp4")));
+                ui.checkbox(&mut app.def_audio, format!("Music — mp3, flac, opus, …{}", current("audio/mpeg")));
+                ui.checkbox(&mut app.def_images, format!("Images — png, jpg, svg, …{}", current("image/png")));
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                ui.checkbox(&mut app.def_video, "Video — mp4, mkv, webm, …");
+                ui.checkbox(&mut app.def_audio, "Music — mp3, flac, opus, …");
+                ui.checkbox(&mut app.def_images, "Images — png, jpg, svg, …");
+            }
+            ui.add_space(8.0);
+            if ui.button(RichText::new("Apply").color(theme::CYAN)).clicked() {
+                app.status = app.apply_defaults();
+            }
+            ui.label(
+                RichText::new("Reel always stays available under “Open with” either way.")
+                    .small()
+                    .color(egui::Color32::from_gray(120)),
+            );
+        });
+    app.defaults_open = keep_open;
 }
 
 /// A file dragged onto the window opens it — the shortest path to playing.
@@ -141,28 +207,14 @@ fn top_bar(ctx: &egui::Context, app: &mut ReelApp) {
     egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.label(RichText::new("REEL").color(theme::STAR).strong().size(18.0));
+            if app.mode == Mode::Editor {
+                ui.label(RichText::new("· editor").color(theme::EMBER).small());
+            }
             ui.separator();
 
             if ui.button("Open…").clicked() {
                 app.open_picker();
             }
-            // Or paste/type a path directly.
-            let resp = ui.add(
-                egui::TextEdit::singleline(&mut app.open_field)
-                    .hint_text("…or paste a path")
-                    .desired_width(220.0),
-            );
-            let submit = resp.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
-            if submit {
-                let path = app.open_field.trim().to_string();
-                if !path.is_empty() {
-                    app.open(&path);
-                }
-            }
-
-            ui.separator();
-            ui.selectable_value(&mut app.mode, Mode::Player, "▶ Player");
-            ui.selectable_value(&mut app.mode, Mode::Editor, "✂ Editor");
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 // Capture — the screen is media too.
@@ -198,15 +250,54 @@ fn top_bar(ctx: &egui::Context, app: &mut ReelApp) {
                 })
                 .response
                 .on_hover_text("Screenshot — it opens right here");
+
+                ui.menu_button("⚙", |ui| {
+                    if ui.button("Default apps…").clicked() {
+                        app.defaults_open = true;
+                        ui.close_menu();
+                    }
+                    if ui.button("Website — reel.pixygon.io").clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab("https://reel.pixygon.io"));
+                        ui.close_menu();
+                    }
+                });
             });
         });
     });
 }
 
 fn player_view(ctx: &egui::Context, app: &mut ReelApp) {
+    if app.player.is_none() && app.image.is_none() {
+        egui::CentralPanel::default().show(ctx, |ui| empty_state(ui, app));
+        return;
+    }
     egui::TopBottomPanel::bottom("transport").show(ctx, |ui| transport(ui, app));
     egui::CentralPanel::default().show(ctx, |ui| {
         viewport(ui, app);
+    });
+}
+
+/// Nothing open — normally never seen (Reel is opened by clicking a file),
+/// so make the one action obvious.
+fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
+    ui.vertical_centered(|ui| {
+        ui.add_space(ui.available_height() * 0.30);
+        ui.label(RichText::new("𝄞").size(56.0).color(theme::CYAN));
+        ui.add_space(12.0);
+        if ui
+            .add(egui::Button::new(RichText::new("  Open a file…  ").size(18.0).color(theme::STAR)))
+            .clicked()
+        {
+            app.open_picker();
+        }
+        ui.add_space(10.0);
+        let dnd = !cfg!(target_os = "linux") || std::env::var("WAYLAND_DISPLAY").is_err();
+        let hint = if dnd {
+            "…or drop one here, or double-click any video, song or image in your file manager."
+        } else {
+            "…or double-click any video, song or image in your file manager — Reel opens it directly."
+        };
+        ui.label(RichText::new(hint).color(egui::Color32::from_gray(120)));
     });
 }
 
@@ -286,6 +377,7 @@ fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
 fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
     let mode = app.mode;
     let mut goto_editor = false;
+    let mut goto_player = false;
     let mut open_export = false;
     let mut toggle_fullscreen = false;
 
@@ -311,11 +403,16 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     if ui.button(RichText::new("✂ Edit").color(theme::EMBER)).clicked() {
                         goto_editor = true;
                     }
+                } else if ui.button("▶ Done").on_hover_text("Back to the player (E)").clicked() {
+                    goto_player = true;
                 }
             });
         });
         if goto_editor {
             app.mode = Mode::Editor;
+        }
+        if goto_player {
+            app.mode = Mode::Player;
         }
         if open_export {
             app.export_open = true;
@@ -376,6 +473,8 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     goto_editor = true;
                 }
+            } else if ui.button("▶ Done").on_hover_text("Back to the player (E)").clicked() {
+                goto_player = true;
             }
             if ui.button("⛶").on_hover_text("Fullscreen (F)").clicked() {
                 toggle_fullscreen = true;
@@ -434,6 +533,9 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
 
     if goto_editor {
         app.mode = Mode::Editor;
+    }
+    if goto_player {
+        app.mode = Mode::Player;
     }
     if open_export {
         app.export_open = true;

@@ -4,6 +4,20 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.11.0] — 2026-08-27
+
+### Added
+- Reel now integrates with your Linux desktop: it installs itself in the "Open with" menu and can be set as the default player for video, music, and images with a couple of clicks. A one-time banner offers to set this up, and it's always reachable afterwards from ⚙ → Default apps.
+- When Reel opens with nothing loaded, it now shows a friendly empty state with a big "Open a file…" button and a hint about dragging files in or double-clicking them in your file manager.
+- Added a ⚙ menu with quick access to default-app settings and the Reel website.
+
+### Changed
+- Removed the inline "paste a path" text field and the Player/Editor tab switcher from the top bar; the editor is now reached via the "✂ Edit" button and you return to the player with a new "▶ Done" button. **(BREAKING)**
+
+### Fixed
+- Fixed a bug on Linux where the "Open…" file picker and screenshot/screen-recording dialogs would only work the first time and then silently stop responding.
+
+
 ## [0.10.0] — 2026-08-27
 
 ### Added

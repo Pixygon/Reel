@@ -27,8 +27,6 @@ pub struct ReelApp {
     pub tex_id: Option<egui::TextureId>,
     tex: Option<VideoTexture>,
     pub status: String,
-    /// Path text buffer for the in-UI open field.
-    pub open_field: String,
 
     // Export ("convert") — available straight from the player.
     pub export_open: bool,
@@ -50,6 +48,13 @@ pub struct ReelApp {
     pub fullscreen: bool,
     /// Desired window title; main.rs applies it when it changes.
     pub window_title: String,
+
+    // "Make Reel the default player" — first-run banner + ⚙ dialog.
+    pub defaults_banner: bool,
+    pub defaults_open: bool,
+    pub def_video: bool,
+    pub def_audio: bool,
+    pub def_images: bool,
 }
 
 impl ReelApp {
@@ -62,8 +67,7 @@ impl ReelApp {
             project: Project::default(),
             tex_id: None,
             tex: None,
-            status: "Open a video to begin — drop a file, Open…, or reel <path>".into(),
-            open_field: String::new(),
+            status: "Ready.".into(),
             export_open: false,
             export_settings: ExportSettings::default(),
             export_out: String::new(),
@@ -75,6 +79,64 @@ impl ReelApp {
             rec_rx: None,
             fullscreen: false,
             window_title: "Reel".into(),
+            defaults_banner: false,
+            defaults_open: false,
+            def_video: true,
+            def_audio: true,
+            def_images: false,
+        }
+    }
+
+    /// Linux desktop integration: make sure "Open with Reel" exists, and show
+    /// the make-me-default banner exactly once. Call after window creation.
+    pub fn init_integration(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            if let Err(e) = crate::integration::install_desktop_entry() {
+                log::warn!("could not install desktop entry: {e}");
+            }
+            self.defaults_banner = !crate::integration::load_settings().defaults_prompted;
+        }
+    }
+
+    /// Apply the chosen default-app categories. Returns a status line.
+    pub fn apply_defaults(&mut self) -> String {
+        #[cfg(target_os = "linux")]
+        {
+            use crate::integration as integ;
+            let mut mimes: Vec<&str> = Vec::new();
+            if self.def_video {
+                mimes.extend(integ::VIDEO_MIMES);
+            }
+            if self.def_audio {
+                mimes.extend(integ::AUDIO_MIMES);
+            }
+            if self.def_images {
+                mimes.extend(integ::IMAGE_MIMES);
+            }
+            self.finish_defaults_prompt();
+            if mimes.is_empty() {
+                return "Nothing selected — Reel stays available under “Open with”.".into();
+            }
+            return match integ::set_default_for(&mimes) {
+                Ok(()) => "✓ Reel is now the default player for your selection.".into(),
+                Err(e) => format!("Could not set defaults: {e}"),
+            };
+        }
+        #[allow(unreachable_code)]
+        "Default-app setup is currently Linux-only.".into()
+    }
+
+    /// Dismiss the banner and remember the answer.
+    pub fn finish_defaults_prompt(&mut self) {
+        self.defaults_banner = false;
+        #[cfg(target_os = "linux")]
+        {
+            let mut s = crate::integration::load_settings();
+            if !s.defaults_prompted {
+                s.defaults_prompted = true;
+                crate::integration::save_settings(&s);
+            }
         }
     }
 
@@ -112,23 +174,19 @@ impl ReelApp {
                 ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
                 ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
             ];
-            // Linux: rfd talks to the portal over zbus built in tokio mode, so
-            // the dialog must run inside a tokio runtime on this thread —
-            // without it, zbus panics ("no reactor running").
+            // Linux: rfd talks to the portal over zbus built in tokio mode.
+            // MUST run on the process-wide runtime (see runtime.rs) — a
+            // throwaway runtime here works exactly once, then the cached
+            // D-Bus connection is bound to a dead reactor and the dialog
+            // never opens again.
             #[cfg(target_os = "linux")]
-            let picked = tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .ok()
-                .and_then(|rt| {
-                    rt.block_on(async {
-                        let mut d = rfd::AsyncFileDialog::new();
-                        for (name, ext) in filters {
-                            d = d.add_filter(name, ext);
-                        }
-                        d.pick_file().await.map(|h| h.path().to_string_lossy().into_owned())
-                    })
-                });
+            let picked = crate::runtime::rt().block_on(async {
+                let mut d = rfd::AsyncFileDialog::new();
+                for (name, ext) in filters {
+                    d = d.add_filter(name, ext);
+                }
+                d.pick_file().await.map(|h| h.path().to_string_lossy().into_owned())
+            });
             #[cfg(not(target_os = "linux"))]
             let picked = {
                 let mut d = rfd::FileDialog::new();
