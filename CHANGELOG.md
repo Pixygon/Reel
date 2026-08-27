@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.17.0] — 2026-08-27
+
+### Added
+- New one-click export destinations in the export window — pick "TikTok", "Reels / Shorts", "Instagram feed", "Square", "YouTube", "YouTube 4K", "Facebook" or "X / Twitter" and Reel automatically sets the right frame size, codec and quality for that platform. _(8c7a300)_
+- Presets that change the video's aspect ratio (e.g. landscape to vertical) let you choose how the picture fits the new frame: letterboxed with bars, cropped to fill, or filled with a blurred backdrop — the same treatment TikTok and Reels use for landscape clips. _(8c7a300)_
+- Exporting with a preset now suggests a filename like "myvideo-tiktok.mp4" so cuts for different platforms sit side by side without overwriting each other. _(8c7a300)_
+
+### Improved
+- Manual export settings are unaffected — choosing "Custom" keeps full control over resolution, codec and quality as before, with a per-fit option now available for exports with a fixed target frame. _(8c7a300)_
+
+
 ## [0.16.0] — 2026-08-27
 
 ### Added

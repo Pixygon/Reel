@@ -183,6 +183,101 @@ impl Resolution {
     }
 }
 
+/// How a source is made to fit a target frame whose aspect differs — the
+/// decision every "post this to TikTok" workflow silently makes for you.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fit {
+    /// Whole frame visible, bars where it doesn't reach (letterbox/pillarbox).
+    Letterbox,
+    /// Fill the frame, cropping the overflow — no bars, loses the edges.
+    Crop,
+    /// Fill with a blurred copy of the frame behind the whole picture. What
+    /// social apps do to a landscape clip in a vertical slot.
+    Blur,
+}
+
+impl Fit {
+    pub const ALL: [Fit; 3] = [Fit::Blur, Fit::Letterbox, Fit::Crop];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Fit::Letterbox => "Fit (bars)",
+            Fit::Crop => "Fill (crop)",
+            Fit::Blur => "Fill (blurred sides)",
+        }
+    }
+
+    /// The filter chain that maps any input to exactly `w`×`h`.
+    /// `tag` keeps labels unique when several of these appear in one graph.
+    fn chain(self, w: u32, h: u32, tag: &str) -> String {
+        match self {
+            Fit::Letterbox => format!(
+                "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,\
+                 pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+            ),
+            Fit::Crop => format!(
+                "scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,\
+                 crop={w}:{h},setsar=1"
+            ),
+            Fit::Blur => format!(
+                "split[bg{tag}][fg{tag}];\
+                 [bg{tag}]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},\
+                 boxblur=luma_radius=min(h\\,w)/20:luma_power=1[bb{tag}];\
+                 [fg{tag}]scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos[ff{tag}];\
+                 [bb{tag}][ff{tag}]overlay=(W-w)/2:(H-h)/2,setsar=1"
+            ),
+        }
+    }
+}
+
+/// One-click targets for the places people actually post video. Each carries
+/// the frame, the fit and the codec that platform wants, so the user picks a
+/// destination rather than a resolution.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Preset {
+    pub name: &'static str,
+    pub note: &'static str,
+    pub w: u32,
+    pub h: u32,
+    pub fit: Fit,
+    pub codec: Codec,
+    pub quality: Quality,
+}
+
+impl Preset {
+    /// Vertical 9:16 is the shape of TikTok / Reels / Shorts; 1:1 and 4:5 are
+    /// the feed shapes; 16:9 is YouTube and X.
+    pub const ALL: &'static [Preset] = &[
+        Preset { name: "YouTube", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High },
+        Preset { name: "YouTube 4K", note: "2160p · 16:9", w: 3840, h: 2160, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High },
+        Preset { name: "TikTok", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "Reels / Shorts", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "Instagram feed", note: "1080×1350 · 4:5", w: 1080, h: 1350, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "Square", note: "1080×1080 · 1:1", w: 1080, h: 1080, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "Facebook", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "X / Twitter", note: "720p · 16:9", w: 1280, h: 720, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced },
+    ];
+
+    pub fn apply(&self, s: &mut ExportSettings) {
+        s.codec = self.codec;
+        s.quality = self.quality;
+        s.resolution = Resolution::Source; // the preset's frame wins
+        s.target = Some((self.w, self.h));
+        s.fit = self.fit;
+        s.audio = AudioMode::Encode { kbps: 160 };
+    }
+
+    /// Is this preset what the settings currently describe?
+    pub fn is_active(&self, s: &ExportSettings) -> bool {
+        s.target == Some((self.w, self.h)) && s.fit == self.fit && s.codec == self.codec && s.quality == self.quality
+    }
+
+    /// A filename tag so exports for different places don't collide.
+    pub fn slug(&self) -> String {
+        self.name.to_lowercase().replace([' ', '/'], "-").replace("--", "-")
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AudioMode {
     /// Encode to the container's native codec (AAC for MP4, Opus for WebM).
@@ -200,6 +295,11 @@ pub struct ExportSettings {
     /// Use the GPU encoder when one is available (much faster; software
     /// still wins slightly on size-at-quality).
     pub hardware: bool,
+    /// An exact output frame (a social preset). `None` = keep the source
+    /// shape, with `resolution` as an optional downscale.
+    pub target: Option<(u32, u32)>,
+    /// How the source is mapped into `target` when the aspect differs.
+    pub fit: Fit,
 }
 
 impl Default for ExportSettings {
@@ -210,6 +310,11 @@ impl Default for ExportSettings {
             resolution: Resolution::Source,
             audio: AudioMode::Encode { kbps: 160 },
             hardware: true,
+            target: None,
+            // Letterbox by default: when the aspect already matches (the
+            // normal timeline case) it's a no-op, and it costs nothing.
+            // Presets pick Blur where a shape change is expected.
+            fit: Fit::Letterbox,
         }
     }
 }
@@ -316,7 +421,10 @@ pub fn build_args(input: &str, output: &str, s: &ExportSettings) -> Vec<String> 
     }
 
     if s.codec != Codec::Remux {
-        if let Some(h) = s.resolution.height() {
+        if let Some((tw, th)) = s.target {
+            // A social preset: an exact frame, with the chosen fit.
+            a.extend(["-vf".into(), s.fit.chain(tw, th, "0")]);
+        } else if let Some(h) = s.resolution.height() {
             // -2: keep aspect, round width to even (encoders require it).
             a.extend(["-vf".into(), format!("scale=-2:{h}:flags=lanczos")]);
         }
@@ -491,18 +599,16 @@ pub fn build_timeline_args(
     }
 
     // concat demands identical geometry/rate/audio format across segments, so
-    // every segment is normalised to the project's target: fit-inside +
-    // letterbox (never distort), square pixels, one frame rate, one audio
-    // format. This is what makes mixing differently-sized sources work.
-    let vnorm = format!(
-        "scale={tw}:{th}:force_original_aspect_ratio=decrease:flags=lanczos,\
-         pad={tw}:{th}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps={tfps:.4}"
-    );
+    // every segment is normalised to the target frame with the chosen fit
+    // (never distorting), square pixels, one frame rate, one audio format.
+    // This is what makes mixing differently-sized sources work — and what
+    // reshapes a whole edit into a preset's frame.
     let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
     let mut graph = String::new();
     for (k, (src, in_point, duration)) in segments.iter().enumerate() {
         let i = sources.iter().position(|s| s == src).unwrap();
+        let vnorm = format!("{},fps={tfps:.4}", s.fit.chain(tw, th, &k.to_string()));
         graph.push_str(&format!(
             "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{vnorm}[v{k}];"
         ));
@@ -570,6 +676,11 @@ pub fn start_timeline(
 /// dimensions — encoders require them.
 pub fn render_target((pw, ph, fps): (u32, u32, f64), s: &ExportSettings) -> (u32, u32, f64) {
     let (pw, ph) = (pw.max(2), ph.max(2));
+    // A preset's frame is exact — that's the whole point of picking one.
+    if let Some((tw, th)) = s.target {
+        let even = |v: u32| (v / 2 * 2).max(2);
+        return (even(tw), even(th), if fps > 0.0 { fps } else { 30.0 });
+    }
     let (w, h) = match s.resolution.height() {
         Some(target_h) => {
             let w = (pw as f64 * (target_h as f64 / ph as f64)).round() as u32;
@@ -690,6 +801,8 @@ mod tests {
             resolution: Resolution::H720,
             audio: AudioMode::Encode { kbps: 160 },
             hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
         };
         let a = build_args("in.mkv", "out.mp4", &s);
         let joined = a.join(" ");
@@ -708,6 +821,8 @@ mod tests {
             resolution: Resolution::H480, // must be ignored for remux
             audio: AudioMode::Copy,
             hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
         };
         let a = build_args("in.mp4", "out.mkv", &s);
         let joined = a.join(" ");
@@ -724,6 +839,8 @@ mod tests {
             resolution: Resolution::H720, // must be ignored for audio
             audio: AudioMode::Copy,       // ignored; codec defines the audio
             hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
         };
         let a = build_args("in.mp4", "out.mp3", &s);
         let joined = a.join(" ");
@@ -741,6 +858,8 @@ mod tests {
             resolution: Resolution::H1080,
             audio: AudioMode::Copy,
             hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
         };
         let a = build_args("in.png", "out.jpg", &s);
         let joined = a.join(" ");
@@ -780,7 +899,12 @@ mod tests {
     #[test]
     fn timeline_graph_without_audio_or_with_scale() {
         let segs = vec![("/m/a.mp4".to_string(), 0.0, 2.0)];
-        let s = ExportSettings { resolution: Resolution::H720, hardware: false, ..Default::default() };
+        let s = ExportSettings {
+            resolution: Resolution::H720,
+            hardware: false,
+            fit: Fit::Letterbox,
+            ..Default::default()
+        };
         let a = build_timeline_args(&segs, "out.mp4", &s, false, render_target((1920, 1080, 30.0), &s));
         let graph = &a[a.iter().position(|x| x == "-filter_complex").unwrap() + 1];
         assert!(!graph.contains("atrim"), "no audio legs when sources are silent");
@@ -920,6 +1044,77 @@ mod tests {
     }
 
     #[test]
+    fn presets_describe_real_platform_frames() {
+        // Every preset must be a sane, even-dimensioned video target.
+        for p in Preset::ALL {
+            assert!(p.w % 2 == 0 && p.h % 2 == 0, "{} has odd dimensions", p.name);
+            assert!(!p.codec.is_audio_only() && !p.codec.is_image(), "{} isn't video", p.name);
+            assert!(!p.slug().contains(' '), "{} slug has spaces", p.name);
+        }
+        // The vertical ones really are vertical, the wide ones wide.
+        let tiktok = Preset::ALL.iter().find(|p| p.name == "TikTok").unwrap();
+        assert!(tiktok.h > tiktok.w);
+        let yt = Preset::ALL.iter().find(|p| p.name == "YouTube").unwrap();
+        assert!(yt.w > yt.h);
+
+        // Applying a preset makes it active, and pins the exact frame.
+        let mut s = ExportSettings::default();
+        tiktok.apply(&mut s);
+        assert!(tiktok.is_active(&s));
+        assert_eq!(s.target, Some((1080, 1920)));
+        assert_eq!(render_target((1920, 1080, 30.0), &s), (1080, 1920, 30.0));
+    }
+
+    #[test]
+    fn fit_modes_produce_the_right_filter_shapes() {
+        let (w, h) = (1080, 1920);
+        let letter = Fit::Letterbox.chain(w, h, "0");
+        assert!(letter.contains("force_original_aspect_ratio=decrease") && letter.contains("pad=1080:1920"));
+        let crop = Fit::Crop.chain(w, h, "0");
+        assert!(crop.contains("force_original_aspect_ratio=increase") && crop.contains("crop=1080:1920"));
+        let blur = Fit::Blur.chain(w, h, "7");
+        // Blurred backdrop behind a fully-visible foreground, uniquely tagged.
+        assert!(blur.contains("split[bg7][fg7]"), "{blur}");
+        assert!(blur.contains("boxblur") && blur.contains("overlay=(W-w)/2:(H-h)/2"));
+    }
+
+    /// The promise of a one-click preset: a landscape source really comes out
+    /// as a 1080×1920 vertical file, with the blurred-sides treatment.
+    #[test]
+    fn tiktok_preset_renders_a_vertical_file() {
+        let src = std::env::temp_dir().join(format!("reel-preset-src-{}.mp4", std::process::id()));
+        let out = std::env::temp_dir().join(format!("reel-preset-out-{}.mp4", std::process::id()));
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        let made = std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=1",
+                   "-c:v", "libx264", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false);
+        assert!(made, "could not build the landscape fixture");
+
+        let mut s = ExportSettings { hardware: false, ..Default::default() };
+        Preset::ALL.iter().find(|p| p.name == "TikTok").unwrap().apply(&mut s);
+        s.hardware = false;
+        let job = start(&src.to_string_lossy(), &out.to_string_lossy(), &s, 1.0).expect("start preset export");
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "preset export error: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "preset export timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe preset output");
+        assert_eq!((info.width, info.height), (1080, 1920), "landscape source → vertical frame");
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    #[test]
     fn exports_fixture_to_h264() {
         let out = format!(
             "{}/reel-export-test-{}.mp4",
@@ -933,6 +1128,8 @@ mod tests {
             resolution: Resolution::Source,
             audio: AudioMode::Encode { kbps: 96 },
             hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
         };
         let job = start(&fixture(), &out, &s, 2.0).expect("start export");
         let deadline = Instant::now() + Duration::from_secs(60);

@@ -572,6 +572,27 @@ impl ReelApp {
         self.export_open = true;
     }
 
+    /// Output path for a preset export: `<name>-<platform>.mp4`, so the
+    /// TikTok cut and the YouTube cut sit side by side without clobbering.
+    pub fn preset_output(&self, p: &export::Preset) -> String {
+        let base = self
+            .media_path()
+            .or_else(|| self.editor.project_path.clone())
+            .unwrap_or_else(|| "video".into());
+        let path = std::path::Path::new(&base);
+        let stem = path.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_else(|| "video".into());
+        let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+        let slug = p.slug();
+        let ext = p.codec.extension();
+        let mut candidate = dir.join(format!("{stem}-{slug}.{ext}"));
+        let mut n = 1;
+        while candidate.exists() {
+            candidate = dir.join(format!("{stem}-{slug}-{n}.{ext}"));
+            n += 1;
+        }
+        candidate.to_string_lossy().into_owned()
+    }
+
     /// A sensible default output path for a timeline export: the project
     /// name (or first source) with a `-cut` suffix, never clobbering.
     pub fn timeline_output(&self) -> String {

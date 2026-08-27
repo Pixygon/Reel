@@ -4,7 +4,7 @@
 
 use crate::app::{Mode, ReelApp};
 use crate::edit::TrackKind;
-use crate::export::{self, AudioMode, Codec, Quality, Resolution};
+use crate::export::{self, AudioMode, Codec, Fit, Quality, Resolution};
 use crate::theme;
 use egui::{Color32, Key, Rect, RichText, Sense, Stroke, Vec2};
 
@@ -841,6 +841,40 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 return;
             }
 
+            // ── One-click destinations ───────────────────────────────────
+            // Pick where it's going; Reel picks the frame, fit and codec.
+            if kind != crate::media::MediaKind::Image {
+                ui.label(RichText::new("Post it to").small().color(egui::Color32::from_gray(150)));
+                let mut chosen: Option<&export::Preset> = None;
+                ui.horizontal_wrapped(|ui| {
+                    for p in export::Preset::ALL {
+                        let active = p.is_active(&app.export_settings);
+                        let text = RichText::new(p.name).color(if active { theme::VOID } else { theme::STAR });
+                        let mut btn = egui::Button::new(text);
+                        if active {
+                            btn = btn.fill(theme::CYAN);
+                        }
+                        if ui.add(btn).on_hover_text(format!("{} · {}", p.note, p.fit.label())).clicked() {
+                            chosen = Some(p);
+                        }
+                    }
+                    let custom = export::Preset::ALL.iter().all(|p| !p.is_active(&app.export_settings));
+                    let text = RichText::new("Custom").color(if custom { theme::VOID } else { theme::STAR });
+                    let mut btn = egui::Button::new(text);
+                    if custom {
+                        btn = btn.fill(theme::CYAN);
+                    }
+                    if ui.add(btn).on_hover_text("Choose the settings yourself").clicked() {
+                        app.export_settings.target = None;
+                    }
+                });
+                if let Some(p) = chosen {
+                    p.apply(&mut app.export_settings);
+                    app.export_out = app.preset_output(p);
+                }
+                ui.add_space(8.0);
+            }
+
             let timeline_mode = app.export_timeline;
             let s = &mut app.export_settings;
             // Keep the codec legal for what's open. A rendered timeline is
@@ -898,7 +932,22 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     ui.end_row();
                 }
 
-                if is_video_out || s.codec.is_image() {
+                if let Some((tw, th)) = s.target {
+                    // A preset owns the frame; the choice left is how the
+                    // picture is placed inside it.
+                    ui.label("Frame");
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new(format!("{tw}×{th}")).monospace());
+                        egui::ComboBox::from_id_salt("fit")
+                            .selected_text(s.fit.label())
+                            .show_ui(ui, |ui| {
+                                for f in Fit::ALL {
+                                    ui.selectable_value(&mut s.fit, f, f.label());
+                                }
+                            });
+                    });
+                    ui.end_row();
+                } else if is_video_out || s.codec.is_image() {
                     ui.label("Resolution");
                     egui::ComboBox::from_id_salt("resolution")
                         .selected_text(s.resolution.label())
