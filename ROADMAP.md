@@ -53,10 +53,22 @@ never leaving the GPU.
       (`REEL_BACKEND=ffmpeg` forces it).
 - [x] **Hardware decode** (`hwdec=auto-copy-safe`: VA-API on Linux, D3D11VA
       elsewhere) — copy-back for now; the zero-CPU-copy step is below.
-- [ ] **Zero-copy GPU surface**: move off mpv's software render target onto the
-      render API's GL/Vulkan path (libplacebo-class output: colour management,
-      HDR tone-mapping, high-bit-depth, debanding). The frame must not touch
-      system memory between decoder and screen.
+- [x] **Render at display size, not source size.** mpv renders (and we copy and
+      upload) only the pixels that reach the screen. Measured on a 4K60 clip in
+      a 1280px window: **15.1 ms → 4.0 ms per frame**, bus traffic 632 → 70 MB/s.
+- [x] **Reel's own GPU video pass** (`video_pass.rs` + `video.wgsl`): the
+      picture is drawn by our wgpu pipeline instead of egui's generic image
+      draw. Alpha is forced in the shader (a full CPU pass over every pixel of
+      every frame, deleted), stills keep real transparency, and this is the
+      seam colour management and compositing plug into.
+- [ ] **Zero-copy GPU surface** — the remaining step, and now a *smaller* win
+      than it looked: the copy path costs ~0.6 ms/frame at display size; the
+      remaining ~3 ms is mpv's software conversion. mpv's render API offers
+      OpenGL (not Vulkan), so this needs either wgpu-on-GL (a downgrade for
+      everything else) or dmabuf/external-memory import into our Vulkan
+      device. Worth doing for HDR/high-bit-depth output, not for frame rate.
+- [ ] libplacebo-class output: HDR tone-mapping, high-bit-depth, debanding
+      (rides on the interop above, or on libplacebo directly).
 - [x] Frame-accurate seek (`seek absolute+exact`) and A/V sync on mpv's own clock.
 - [x] Audio out + subtitle rendering (via mpv). — [ ] track selection UI,
       audio passthrough.

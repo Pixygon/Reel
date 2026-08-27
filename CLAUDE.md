@@ -101,6 +101,19 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   resizable panel collapses), and chrome/columns must only ever see bounded
   Uis. Glyphs: egui's font lacks many arrows (⧏⧐↶↷ render as boxes) — test
   new icons visually under Xvfb before shipping.
+- The picture is drawn by Reel's own wgpu pipeline (`video_pass.rs` +
+  `video.wgsl`), not `painter.image` — it forces alpha for video (mpv leaves
+  a padding byte; there is deliberately NO CPU alpha pass any more) and keeps
+  real alpha for stills. Uniforms are two vec4s on purpose: WGSL aligns vec3
+  to 16 bytes, so an f32+vec3 tail is 48 bytes in the shader and 32 in Rust —
+  the validation layer catches it, but don't reintroduce the trap.
+- `Player::set_display_size` makes mpv render at on-screen size (never
+  upscaling): the single biggest playback win measured (4K60: 15.1 → 4.0 ms
+  per frame). Keep calling it from the viewport each frame.
+- Perf work is measured, not guessed: `REEL_PERF=1` prints per-frame
+  mpv-render / alpha / upload plus new-frames/s AND loop redraws/s. If both
+  numbers match and are low (~20), that's the compositor throttling an
+  occluded window — not Reel.
 - Cold-open speed rules (measured with the `timing!` macro — keep it):
   video/audio opens go through `app.opening` (worker thread; MpvPlayer is
   deliberately `unsafe impl Send`) so the window/UI never blocks on a
