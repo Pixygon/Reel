@@ -1,0 +1,7 @@
+{
+  "projectId": "6a8ff6bdddf9c5f6e9899f1c",
+  "build": {
+    "targets": ["linux", "windows"],
+    "bin": "reel"
+  }
+}

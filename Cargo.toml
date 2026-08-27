@@ -1,0 +1,37 @@
+[package]
+name = "reel"
+version = "0.1.0"
+edition = "2021"
+description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
+license = "MIT"
+
+[[bin]]
+name = "reel"
+path = "src/main.rs"
+
+[dependencies]
+# Window + GPU + UI — the proven Pixygon native stack (matches Infinite).
+winit = "0.30"
+wgpu = "24"
+egui = "0.31"
+egui-wgpu = "0.31"
+egui-winit = "0.31"
+pollster = "0.4"
+bytemuck = { version = "1.18", features = ["derive"] }
+
+# Video decode (v0.1): drive the system ffmpeg as a subprocess and pipe raw
+# RGBA frames. ffmpeg 9 / libav 63 is too new for the ffmpeg-next bindings, and
+# the subprocess path is codec-complete and rock-solid. The roadmap moves the
+# hot path to libmpv / libav + libplacebo for the beat-VLC performance bar.
+ffmpeg-sidecar = "2"
+
+anyhow = "1"
+crossbeam-channel = "0.5"
+log = "0.4"
+env_logger = "0.11"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
