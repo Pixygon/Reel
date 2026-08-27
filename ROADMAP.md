@@ -86,8 +86,20 @@ never leaving the GPU.
       trim+concat filter graph over the V1 segments, audio in lockstep,
       optional downscale). The dialog offers "Source file" vs "✂ The edit"
       and defaults to the edit when you're in the editor.
-- [ ] Render queue; ProRes; export a selected range/in-out points;
-      compositing effects in the render (needs the GPU compositor).
+- [x] **Hardware encoding** — NVENC / VideoToolbox, probed at runtime with a
+      real trial encode, quality-targeted (cq mirrors the CRF ladder), with a
+      dialog toggle and automatic software fallback (VP9, no GPU, or
+      `REEL_NO_HWENC=1`). VAAPI/QSV need hwupload plumbing — later.
+- [x] **In/out range export** — I/O set markers, Shift+I/O clears; the
+      timeline shades outside the range and playback stops at the out point;
+      the dialog offers "✂ Range" and renders exactly what's enclosed.
+- [x] **Multi-source timelines** — opening a file while editing imports it
+      onto the timeline; the preview switches source files as the playhead
+      crosses clips (one mpv instance, `loadfile`); renders normalise every
+      segment (fit+letterbox, square pixels, one fps, one audio format) so
+      mixed resolutions/codecs/rates concatenate correctly.
+- [ ] Render queue; ProRes; compositing effects in the render (needs the GPU
+      compositor).
 - [ ] Effects/transitions (GPU shaders), a basic colour panel, audio levels/mixer.
 - [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.

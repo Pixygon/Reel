@@ -79,6 +79,14 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Textures handed to egui MUST be premultiplied-alpha (egui's blend mode
   assumes it). ImageDoc stays straight-alpha for exports; `sync_frame`
   premultiplies the uploaded copy. Transparent stills get the checkerboard.
+- Mixed-source renders MUST keep the per-segment normalisation filters
+  (scale+pad+setsar+fps, aformat) — ffmpeg's `concat` rejects mismatched
+  geometry/rate/format, and mixing sources is normal. `render_target()` owns
+  the output geometry (even dimensions; encoders demand them).
+- Hardware encoders are probed with a real trial encode, not just an
+  `-encoders` listing (listed ≠ usable). Only families that accept software
+  frames (NVENC, VideoToolbox) — VAAPI/QSV would need hwupload in every
+  graph. `REEL_NO_HWENC=1` forces software; tests pin `hardware: false`.
 - Timeline export renders `Project::export_segments()` (V1 clips in order,
   gaps collapsed — same flattening editor playback uses) through ONE ffmpeg
   filter_complex trim+concat graph (`export::build_timeline_args`), sharing

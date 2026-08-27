@@ -25,6 +25,11 @@ not the finished tool, but real, honest software you can build and run today.
   open instantly through the same GPU path — ultrawide screenshots, 8K
   stills, **and SVG, rasterized crisply via resvg**. Everything lands on the
   editor timeline (video/stills on V1, audio on A1).
+- **An editor that finishes the job.** Trim by dragging clip edges, split at
+  the playhead, move with snapping, undo/redo, set in/out markers, drop in
+  more source files — then **export the edit itself**. Mixed resolutions and
+  codecs are normalised automatically, and the render uses your **GPU
+  encoder** (NVENC/VideoToolbox) when there is one.
 - **Convert without editing — the HandBrake seam.** Hit **⬇ Export** on
   anything open: video → H.264/H.265/AV1/VP9 with quality presets (or custom
   CRF), downscale, audio bitrate/copy, instant lossless MKV remux — or
