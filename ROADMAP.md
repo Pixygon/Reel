@@ -84,8 +84,10 @@ never leaving the GPU.
 - [x] Editor playback **sequences the cut**: the timeline playhead is
       timeline-time (not source-time), previews the frame under it while
       scrubbing, and playback jumps clip→clip across trims and gaps.
-- [ ] Ripple/roll edits; cut/copy/paste; multi-source timelines (opening a
-      second file while editing).
+- [x] Multi-source timelines (opening a file while editing imports it).
+- [x] Per-clip effects (exposure/contrast/saturation/fades) previewed on the
+      GPU pass and rendered identically — see Milestone 3.
+- [ ] Ripple/roll edits; cut/copy/paste.
 - [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
       then the preview shows the V1 source frame.
 
@@ -120,7 +122,7 @@ never leaving the GPU.
       compares its pixels against that formula, so the editor cannot lie.
 - [ ] Render queue; ProRes; transitions between clips (crossfade needs two
       textures in the preview pass); per-clip transform/crop.
-- [ ] Effects/transitions (GPU shaders), a basic colour panel, audio levels/mixer.
+- [ ] Audio levels/mixer.
 - [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.
 

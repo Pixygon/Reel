@@ -99,7 +99,9 @@ src/
 ├── capture.rs      screenshots + recording dispatch (modes, tool tiers)
 ├── portal.rs       built-in Linux capture: xdg-desktop-portal + PipeWire → ffmpeg encode
 ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)
-├── export.rs       convert/export engine for video/audio/images (ffmpeg, live progress, cancel)
+├── effects.rs      per-clip look: ONE formula shared by the preview shader and the render
+├── video_pass.rs   Reel's wgpu pipeline for the picture (+ video.wgsl) — the compositing seam
+├── export.rs       convert/export engine + social presets (ffmpeg, live progress, cancel)
 ├── ui.rs           player transport, editor timeline, export dialog, shortcuts (all egui)
 └── theme.rs        Pixygon design tokens → egui visuals
 ```
