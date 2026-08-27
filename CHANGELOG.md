@@ -4,6 +4,18 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.15.0] — 2026-08-27
+
+### Added
+- You can now build multi-source timelines: opening a file while editing an existing project adds it as a new clip instead of replacing the edit, and preview playback smoothly switches between source files as the playhead crosses clip boundaries. _(796a292)_
+- Set an in/out export range on the timeline (I / O keys, or the new [ / ] toolbar buttons) to export just a portion of your edit. The selected range is shown dimmed on the timeline, and the export window offers a dedicated "Range" export option; Shift+I or Shift+O clears the markers. _(796a292)_
+- Timeline exports can now mix clips from sources with different resolutions, frame rates, and codecs — everything is automatically normalised (scaled, letterboxed, and matched in frame rate and audio format) to the project's frame so the final render plays back cleanly. _(796a292)_
+- Exporting can now use your GPU's hardware video encoder (NVIDIA NVENC or Apple VideoToolbox) for much faster renders, with automatic detection and a fallback to the software encoder when hardware isn't available or supported for the chosen codec. A new checkbox in the export window lets you toggle hardware encoding on or off. _(796a292)_
+
+### Fixed
+- Timeline exports no longer force an extra scaling pass after concatenation; the target resolution is now applied consistently while assembling each clip, avoiding quality loss on multi-clip exports. _(796a292)_
+
+
 ## [0.14.0] — 2026-08-27
 
 ### Added

@@ -223,6 +223,19 @@ impl Project {
     /// (source, in_point, duration). Gaps are collapsed — exactly how editor
     /// playback sequences the cut.
     pub fn export_segments(&self) -> Vec<(String, f64, f64)> {
+        self.export_segments_range(None, None)
+    }
+
+    /// Like `export_segments`, restricted to the timeline window
+    /// [`range_in`, `range_out`] — clips are cut at the boundaries so an
+    /// in/out range exports exactly what the markers enclose.
+    pub fn export_segments_range(
+        &self,
+        range_in: Option<f64>,
+        range_out: Option<f64>,
+    ) -> Vec<(String, f64, f64)> {
+        let lo = range_in.unwrap_or(f64::NEG_INFINITY);
+        let hi = range_out.unwrap_or(f64::INFINITY);
         let mut clips: Vec<&Clip> = self
             .tracks
             .iter()
@@ -230,7 +243,18 @@ impl Project {
             .flat_map(|t| t.clips.iter())
             .collect();
         clips.sort_by(|a, b| a.start.total_cmp(&b.start));
-        clips.into_iter().map(|c| (c.source.clone(), c.in_point, c.duration)).collect()
+        clips
+            .into_iter()
+            .filter_map(|c| {
+                let start = c.start.max(lo);
+                let end = c.end().min(hi);
+                if end - start <= 0.01 {
+                    return None; // outside the range (or a sliver)
+                }
+                let head = start - c.start; // trimmed off the clip's front
+                Some((c.source.clone(), c.in_point + head, end - start))
+            })
+            .collect()
     }
 
     pub fn save(&self, path: &str) -> anyhow::Result<()> {
@@ -266,6 +290,9 @@ pub struct EditorState {
     pub playhead: f64,
     /// Clip currently feeding the preview during editor playback.
     pub active_clip: Option<u64>,
+    /// Export range markers, in timeline seconds (I / O keys).
+    pub range_in: Option<f64>,
+    pub range_out: Option<f64>,
     pub dirty: bool,
     pub project_path: Option<String>,
     undo: Vec<Project>,
@@ -289,6 +316,8 @@ impl Default for EditorState {
             drag: None,
             playhead: 0.0,
             active_clip: None,
+            range_in: None,
+            range_out: None,
             dirty: false,
             project_path: None,
             undo: Vec::new(),
@@ -406,6 +435,24 @@ mod tests {
         assert_eq!(p.tracks[0].clips.len(), 1);
         assert!(ed.redo(&mut p));
         assert_eq!(p.tracks[0].clips.len(), 2);
+    }
+
+    #[test]
+    fn export_range_cuts_clips_at_the_markers() {
+        let mut p = one_clip_project(); // 10s clip at 0
+        p.split_at(4.0); // → [0,4) and [4,10)
+        // Range 2–6 must yield two segments totalling 4s, with source
+        // in-points shifted to match where the markers landed.
+        let segs = p.export_segments_range(Some(2.0), Some(6.0));
+        assert_eq!(segs.len(), 2);
+        assert_eq!((segs[0].1, segs[0].2), (2.0, 2.0)); // in_point 2, 2s long
+        assert_eq!((segs[1].1, segs[1].2), (4.0, 2.0)); // in_point 4, 2s long
+        let total: f64 = segs.iter().map(|s| s.2).sum();
+        assert!((total - 4.0).abs() < 1e-9);
+        // A range beyond every clip exports nothing.
+        assert!(p.export_segments_range(Some(50.0), None).is_empty());
+        // No markers = the whole edit.
+        assert_eq!(p.export_segments().len(), 2);
     }
 
     #[test]

@@ -260,6 +260,33 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if ek.save {
             app.editor_save();
         }
+        // In / out range markers.
+        let (set_in, set_out, clear) = ctx.input(|i| {
+            (
+                i.key_pressed(Key::I) && !i.modifiers.shift,
+                i.key_pressed(Key::O) && !i.modifiers.shift,
+                (i.key_pressed(Key::I) || i.key_pressed(Key::O)) && i.modifiers.shift,
+            )
+        });
+        if clear {
+            app.editor.range_in = None;
+            app.editor.range_out = None;
+            app.status = "Export range cleared.".into();
+        } else if set_in {
+            let t = app.editor.playhead;
+            app.editor.range_in = Some(t);
+            if app.editor.range_out.is_some_and(|o| o <= t) {
+                app.editor.range_out = None;
+            }
+            app.status = format!("Range in at {t:.2}s (Shift+I/O clears).");
+        } else if set_out {
+            let t = app.editor.playhead;
+            app.editor.range_out = Some(t);
+            if app.editor.range_in.is_some_and(|i| i >= t) {
+                app.editor.range_in = None;
+            }
+            app.status = format!("Range out at {t:.2}s (Shift+I/O clears).");
+        }
     }
 }
 
@@ -724,20 +751,30 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .color(theme::STAR),
             );
 
-            // What are we exporting — the source file, or the edit?
-            let segments = app.project.export_segments();
+            // What are we exporting — the source file, or the edit (and if
+            // in/out markers are set, only the range they enclose)?
+            let segments = app
+                .project
+                .export_segments_range(app.editor.range_in, app.editor.range_out);
             let cut_len: f64 = segments.iter().map(|(_, _, d)| d).sum();
+            let ranged = app.editor.range_in.is_some() || app.editor.range_out.is_some();
             let can_timeline = kind != crate::media::MediaKind::Image && !segments.is_empty();
             if can_timeline && app.export.is_none() {
                 ui.add_space(4.0);
                 let before = app.export_timeline;
                 ui.horizontal(|ui| {
                     ui.selectable_value(&mut app.export_timeline, false, "Source file");
-                    ui.selectable_value(
-                        &mut app.export_timeline,
-                        true,
-                        format!("✂ The edit ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len),
-                    );
+                    let label = if ranged {
+                        format!("✂ Range ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len)
+                    } else {
+                        format!("✂ The edit ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len)
+                    };
+                    ui.selectable_value(&mut app.export_timeline, true, label)
+                        .on_hover_text(if ranged {
+                            "Only what the in/out markers enclose"
+                        } else {
+                            "The whole timeline as cut"
+                        });
                 });
                 if app.export_timeline != before {
                     app.export_out = if app.export_timeline {
@@ -881,6 +918,23 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     ui.end_row();
                 }
 
+                // Hardware encoding, when this machine can do it.
+                let hw_for_codec = if s.codec.is_audio_only() || s.codec.is_image() || s.codec == Codec::Remux {
+                    None
+                } else {
+                    export::hw_encoder_for(if timeline_mode && !matches!(s.codec, Codec::H265 | Codec::Av1 | Codec::Vp9) {
+                        Codec::H264
+                    } else {
+                        s.codec
+                    })
+                };
+                if let Some(hw) = hw_for_codec {
+                    ui.label("Encoder");
+                    ui.checkbox(&mut s.hardware, format!("{} (faster)", hw.label()))
+                        .on_hover_text("Uncheck for the software encoder — slower, slightly smaller files");
+                    ui.end_row();
+                }
+
                 ui.label("Save to");
                 ui.add(egui::TextEdit::singleline(&mut app.export_out).desired_width(260.0));
                 ui.end_row();
@@ -900,7 +954,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 egui::Button::new(RichText::new("Start export").color(theme::STAR).strong()),
             );
             if start.clicked() && app.export_timeline {
-                match export::start_timeline(&segments, &app.export_out, &app.export_settings) {
+                match export::start_timeline(&segments, &app.export_out, &app.export_settings, (app.project.width, app.project.height, app.project.fps)) {
                     Ok(job) => app.export = Some(job),
                     Err(e) => app.status = format!("Export: {e}"),
                 }
@@ -961,6 +1015,22 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
         if ui.add_enabled(app.editor.can_redo(), egui::Button::new("Redo")).on_hover_text("Redo (Ctrl+Shift+Z)").clicked() {
             app.editor.redo(&mut app.project);
+        }
+        ui.separator();
+        if ui.button("[").on_hover_text("Range in at playhead (I)").clicked() {
+            app.editor.range_in = Some(app.editor.playhead);
+        }
+        if ui.button("]").on_hover_text("Range out at playhead (O)").clicked() {
+            app.editor.range_out = Some(app.editor.playhead);
+        }
+        let has_range = app.editor.range_in.is_some() || app.editor.range_out.is_some();
+        if ui
+            .add_enabled(has_range, egui::Button::new("✕"))
+            .on_hover_text("Clear export range (Shift+I/O)")
+            .clicked()
+        {
+            app.editor.range_in = None;
+            app.editor.range_out = None;
         }
         ui.separator();
         if ui.button("💾 Save").on_hover_text("Save .reel project (Ctrl+S)").clicked() {
@@ -1202,6 +1272,40 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             if resp.drag_stopped() {
                 app.editor.drag = None;
             }
+        }
+    }
+
+    // Export range: dim everything outside [in, out], mark the edges.
+    let (rin, rout) = (app.editor.range_in, app.editor.range_out);
+    if rin.is_some() || rout.is_some() {
+        let shade = Color32::from_black_alpha(120);
+        let body = Rect::from_min_max(
+            egui::pos2(full.left(), full.top() + ruler_h),
+            full.right_bottom(),
+        );
+        if let Some(i) = rin {
+            let x = t_to_x(i).clamp(full.left(), full.right());
+            painter.rect_filled(
+                Rect::from_min_max(body.left_top(), egui::pos2(x, body.bottom())),
+                0.0,
+                shade,
+            );
+            painter.line_segment(
+                [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
+                Stroke::new(1.5, theme::CYAN),
+            );
+        }
+        if let Some(o) = rout {
+            let x = t_to_x(o).clamp(full.left(), full.right());
+            painter.rect_filled(
+                Rect::from_min_max(egui::pos2(x, body.top()), body.right_bottom()),
+                0.0,
+                shade,
+            );
+            painter.line_segment(
+                [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
+                Stroke::new(1.5, theme::CYAN),
+            );
         }
     }
 

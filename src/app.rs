@@ -365,6 +365,14 @@ impl ReelApp {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
+        // Opening a file while editing an existing timeline IMPORTS it.
+        if self.mode == Mode::Editor
+            && !self.opening_for_project
+            && !self.project.export_segments().is_empty()
+        {
+            self.import_into_timeline(p);
+            return;
+        }
         if std::mem::take(&mut self.opening_for_project) {
             // Source of a loaded .reel: stay paused at the playhead's mapped
             // source position; the timeline already has its clips.
@@ -604,17 +612,22 @@ impl ReelApp {
         }
     }
 
-    /// Timeline scrub: move the playhead and preview the frame under it.
+    /// Timeline scrub: move the playhead and preview the frame under it —
+    /// switching the previewed file when the playhead crosses into a clip
+    /// from a different source.
     pub fn seek_timeline(&mut self, t: f64) {
         self.editor.playhead = t.max(0.0);
         if let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) {
             let (id, src, in_point, start) =
                 (clip.id, clip.source.clone(), clip.in_point, clip.start);
+            let want = in_point + (self.editor.playhead - start);
             if let Some(player) = self.player.as_mut() {
                 if src == player.path {
-                    player.seek(in_point + (self.editor.playhead - start));
-                    self.editor.active_clip = Some(id);
+                    player.seek(want);
+                } else {
+                    player.switch_source(&src, want);
                 }
+                self.editor.active_clip = Some(id);
             }
         }
     }
@@ -640,16 +653,32 @@ impl ReelApp {
             .cloned();
         let Some(clip) = active else { return };
         self.editor.active_clip = Some(clip.id);
+        // Stop at the out-marker when a range is set.
+        if let Some(out) = self.editor.range_out {
+            if self.editor.playhead >= out {
+                if player.playing {
+                    player.toggle_play();
+                }
+                self.editor.playhead = out;
+                return;
+            }
+        }
         if pos <= clip.in_point + clip.duration + 0.02 {
             self.editor.playhead = clip.start + (pos - clip.in_point).max(0.0);
         } else {
             match self.project.clip_after(TrackKind::Video, clip.start).cloned() {
-                Some(next) if next.source == player.path => {
+                Some(next) => {
                     self.editor.playhead = next.start;
                     self.editor.active_clip = Some(next.id);
-                    player.seek(next.in_point);
+                    if next.source == player.path {
+                        player.seek(next.in_point);
+                    } else {
+                        // Multi-source timeline: roll the preview onto the
+                        // next clip's file without rebuilding the player.
+                        player.switch_source(&next.source, next.in_point);
+                    }
                 }
-                _ => {
+                None => {
                     // End of the edit.
                     if player.playing {
                         player.toggle_play();
@@ -658,6 +687,36 @@ impl ReelApp {
                 }
             }
         }
+    }
+
+    /// Add media to the current edit instead of replacing it (used when a
+    /// file is opened while the editor has clips).
+    fn import_into_timeline(&mut self, p: Player) {
+        let name = std::path::Path::new(&p.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.path.clone());
+        self.editor.push_undo(&self.project);
+        match p.kind {
+            MediaKind::Audio => self.project.append_audio(&name, &p.path, p.info.duration),
+            _ => self.project.append_video(&name, &p.path, p.info.duration),
+        }
+        self.status = format!("Added {name} to the timeline.");
+        self.image = None;
+        self.image_uploaded = false;
+        self.tex_id = None;
+        self.tex = None;
+        self.player = Some(p);
+        // Preview where the new clip landed.
+        let t = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|tr| tr.clips.iter())
+            .filter(|c| c.source == self.player.as_ref().map(|p| p.path.clone()).unwrap_or_default())
+            .map(|c| c.start)
+            .fold(0.0, f64::max);
+        self.seek_timeline(t);
     }
 
     /// Split every clip under the playhead (S).

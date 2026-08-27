@@ -261,6 +261,40 @@ impl MpvPlayer {
         let _ = self.command(&["seek", &format!("{secs:.4}"), "absolute+exact"]);
     }
 
+    /// Load a different file into this same mpv instance — the multi-source
+    /// timeline preview: far cheaper than tearing down and rebuilding the
+    /// player (no core init, no audio-device re-open).
+    pub fn load_file(&mut self, path: &str, start: f64) -> Result<()> {
+        self.command(&["loadfile", path])?;
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let ev = unsafe { &*(self.lib.mpv_wait_event)(self.handle, 0.05) };
+            match ev.event_id {
+                MPV_EVENT_FILE_LOADED => break,
+                MPV_EVENT_END_FILE | MPV_EVENT_SHUTDOWN => bail!("mpv could not open {path}"),
+                _ => {}
+            }
+            if Instant::now() > deadline {
+                bail!("mpv timed out opening {path}");
+            }
+        }
+        let width = self.get_i64("width").unwrap_or(0) as u32;
+        let height = self.get_i64("height").unwrap_or(0) as u32;
+        self.has_video = width > 0 && height > 0;
+        self.albumart = self.get_flag("current-tracks/video/albumart");
+        self.orig_video = None;
+        let fps = self
+            .get_f64("container-fps")
+            .or_else(|| self.get_f64("estimated-vf-fps"))
+            .filter(|f| *f > 0.0)
+            .unwrap_or(30.0);
+        self.info = VideoInfo { width, height, fps, duration: self.get_f64("duration").unwrap_or(0.0) };
+        if start > 0.0 {
+            self.seek(start);
+        }
+        Ok(())
+    }
+
     /// Switch to hardware decode (copy-back). Called shortly after playback
     /// starts — mpv reinitializes the decoder in the background.
     pub fn enable_hwdec(&mut self) {

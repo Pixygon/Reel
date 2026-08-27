@@ -252,6 +252,34 @@ impl Player {
         matches!(self.backend, Backend::Mpv(_))
     }
 
+    /// Point this player at a different file (multi-source timelines).
+    /// Cheap on the mpv backend; the subprocess fallback can't do it.
+    pub fn switch_source(&mut self, path: &str, start: f64) -> bool {
+        let was_playing = self.playing;
+        match &mut self.backend {
+            Backend::Mpv(m) => match m.load_file(path, start) {
+                Ok(()) => {
+                    self.path = path.to_string();
+                    self.info = m.info.clone();
+                    self.kind = if m.has_video && !m.albumart { MediaKind::Video } else { MediaKind::Audio };
+                    self.position = start;
+                    self.current = None;
+                    self.ended = false;
+                    self.hwdec_upgraded = false;
+                    m.set_pause(!was_playing);
+                    self.dirty = true;
+                    self.touch();
+                    true
+                }
+                Err(e) => {
+                    log::warn!("could not switch source to {path}: {e}");
+                    false
+                }
+            },
+            Backend::Subprocess { .. } => false,
+        }
+    }
+
     /// Visualizers apply to audio media on the mpv backend.
     pub fn supports_visualizer(&self) -> bool {
         self.kind == MediaKind::Audio && matches!(self.backend, Backend::Mpv(_))
