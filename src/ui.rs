@@ -283,13 +283,10 @@ fn player_view(ctx: &egui::Context, app: &mut ReelApp) {
 
     // The media owns the whole window; controls are an overlay that fades
     // after a few idle seconds during playback.
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show(ctx, |ui| viewport(ui, app));
-
     let playing = app.player.as_ref().map(|p| p.playing).unwrap_or(false);
     const SHOW_FOR: f32 = 2.5;
     const FADE_OVER: f32 = 0.45;
+    const CHROME_H: f32 = 86.0;
     let idle = app.last_activity.elapsed().as_secs_f32();
     let alpha = if !playing {
         1.0
@@ -299,27 +296,37 @@ fn player_view(ctx: &egui::Context, app: &mut ReelApp) {
         (1.0 - (idle - SHOW_FOR) / FADE_OVER).clamp(0.0, 1.0)
     };
 
-    if alpha > 0.0 {
-        let screen_w = ctx.screen_rect().width();
-        let r = egui::Area::new(egui::Id::new("player_chrome"))
-            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, 0.0])
-            .show(ctx, |ui| {
-                ui.set_opacity(alpha);
-                egui::Frame::NONE
-                    .fill(Color32::from_black_alpha(170))
-                    .inner_margin(egui::Margin::symmetric(16, 10))
-                    .show(ui, |ui| {
-                        ui.set_width(screen_w - 32.0);
-                        chrome(ui, app);
-                    });
-            });
-        if r.response.contains_pointer() {
+    egui::CentralPanel::default().frame(egui::Frame::NONE).show(ctx, |ui| {
+        viewport(ui, app);
+        if alpha <= 0.0 {
+            // Fully faded: the video is the interface. Hide the cursor too.
+            ui.ctx().set_cursor_icon(egui::CursorIcon::None);
+            return;
+        }
+        // The overlay is a child ui pinned to the panel's bottom strip —
+        // an explicit max_rect, so the width-greedy seek slider and
+        // columns() are hard-bounded to the window. (An anchored Area has
+        // an unbounded max_rect: its layout inflated off-screen — the
+        // invisible-controls bug.)
+        let screen = ui.max_rect();
+        let strip = Rect::from_min_max(
+            egui::pos2(screen.left(), screen.bottom() - CHROME_H),
+            screen.right_bottom(),
+        );
+        ui.painter()
+            .rect_filled(strip, 0.0, Color32::from_black_alpha((170.0 * alpha) as u8));
+        let inner = strip.shrink2(Vec2::new(16.0, 9.0));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        child.set_opacity(alpha);
+        chrome(&mut child, app);
+        if ui.ctx().input(|i| i.pointer.hover_pos()).is_some_and(|p| strip.contains(p)) {
             app.touch_activity();
         }
-    } else {
-        // Fully faded: the video is the interface. Hide the cursor too.
-        ctx.set_cursor_icon(egui::CursorIcon::None);
-    }
+    });
     toast(ctx, app);
 }
 
@@ -465,10 +472,14 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
     if let Some(player) = app.player.as_mut() {
         let dur = player.info.duration.max(0.001);
         let mut pos = player.position;
+        // Scoped: slider_width is inherited by child uis — leaking the
+        // full-window width here turns the volume slider gigantic.
+        let normal_slider = ui.spacing().slider_width;
         ui.spacing_mut().slider_width = ui.available_width();
         let resp = ui.add(
             egui::Slider::new(&mut pos, 0.0..=dur).show_value(false).trailing_fill(true),
         );
+        ui.spacing_mut().slider_width = normal_slider;
         if resp.drag_stopped() {
             player.seek(pos);
             resp.surrender_focus(); // keep arrow keys on the player, not the slider
@@ -502,14 +513,14 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 if ui.button("⏮").on_hover_text("Back to start").clicked() {
                     player.seek(0.0);
                 }
-                if ui.button("⧏").on_hover_text("Frame back (,)").clicked() {
+                if ui.button("◀").on_hover_text("Frame back (,)").clicked() {
                     player.frame_step(false);
                 }
                 let label = if player.playing { "⏸" } else { "▶" };
                 if ui.button(RichText::new(label).size(18.0)).on_hover_text("Play/pause (Space)").clicked() {
                     player.toggle_play();
                 }
-                if ui.button("⧐").on_hover_text("Frame forward (.)").clicked() {
+                if ui.button("▶").on_hover_text("Frame forward (.)").clicked() {
                     player.frame_step(true);
                 }
                 ui.label(RichText::new(time_text).monospace());
@@ -560,6 +571,7 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
 
             // Volume — only when the backend actually produces sound.
             if player.has_audio() {
+                ui.spacing_mut().slider_width = 90.0;
                 let mut vol = player.volume;
                 if ui
                     .add(egui::Slider::new(&mut vol, 0.0..=130.0).show_value(false).trailing_fill(true))

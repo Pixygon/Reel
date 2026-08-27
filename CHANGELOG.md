@@ -4,6 +4,16 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.13.0] — 2026-08-27
+
+### Changed
+- Updated the frame-step back/forward icons in the player controls for a cleaner look.
+
+### Fixed
+- Fixed the playback control overlay (seek bar, volume slider, buttons) rendering with an inflated, invisible layout in certain window sizes — controls now stay correctly bounded to the window.
+- The volume slider no longer stretches to the full width of the window; it now displays at a normal, compact size.
+
+
 ## [0.12.0] — 2026-08-27
 
 ### Added
