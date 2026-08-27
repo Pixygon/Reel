@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.10.0] — 2026-08-27
+
+### Added
+- The file picker now supports audio and image files in addition to video, with a new combined "Media" filter alongside separate Video, Audio, and Images filters.
+
+### Fixed
+- Opening a file on Linux via the file picker is now more reliable, and if the dialog fails to open for any reason, you'll see a helpful message suggesting you drop a file or paste a path instead.
+
+
 ## [0.9.0] — 2026-08-27
 
 ### Added

@@ -16,6 +16,11 @@ cargo run --release -- <file>  # run; opens and auto-plays the file
 RUST_LOG=info … reel <file>    # logs which playback backend engaged
 REEL_BACKEND=ffmpeg …          # force the subprocess fallback
 pearl ship                     # ship ritual: test → draft → ship → commit (builds lin+win → CDN)
+# AFTER every pearl ship: update ~/repos/ReelSite/latest.json to the new
+# version, commit+push, and trigger the Coolify deploy (app uuid
+# j3agln7m9aqo8j88nqnou5j1). The CDN caches manifest.json for 30 days with no
+# purge, so the site's latest.json is the ONLY fresh "latest" pointer —
+# installs and the download buttons read it first.
 ```
 
 ## Architecture rules (the non-negotiables)

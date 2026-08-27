@@ -104,14 +104,40 @@ impl ReelApp {
         }
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            let picked = rfd::FileDialog::new()
-                .add_filter(
-                    "Video",
-                    &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"],
-                )
-                .add_filter("All files", &["*"])
-                .pick_file();
-            let _ = tx.send(picked.map(|p| p.to_string_lossy().into_owned()));
+            let filters: [(&str, &[&str]); 4] = [
+                ("Media", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
+                            "mp3", "flac", "ogg", "opus", "m4a", "wav",
+                            "png", "jpg", "jpeg", "webp", "bmp", "svg"]),
+                ("Video", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"]),
+                ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
+                ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
+            ];
+            // Linux: rfd talks to the portal over zbus built in tokio mode, so
+            // the dialog must run inside a tokio runtime on this thread —
+            // without it, zbus panics ("no reactor running").
+            #[cfg(target_os = "linux")]
+            let picked = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .ok()
+                .and_then(|rt| {
+                    rt.block_on(async {
+                        let mut d = rfd::AsyncFileDialog::new();
+                        for (name, ext) in filters {
+                            d = d.add_filter(name, ext);
+                        }
+                        d.pick_file().await.map(|h| h.path().to_string_lossy().into_owned())
+                    })
+                });
+            #[cfg(not(target_os = "linux"))]
+            let picked = {
+                let mut d = rfd::FileDialog::new();
+                for (name, ext) in filters {
+                    d = d.add_filter(name, ext);
+                }
+                d.pick_file().map(|p| p.to_string_lossy().into_owned())
+            };
+            let _ = tx.send(picked);
         });
         self.picker = Some(rx);
     }
@@ -125,7 +151,11 @@ impl ReelApp {
             }
             Ok(None) => self.picker = None, // dialog dismissed
             Err(crossbeam_channel::TryRecvError::Empty) => {}
-            Err(crossbeam_channel::TryRecvError::Disconnected) => self.picker = None,
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                // The dialog thread died without answering (e.g. no portal).
+                self.picker = None;
+                self.status = "File dialog unavailable — drop a file or paste a path instead.".into();
+            }
         }
     }
 
