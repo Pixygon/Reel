@@ -11,16 +11,17 @@ use egui::{Color32, Key, Rect, RichText, Sense, Stroke, Vec2};
 pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_picker();
     app.poll_captures();
+    app.track_status();
     dropped_files(ctx, app);
     shortcuts(ctx, app);
 
-    top_bar(ctx, app);
+    // Any real input keeps the control overlay awake.
+    let active = ctx.input(|i| !i.events.is_empty() || i.pointer.is_moving() || i.pointer.any_down());
+    if active {
+        app.touch_activity();
+    }
+
     defaults_banner(ctx, app);
-    egui::TopBottomPanel::bottom("status").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(&app.status).color(theme::CYAN).small());
-        });
-    });
 
     match app.mode {
         Mode::Player => player_view(ctx, app),
@@ -29,6 +30,25 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
 
     export_window(ctx, app);
     defaults_window(ctx, app);
+}
+
+/// Transient status toast (top center) — the player has no status bar.
+fn toast(ctx: &egui::Context, app: &ReelApp) {
+    if app.status.is_empty() || app.status_at.elapsed().as_secs_f32() > 5.0 {
+        return;
+    }
+    egui::Area::new(egui::Id::new("toast"))
+        .anchor(egui::Align2::CENTER_TOP, [0.0, 16.0])
+        .interactable(false)
+        .show(ctx, |ui| {
+            egui::Frame::NONE
+                .fill(Color32::from_black_alpha(190))
+                .corner_radius(8.0)
+                .inner_margin(egui::Margin::symmetric(14, 8))
+                .show(ui, |ui| {
+                    ui.label(RichText::new(&app.status).color(theme::CYAN));
+                });
+        });
 }
 
 /// One-time nudge: Reel's front door is a double-click on a media file, so
@@ -203,78 +223,104 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
     }
 }
 
-fn top_bar(ctx: &egui::Context, app: &mut ReelApp) {
-    egui::TopBottomPanel::top("topbar").show(ctx, |ui| {
-        ui.horizontal(|ui| {
-            ui.label(RichText::new("REEL").color(theme::STAR).strong().size(18.0));
-            if app.mode == Mode::Editor {
-                ui.label(RichText::new("· editor").color(theme::EMBER).small());
-            }
+/// ☰ REEL — the app menu, living in the bottom control bar. Capture appears
+/// here only as a fallback when no system tray is available (its real home).
+fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
+    ui.menu_button(RichText::new("☰ REEL").strong().color(theme::STAR), |ui| {
+        if ui.button("Open…").clicked() {
+            app.open_picker();
+            ui.close_menu();
+        }
+        if ui.button("Default apps…").clicked() {
+            app.defaults_open = true;
+            ui.close_menu();
+        }
+        if ui.button("Website — reel.pixygon.io").clicked() {
+            ui.ctx().open_url(egui::OpenUrl::new_tab("https://reel.pixygon.io"));
+            ui.close_menu();
+        }
+        if !app.tray_available {
             ui.separator();
-
-            if ui.button("Open…").clicked() {
-                app.open_picker();
-            }
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                // Capture — the screen is media too.
-                let recording = app.recorder.is_some();
-                let rec_label = if recording {
-                    RichText::new("⏹ Stop").color(theme::EMBER).strong()
-                } else if app.record_starting() {
-                    RichText::new("⏺ …").color(theme::EMBER)
-                } else {
-                    RichText::new("⏺ Record").color(theme::EMBER)
-                };
-                let rec_hover = if recording {
-                    "Stop recording — it opens right here"
-                } else {
-                    "Record the screen — pick screen, window or region; opens here when stopped"
-                };
-                if ui.button(rec_label).on_hover_text(rec_hover).clicked() && !app.record_starting() {
+            ui.menu_button("📷 Screenshot", |ui| {
+                for (label, mode) in [
+                    ("Full screen", crate::capture::ShotMode::Full),
+                    ("Region…", crate::capture::ShotMode::Region),
+                    ("Window…", crate::capture::ShotMode::Window),
+                ] {
+                    if ui.button(label).clicked() {
+                        app.take_screenshot(mode);
+                        ui.close_menu();
+                    }
+                }
+            });
+            let rec_label = if app.recorder.is_some() {
+                "⏹ Stop recording"
+            } else if app.record_starting() {
+                "⏺ starting…"
+            } else {
+                "⏺ Record screen…"
+            };
+            if ui.button(rec_label).clicked() {
+                if !app.record_starting() {
                     app.toggle_record();
                 }
-                ui.menu_button("📷 Shot", |ui| {
-                    if ui.button("Full screen").clicked() {
-                        app.take_screenshot(crate::capture::ShotMode::Full);
-                        ui.close_menu();
-                    }
-                    if ui.button("Region…").clicked() {
-                        app.take_screenshot(crate::capture::ShotMode::Region);
-                        ui.close_menu();
-                    }
-                    if ui.button("Window…").clicked() {
-                        app.take_screenshot(crate::capture::ShotMode::Window);
-                        ui.close_menu();
-                    }
-                })
-                .response
-                .on_hover_text("Screenshot — it opens right here");
-
-                ui.menu_button("⚙", |ui| {
-                    if ui.button("Default apps…").clicked() {
-                        app.defaults_open = true;
-                        ui.close_menu();
-                    }
-                    if ui.button("Website — reel.pixygon.io").clicked() {
-                        ui.ctx().open_url(egui::OpenUrl::new_tab("https://reel.pixygon.io"));
-                        ui.close_menu();
-                    }
-                });
-            });
-        });
+                ui.close_menu();
+            }
+        }
+        ui.separator();
+        if ui.button("Quit").clicked() {
+            app.quit_requested = true;
+        }
     });
 }
 
 fn player_view(ctx: &egui::Context, app: &mut ReelApp) {
     if app.player.is_none() && app.image.is_none() {
         egui::CentralPanel::default().show(ctx, |ui| empty_state(ui, app));
+        toast(ctx, app);
         return;
     }
-    egui::TopBottomPanel::bottom("transport").show(ctx, |ui| transport(ui, app));
-    egui::CentralPanel::default().show(ctx, |ui| {
-        viewport(ui, app);
-    });
+
+    // The media owns the whole window; controls are an overlay that fades
+    // after a few idle seconds during playback.
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show(ctx, |ui| viewport(ui, app));
+
+    let playing = app.player.as_ref().map(|p| p.playing).unwrap_or(false);
+    const SHOW_FOR: f32 = 2.5;
+    const FADE_OVER: f32 = 0.45;
+    let idle = app.last_activity.elapsed().as_secs_f32();
+    let alpha = if !playing {
+        1.0
+    } else if idle < SHOW_FOR {
+        1.0
+    } else {
+        (1.0 - (idle - SHOW_FOR) / FADE_OVER).clamp(0.0, 1.0)
+    };
+
+    if alpha > 0.0 {
+        let screen_w = ctx.screen_rect().width();
+        let r = egui::Area::new(egui::Id::new("player_chrome"))
+            .anchor(egui::Align2::CENTER_BOTTOM, [0.0, 0.0])
+            .show(ctx, |ui| {
+                ui.set_opacity(alpha);
+                egui::Frame::NONE
+                    .fill(Color32::from_black_alpha(170))
+                    .inner_margin(egui::Margin::symmetric(16, 10))
+                    .show(ui, |ui| {
+                        ui.set_width(screen_w - 32.0);
+                        chrome(ui, app);
+                    });
+            });
+        if r.response.contains_pointer() {
+            app.touch_activity();
+        }
+    } else {
+        // Fully faded: the video is the interface. Hide the cursor too.
+        ctx.set_cursor_icon(egui::CursorIcon::None);
+    }
+    toast(ctx, app);
 }
 
 /// Nothing open — normally never seen (Reel is opened by clicking a file),
@@ -302,6 +348,12 @@ fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
 }
 
 fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
+    // The controls live at the very bottom (added first → outermost), always
+    // visible in the editor — this is a workspace, nothing fades here.
+    egui::TopBottomPanel::bottom("editor_chrome").show(ctx, |ui| {
+        chrome(ui, app);
+        ui.label(RichText::new(&app.status).color(theme::CYAN).small());
+    });
     egui::SidePanel::left("media").resizable(true).default_width(220.0).show(ctx, |ui| {
         ui.heading("Project");
         ui.label(format!("{} — {}×{} @ {:.0}fps", app.project.name, app.project.width, app.project.height, app.project.fps));
@@ -317,7 +369,6 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
         timeline(ui, app);
     });
     egui::CentralPanel::default().show(ctx, |ui| {
-        transport(ui, app);
         viewport(ui, app);
     });
 }
@@ -338,6 +389,10 @@ fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
             let scale = (rect.width() / vw).min(rect.height() / vh);
             let size = Vec2::new(vw * scale, vh * scale);
             let img_rect = Rect::from_center_size(rect.center(), size);
+            if app.image.is_some() {
+                // Stills can be transparent — show it honestly, viewer-style.
+                checkerboard(&painter, img_rect);
+            }
             painter.image(id, img_rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
             return;
         }
@@ -374,24 +429,96 @@ fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
     }
 }
 
-fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
+/// The classic transparency checkerboard, drawn under a still image. Base
+/// fill plus alternate cells only, so the rect count stays modest.
+fn checkerboard(painter: &egui::Painter, rect: Rect) {
+    const CELL: f32 = 14.0;
+    painter.rect_filled(rect, 0.0, Color32::from_gray(52));
+    let dark = Color32::from_gray(36);
+    let (cols, rows) = (
+        (rect.width() / CELL).ceil() as i32,
+        (rect.height() / CELL).ceil() as i32,
+    );
+    for row in 0..rows {
+        for col in 0..cols {
+            if (row + col) % 2 == 0 {
+                continue;
+            }
+            let min = egui::pos2(rect.left() + col as f32 * CELL, rect.top() + row as f32 * CELL);
+            let cell = Rect::from_min_size(min, Vec2::splat(CELL)).intersect(rect);
+            painter.rect_filled(cell, 0.0, dark);
+        }
+    }
+}
+
+/// The control chrome: a window-wide seek bar, then one row — ☰ REEL on the
+/// left, the transport centered, tools on the right. Used as the player's
+/// fading overlay and as the editor's fixed bottom bar.
+fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
     let mode = app.mode;
     let mut goto_editor = false;
     let mut goto_player = false;
     let mut open_export = false;
     let mut toggle_fullscreen = false;
 
-    // An image gets an info bar instead of a transport.
-    if let Some(img) = &app.image {
-        let name = std::path::Path::new(&img.path)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| img.path.clone());
-        let (w, h) = (img.width, img.height);
-        ui.horizontal(|ui| {
-            ui.label(RichText::new(name).color(theme::STAR));
-            ui.label(RichText::new(format!("{w}×{h}")).monospace());
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+    // Row 1: the seek bar, edge to edge (media with a duration only).
+    if let Some(player) = app.player.as_mut() {
+        let dur = player.info.duration.max(0.001);
+        let mut pos = player.position;
+        ui.spacing_mut().slider_width = ui.available_width();
+        let resp = ui.add(
+            egui::Slider::new(&mut pos, 0.0..=dur).show_value(false).trailing_fill(true),
+        );
+        if resp.drag_stopped() {
+            player.seek(pos);
+            resp.surrender_focus(); // keep arrow keys on the player, not the slider
+        } else if resp.dragged() && player.cheap_seek() {
+            player.seek(pos); // live scrub — frame-exact, mpv coalesces the seeks
+        }
+    }
+
+    // Row 2: three clusters.
+    ui.columns(3, |cols| {
+        cols[0].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            reel_menu(ui, app);
+        });
+
+        // Center: the transport (or the image's identity).
+        cols[1].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            if let Some(img) = &app.image {
+                let name = std::path::Path::new(&img.path)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| img.path.clone());
+                let text = format!("{name}  ·  {}×{}", img.width, img.height);
+                let est = 20.0 + text.chars().count() as f32 * 7.0;
+                ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
+                ui.label(RichText::new(text).color(theme::STAR));
+            } else if let Some(player) = app.player.as_mut() {
+                let time_text =
+                    format!("{}  /  {}", fmt_time(player.position), fmt_time(player.info.duration));
+                let est = 4.0 * 34.0 + time_text.chars().count() as f32 * 8.0 + 24.0;
+                ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
+                if ui.button("⏮").on_hover_text("Back to start").clicked() {
+                    player.seek(0.0);
+                }
+                if ui.button("⧏").on_hover_text("Frame back (,)").clicked() {
+                    player.frame_step(false);
+                }
+                let label = if player.playing { "⏸" } else { "▶" };
+                if ui.button(RichText::new(label).size(18.0)).on_hover_text("Play/pause (Space)").clicked() {
+                    player.toggle_play();
+                }
+                if ui.button("⧐").on_hover_text("Frame forward (.)").clicked() {
+                    player.frame_step(true);
+                }
+                ui.label(RichText::new(time_text).monospace());
+            }
+        });
+
+        cols[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if let Some(img_open) = app.image.is_some().then_some(()) {
+                let _ = img_open;
                 if ui
                     .button(RichText::new("⬇ Export").color(theme::CYAN))
                     .on_hover_text("Convert — PNG/JPEG/WebP, resize")
@@ -406,58 +533,9 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
                 } else if ui.button("▶ Done").on_hover_text("Back to the player (E)").clicked() {
                     goto_player = true;
                 }
-            });
-        });
-        if goto_editor {
-            app.mode = Mode::Editor;
-        }
-        if goto_player {
-            app.mode = Mode::Player;
-        }
-        if open_export {
-            app.export_open = true;
-        }
-        return;
-    }
-
-    let Some(player) = app.player.as_mut() else {
-        ui.horizontal(|ui| ui.label("—"));
-        return;
-    };
-
-    // Row 1: the seek bar, full width.
-    let dur = player.info.duration.max(0.001);
-    let mut pos = player.position;
-    let slider = egui::Slider::new(&mut pos, 0.0..=dur).show_value(false).trailing_fill(true);
-    let resp = ui.add_sized([ui.available_width(), 18.0], slider);
-    if resp.drag_stopped() {
-        player.seek(pos);
-        resp.surrender_focus(); // keep arrow keys on the player, not the slider
-    } else if resp.dragged() && player.cheap_seek() {
-        player.seek(pos); // live scrub — frame-exact, mpv coalesces the seeks
-    }
-
-    // Row 2: controls. Left cluster: transport. Right cluster: modes/tools.
-    ui.horizontal(|ui| {
-        let label = if player.playing { "⏸" } else { "▶" };
-        if ui.button(RichText::new(label).size(18.0)).on_hover_text("Play/pause (Space)").clicked() {
-            player.toggle_play();
-        }
-        if ui.button("⏮").on_hover_text("Back to start").clicked() {
-            player.seek(0.0);
-        }
-        if ui.button("⧏").on_hover_text("Frame back (,)").clicked() {
-            player.frame_step(false);
-        }
-        if ui.button("⧐").on_hover_text("Frame forward (.)").clicked() {
-            player.frame_step(true);
-        }
-        ui.label(
-            RichText::new(format!("{}  /  {}", fmt_time(player.position), fmt_time(player.info.duration)))
-                .monospace(),
-        );
-
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                return;
+            }
+            let Some(player) = app.player.as_mut() else { return };
             if ui
                 .button(RichText::new("⬇ Export").color(theme::CYAN))
                 .on_hover_text("Convert this file — codec, quality, size")

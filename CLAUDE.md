@@ -65,9 +65,20 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   defaults, ~/.config/reel/settings.json. The UI flow is a one-time banner +
   ⚙ → Default apps. Arch packaging extras live in `.pixygon.json` build.arch
   (depends/desktop/icon — pearl.mjs reads them).
-- There is NO player/editor tab bar: the app defaults to Player; ✂ Edit (or
-  E) enters the editor, ▶ Done leaves it. Assume users enter Reel by
-  double-clicking a media file, never bare.
+- There is NO player/editor tab bar and NO top bar at all: the app defaults
+  to Player; ✂ Edit (or E) enters the editor, ▶ Done leaves it. Assume users
+  enter Reel by double-clicking a media file, never bare.
+- Player chrome is a bottom OVERLAY (`chrome()` in ui.rs): window-wide seek
+  bar, ☰ REEL menu left, transport centered, tools right. It fades after
+  ~2.5 s of no input during playback (cursor hides too) and stays put while
+  paused or in the editor (fixed bottom panel there). Never reintroduce a
+  top bar or a permanently visible transport in the player.
+- Screen capture lives in the SYSTEM TRAY (`tray.rs`, ksni over the shared
+  runtime; menu clicks wake winit via EventLoopProxy<UserEvent>). The ☰ menu
+  shows capture entries ONLY when no tray host exists (`app.tray_available`).
+- Textures handed to egui MUST be premultiplied-alpha (egui's blend mode
+  assumes it). ImageDoc stays straight-alpha for exports; `sync_frame`
+  premultiplies the uploaded copy. Transparent stills get the checkerboard.
 - Known upstream gap: winit 0.30 has no Wayland file-drop — DnD works on
   X11/Windows only. Don't advertise drops on Wayland (empty-state hint
   already branches on WAYLAND_DISPLAY).

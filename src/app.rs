@@ -55,6 +55,16 @@ pub struct ReelApp {
     pub def_video: bool,
     pub def_audio: bool,
     pub def_images: bool,
+
+    /// Last pointer/keyboard activity — drives the control-overlay fade.
+    pub last_activity: std::time::Instant,
+    /// When `status` last changed — drives the transient toast.
+    pub status_at: std::time::Instant,
+    status_prev: String,
+    /// REEL menu → Quit.
+    pub quit_requested: bool,
+    /// A system tray is registered — capture lives there, not in the app UI.
+    pub tray_available: bool,
 }
 
 impl ReelApp {
@@ -84,6 +94,23 @@ impl ReelApp {
             def_video: true,
             def_audio: true,
             def_images: false,
+            last_activity: std::time::Instant::now(),
+            status_at: std::time::Instant::now(),
+            status_prev: String::new(),
+            quit_requested: false,
+            tray_available: false,
+        }
+    }
+
+    pub fn touch_activity(&mut self) {
+        self.last_activity = std::time::Instant::now();
+    }
+
+    /// Detect status changes (assignments happen all over) for the toast.
+    pub fn track_status(&mut self) {
+        if self.status != self.status_prev {
+            self.status_prev = self.status.clone();
+            self.status_at = std::time::Instant::now();
         }
     }
 
@@ -370,8 +397,20 @@ impl ReelApp {
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {
                 img.clamp_to(gpu.max_texture_dim);
+                // egui blends premultiplied-alpha textures; ImageDoc keeps
+                // straight alpha (exports need it), so premultiply the copy
+                // we upload — without this, transparency renders wrong.
+                let mut rgba = img.data.clone();
+                for px in rgba.chunks_exact_mut(4) {
+                    let a = px[3] as u32;
+                    if a < 255 {
+                        px[0] = (px[0] as u32 * a / 255) as u8;
+                        px[1] = (px[1] as u32 * a / 255) as u8;
+                        px[2] = (px[2] as u32 * a / 255) as u8;
+                    }
+                }
                 let tex = VideoTexture::new(&gpu.device, img.width, img.height);
-                tex.write(&gpu.queue, &img.data);
+                tex.write(&gpu.queue, &rgba);
                 self.tex_id = Some(egui.register_texture(&gpu.device, &tex.view));
                 self.tex = Some(tex);
                 self.image_uploaded = true;

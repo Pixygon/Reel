@@ -4,6 +4,20 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.12.0] — 2026-08-27
+
+### Added
+- Status messages now appear as a brief toast notification at the top of the window instead of a permanent bottom status bar. _(781f2dd)_
+- A new ☰ REEL menu consolidates Open, Default apps, website link, and Quit in one place. _(781f2dd)_
+
+### Changed
+- The player now has no top bar or tab bar at all — media fills the entire window. Playback controls (seek bar, transport, ☰ menu) appear as a bottom overlay that fades away, along with the cursor, after a couple of idle seconds during playback, then reappear on any input or when paused. **(BREAKING)** _(781f2dd)_
+- Screenshot and screen recording have moved into Reel's system tray icon, so they're reachable even when Reel's window is minimized or buried. The in-app ☰ menu only shows capture options as a fallback when no system tray is available. **(BREAKING)** _(781f2dd)_
+
+### Fixed
+- Transparent images now render with correct colors instead of a dark or fringed halo around transparent areas, and are shown over a checkerboard backdrop like a proper image viewer. _(781f2dd)_
+
+
 ## [0.11.0] — 2026-08-27
 
 ### Added

@@ -19,6 +19,17 @@ mod media;
 mod portal;
 #[cfg(target_os = "linux")]
 mod runtime;
+#[cfg(target_os = "linux")]
+mod tray;
+
+/// Events that wake the winit loop from outside (tray menu clicks).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UserEvent {
+    Show,
+    Shot(capture::ShotMode),
+    ToggleRecord,
+    Quit,
+}
 mod theme;
 mod ui;
 mod video;
@@ -40,9 +51,27 @@ struct Reel {
     initial_open: Option<String>,
     /// Last title applied to the window (avoids redundant set_title calls).
     window_title: String,
+    #[cfg(target_os = "linux")]
+    tray: Option<ksni::Handle<tray::ReelTray>>,
+    /// Last recording state mirrored into the tray label.
+    tray_recording: bool,
 }
 
-impl ApplicationHandler for Reel {
+impl Reel {
+    /// Keep the tray's Start/Stop label in sync with reality.
+    fn sync_tray(&mut self) {
+        let rec = self.app.recorder.is_some();
+        if rec != self.tray_recording {
+            self.tray_recording = rec;
+            #[cfg(target_os = "linux")]
+            if let Some(handle) = &self.tray {
+                tray::set_recording(handle, rec);
+            }
+        }
+    }
+}
+
+impl ApplicationHandler<UserEvent> for Reel {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return; // already initialised (e.g. after suspend/resume)
@@ -131,12 +160,36 @@ impl ApplicationHandler for Reel {
                     self.window_title = self.app.window_title.clone();
                     window.set_title(&self.window_title);
                 }
+                self.sync_tray();
+                if self.app.quit_requested {
+                    event_loop.exit();
+                }
             }
             _ => {}
         }
 
         if response.repaint {
             window.request_redraw();
+        }
+    }
+
+    fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
+        match event {
+            UserEvent::Show => {
+                if let Some(w) = &self.window {
+                    w.set_visible(true);
+                    w.focus_window();
+                }
+            }
+            UserEvent::Shot(mode) => self.app.take_screenshot(mode),
+            UserEvent::ToggleRecord => {
+                self.app.toggle_record();
+                self.sync_tray();
+            }
+            UserEvent::Quit => event_loop.exit(),
+        }
+        if let Some(w) = &self.window {
+            w.request_redraw();
         }
     }
 
@@ -189,8 +242,11 @@ fn main() {
             _ => {}
         }
     }
-    let event_loop = EventLoop::new().expect("event loop");
+    let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
+
+    #[cfg(target_os = "linux")]
+    let tray = tray::spawn(event_loop.create_proxy());
 
     let mut reel = Reel {
         window: None,
@@ -199,6 +255,13 @@ fn main() {
         app: ReelApp::new(),
         initial_open,
         window_title: "Reel".into(),
+        #[cfg(target_os = "linux")]
+        tray,
+        tray_recording: false,
     };
+    #[cfg(target_os = "linux")]
+    {
+        reel.app.tray_available = reel.tray.is_some();
+    }
     event_loop.run_app(&mut reel).expect("run");
 }

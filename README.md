@@ -38,9 +38,15 @@ not the finished tool, but real, honest software you can build and run today.
   dependencies and installs the desktop entry system-wide; the site's
   installer offers the codecs on other distros. The app is meant to be
   entered by double-clicking media, not launched bare.
-- **Capture the screen — built in.** **📷 Shot** grabs a screenshot (full
-  screen, region, or window), **⏺ Record** records the screen — and the
-  result opens right in Reel, ready to trim, convert or export. Recording
+- **A player-shaped player.** No toolbars over your media: the video fills
+  the window, the seek bar runs edge to edge, the transport sits centered
+  beneath it, and the whole control strip fades away (cursor included) after
+  a couple of idle seconds during playback. Transparent images render
+  properly (premultiplied alpha) over a viewer checkerboard.
+- **Capture the screen — from the system tray.** Screenshot (full/region/
+  window) and screen recording live in Reel's tray icon, reachable even with
+  the window buried — and the result opens right in Reel, ready to trim,
+  convert or export. Recording
   needs **no external tools**: Reel speaks xdg-desktop-portal + PipeWire
   directly (the same door OBS uses), so the system's own picker chooses
   screen/window/region, system audio is captured when a monitor source

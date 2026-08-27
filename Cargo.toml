@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.12.0"
+version = "0.13.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -50,5 +50,6 @@ lto = "thin"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
+ksni = "0.3.6"
 pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs" }
 tokio = { version = "1", features = ["rt"] }
