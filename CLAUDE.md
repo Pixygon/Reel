@@ -79,6 +79,12 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Textures handed to egui MUST be premultiplied-alpha (egui's blend mode
   assumes it). ImageDoc stays straight-alpha for exports; `sync_frame`
   premultiplies the uploaded copy. Transparent stills get the checkerboard.
+- Timeline export renders `Project::export_segments()` (V1 clips in order,
+  gaps collapsed — same flattening editor playback uses) through ONE ffmpeg
+  filter_complex trim+concat graph (`export::build_timeline_args`), sharing
+  the job/progress/cancel plumbing with source exports via `spawn_job`.
+  Audio legs are added only when every source has an audio stream. Keep the
+  export dialog honest: controls that a mode ignores must not be shown.
 - Editor rules: `EditorState.playhead` is TIMELINE time; source↔timeline
   mapping goes through `Project::source_to_timeline` / clip in_points —
   never treat player.position as timeline time. Editor ops (split/delete/

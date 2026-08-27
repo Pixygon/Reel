@@ -81,8 +81,13 @@ never leaving the GPU.
 
 - [x] **Convert/export of the source file** (the HandBrake seam, straight from
       the player): H.264/H.265/AV1/VP9 + lossless remux, quality presets/CRF,
-      downscale, audio modes, live progress + cancel. — [ ] **Timeline export**
-      (render the composited edit) and a render queue; ProRes.
+      downscale, audio modes, live progress + cancel.
+- [x] **Timeline export** — the cut renders to a new file (ffmpeg
+      trim+concat filter graph over the V1 segments, audio in lockstep,
+      optional downscale). The dialog offers "Source file" vs "✂ The edit"
+      and defaults to the edit when you're in the editor.
+- [ ] Render queue; ProRes; export a selected range/in-out points;
+      compositing effects in the render (needs the GPU compositor).
 - [ ] Effects/transitions (GPU shaders), a basic colour panel, audio levels/mixer.
 - [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.
