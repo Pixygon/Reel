@@ -101,6 +101,15 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   resizable panel collapses), and chrome/columns must only ever see bounded
   Uis. Glyphs: egui's font lacks many arrows (⧏⧐↶↷ render as boxes) — test
   new icons visually under Xvfb before shipping.
+- Effects have ONE definition (`effects.rs::apply_reference`) mirrored in
+  `video.wgsl` (preview) and `Effects::filters()` (ffmpeg render); the parity
+  test drives real ffmpeg and compares pixels. Change one, change all three,
+  and keep the test green — a preview that lies is worse than no preview.
+  Effects apply on sRGB-encoded values, so the shader converts linear→sRGB
+  around them (the frame texture is sRGB).
+- Uniform structs: WGSL field ORDER and types must match `video_pass.rs`
+  exactly. A mismatch is silent — fields read each other's bytes (this once
+  made exposure read 0 and blacked the whole picture).
 - The picture is drawn by Reel's own wgpu pipeline (`video_pass.rs` +
   `video.wgsl`), not `painter.image` — it forces alpha for video (mpv leaves
   a padding byte; there is deliberately NO CPU alpha pass any more) and keeps

@@ -27,7 +27,10 @@ not the finished tool, but real, honest software you can build and run today.
   editor timeline (video/stills on V1, audio on A1).
 - **An editor that finishes the job.** Trim by dragging clip edges, split at
   the playhead, move with snapping, undo/redo, set in/out markers, drop in
-  more source files — then **export the edit itself**. Mixed resolutions and
+  more source files, give clips a **look** (exposure/contrast/saturation and
+  fades, previewed live and rendered identically) — then **export the edit
+  itself**, or hit a **one-click destination**: YouTube, TikTok, Reels,
+  Instagram, Facebook, X. Mixed resolutions and
   codecs are normalised automatically, and the render uses your **GPU
   encoder** (NVENC/VideoToolbox) when there is one.
 - **Convert without editing — the HandBrake seam.** Hit **⬇ Export** on

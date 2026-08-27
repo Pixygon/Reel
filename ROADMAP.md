@@ -110,8 +110,16 @@ never leaving the GPU.
       crosses clips (one mpv instance, `loadfile`); renders normalise every
       segment (fit+letterbox, square pixels, one fps, one audio format) so
       mixed resolutions/codecs/rates concatenate correctly.
-- [ ] Render queue; ProRes; compositing effects in the render (needs the GPU
-      compositor).
+- [x] **One-click social presets** — YouTube (1080p/4K), TikTok, Reels/Shorts,
+      Instagram feed (4:5), Square, Facebook, X. Each carries the frame, the
+      fit (letterbox / crop / blurred sides) and the codec, and names the
+      output per platform so the TikTok and YouTube cuts sit side by side.
+- [x] **Per-clip effects with preview/render parity** — exposure, contrast,
+      saturation, fade in/out. One formula (`effects.rs`) drives BOTH the
+      preview shader and the ffmpeg render, and a test drives real ffmpeg and
+      compares its pixels against that formula, so the editor cannot lie.
+- [ ] Render queue; ProRes; transitions between clips (crossfade needs two
+      textures in the preview pass); per-clip transform/crop.
 - [ ] Effects/transitions (GPU shaders), a basic colour panel, audio levels/mixer.
 - [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.
