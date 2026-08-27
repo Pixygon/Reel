@@ -30,6 +30,13 @@ pub struct Player {
     pub current: Option<Frame>,
     /// True once playback has run out at end of file.
     pub ended: bool,
+    /// 0–130 (100 = source level; mpv can amplify). No effect on the
+    /// video-only subprocess fallback.
+    pub volume: f64,
+    pub muted: bool,
+    /// Playback rate, 1.0 = realtime.
+    pub speed: f64,
+    pub looping: bool,
     dirty: bool,
     /// Redraws are requested until this instant even while paused, so frames
     /// that land asynchronously (open, seek) reach the screen.
@@ -57,6 +64,10 @@ impl Player {
             position: 0.0,
             current: None,
             ended: false,
+            volume: 100.0,
+            muted: false,
+            speed: 1.0,
+            looping: false,
             dirty: true,
             active_until: Instant::now() + Duration::from_millis(500),
         })
@@ -106,6 +117,68 @@ impl Player {
         self.touch();
     }
 
+    /// Seek relative to the current position (shortcut keys, jog wheel).
+    pub fn seek_by(&mut self, delta: f64) {
+        self.seek(self.position + delta);
+    }
+
+    /// Step exactly one frame; pauses playback (that's what stepping is for).
+    pub fn frame_step(&mut self, forward: bool) {
+        self.playing = false;
+        match &mut self.backend {
+            Backend::Mpv(m) => {
+                m.frame_step(forward); // mpv pauses itself as part of the step
+            }
+            Backend::Subprocess { .. } => {
+                let dt = 1.0 / self.info.fps.max(1.0);
+                self.seek(self.position + if forward { dt } else { -dt });
+            }
+        }
+        self.touch();
+    }
+
+    pub fn set_volume(&mut self, vol: f64) {
+        self.volume = vol.clamp(0.0, 130.0);
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_volume(self.volume);
+        }
+    }
+
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_muted(muted);
+        }
+    }
+
+    pub fn set_speed(&mut self, speed: f64) {
+        let speed = speed.clamp(0.25, 4.0);
+        match &mut self.backend {
+            Backend::Mpv(m) => m.set_speed(speed),
+            Backend::Subprocess { anchor, .. } => *anchor = None, // re-anchor at the new rate
+        }
+        self.speed = speed;
+    }
+
+    pub fn set_looping(&mut self, looping: bool) {
+        self.looping = looping;
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_looping(looping);
+        }
+    }
+
+    /// Whether this backend produces sound at all (the subprocess fallback is
+    /// video-only, so its volume controls would lie).
+    pub fn has_audio(&self) -> bool {
+        matches!(self.backend, Backend::Mpv(_))
+    }
+
+    /// Whether seeking is cheap enough to fire on every pointer move while
+    /// scrubbing (mpv coalesces seeks; the subprocess respawns ffmpeg).
+    pub fn cheap_seek(&self) -> bool {
+        matches!(self.backend, Backend::Mpv(_))
+    }
+
     /// Whether a fresh frame was produced since the last `take_dirty`.
     pub fn take_dirty(&mut self) -> bool {
         std::mem::take(&mut self.dirty)
@@ -126,6 +199,14 @@ impl Player {
         match &mut self.backend {
             Backend::Mpv(_) => self.update_mpv(),
             Backend::Subprocess { .. } => self.update_subprocess(),
+        }
+        // Loop for the fallback backend (mpv loops internally via loop-file).
+        if self.ended && self.looping {
+            self.seek(0.0);
+            self.ended = false;
+            if !self.playing {
+                self.toggle_play();
+            }
         }
     }
 
@@ -156,7 +237,7 @@ impl Player {
         // Anchor wall-clock to media time when (re)starting playback.
         let target = if self.playing {
             match anchor {
-                Some((inst, base)) => *base + inst.elapsed().as_secs_f64(),
+                Some((inst, base)) => *base + inst.elapsed().as_secs_f64() * self.speed,
                 None => {
                     *anchor = Some((Instant::now(), self.position));
                     self.position

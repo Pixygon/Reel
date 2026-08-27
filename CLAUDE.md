@@ -35,6 +35,8 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 
 ## Verifying changes
 
-Unit tests cover both backends against `tests/fixture.mp4` (320×240, ~2 s).
+Unit tests cover both backends and the export engine against
+`tests/fixture.mp4` (320×240, ~2 s) — the export test runs a real ffmpeg
+encode and re-probes the output.
 For a live check: `RUST_LOG=info timeout 6 ./target/release/reel
 tests/fixture.mp4` — expect `playback backend: libmpv`, no panics.

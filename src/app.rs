@@ -3,8 +3,10 @@
 
 use crate::edit::Project;
 use crate::egui_backend::EguiBackend;
+use crate::export::{self, ExportJob, ExportSettings};
 use crate::gpu::{Gpu, VideoTexture};
 use crate::video::Player;
+use crossbeam_channel::Receiver;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Mode {
@@ -21,6 +23,19 @@ pub struct ReelApp {
     pub status: String,
     /// Path text buffer for the in-UI open field.
     pub open_field: String,
+
+    // Export ("convert") — available straight from the player.
+    pub export_open: bool,
+    pub export_settings: ExportSettings,
+    /// Output path shown in the dialog; refreshed when source/codec changes.
+    pub export_out: String,
+    pub export: Option<ExportJob>,
+
+    /// Result channel of a native file-picker running on its own thread.
+    picker: Option<Receiver<Option<String>>>,
+    pub fullscreen: bool,
+    /// Desired window title; main.rs applies it when it changes.
+    pub window_title: String,
 }
 
 impl ReelApp {
@@ -31,8 +46,48 @@ impl ReelApp {
             project: Project::default(),
             tex_id: None,
             tex: None,
-            status: "Open a video to begin — File ▸ Open, or reel <path>".into(),
+            status: "Open a video to begin — drop a file, Open…, or reel <path>".into(),
             open_field: String::new(),
+            export_open: false,
+            export_settings: ExportSettings::default(),
+            export_out: String::new(),
+            export: None,
+            picker: None,
+            fullscreen: false,
+            window_title: "Reel".into(),
+        }
+    }
+
+    /// Kick off the native file picker on a worker thread (it must not block
+    /// the UI/event loop); `poll_picker` collects the choice.
+    pub fn open_picker(&mut self) {
+        if self.picker.is_some() {
+            return; // one picker at a time
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let picked = rfd::FileDialog::new()
+                .add_filter(
+                    "Video",
+                    &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"],
+                )
+                .add_filter("All files", &["*"])
+                .pick_file();
+            let _ = tx.send(picked.map(|p| p.to_string_lossy().into_owned()));
+        });
+        self.picker = Some(rx);
+    }
+
+    pub fn poll_picker(&mut self) {
+        let Some(rx) = &self.picker else { return };
+        match rx.try_recv() {
+            Ok(Some(path)) => {
+                self.picker = None;
+                self.open(&path);
+            }
+            Ok(None) => self.picker = None, // dialog dismissed
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+            Err(crossbeam_channel::TryRecvError::Disconnected) => self.picker = None,
         }
     }
 
@@ -56,6 +111,8 @@ impl ReelApp {
                     p.info.width, p.info.height, p.info.fps, p.info.duration,
                     p.backend_name()
                 );
+                self.window_title = format!("{name} — Reel");
+                self.export_out = export::default_output(path, self.export_settings.codec);
                 self.player = Some(p);
             }
             Err(e) => {
@@ -94,9 +151,12 @@ impl ReelApp {
         }
     }
 
-    /// Should the run loop keep requesting redraws (playing, or a frame is
-    /// expected to land shortly after an open/seek)?
+    /// Should the run loop keep requesting redraws? While playing (or just
+    /// after open/seek), while an export reports progress, and while a file
+    /// picker is pending.
     pub fn wants_redraw(&self) -> bool {
         self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
+            || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
+            || self.picker.is_some()
     }
 }

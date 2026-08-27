@@ -9,6 +9,7 @@
 mod app;
 mod edit;
 mod egui_backend;
+mod export;
 mod gpu;
 mod theme;
 mod ui;
@@ -29,6 +30,8 @@ struct Reel {
     egui: Option<EguiBackend>,
     app: ReelApp,
     initial_open: Option<String>,
+    /// Last title applied to the window (avoids redundant set_title calls).
+    window_title: String,
 }
 
 impl ApplicationHandler for Reel {
@@ -107,6 +110,18 @@ impl ApplicationHandler for Reel {
                 gpu.queue.submit(Some(encoder.finish()));
                 frame.present();
                 egui.post_render(prepared);
+
+                // Apply window-level state the UI requested (fullscreen, title).
+                let want_fs = self.app.fullscreen;
+                if want_fs != window.fullscreen().is_some() {
+                    window.set_fullscreen(
+                        want_fs.then_some(winit::window::Fullscreen::Borderless(None)),
+                    );
+                }
+                if self.app.window_title != self.window_title {
+                    self.window_title = self.app.window_title.clone();
+                    window.set_title(&self.window_title);
+                }
             }
             _ => {}
         }
@@ -142,6 +157,7 @@ fn main() {
         egui: None,
         app: ReelApp::new(),
         initial_open,
+        window_title: "Reel".into(),
     };
     event_loop.run_app(&mut reel).expect("run");
 }

@@ -233,6 +233,47 @@ impl MpvPlayer {
         let _ = self.command(&["seek", &format!("{secs:.4}"), "absolute+exact"]);
     }
 
+    /// Step exactly one frame forward/back; mpv pauses as part of the step.
+    pub fn frame_step(&mut self, forward: bool) {
+        let _ = self.command(&[if forward { "frame-step" } else { "frame-back-step" }]);
+    }
+
+    /// 0–130, mpv's own scale (100 = source level, above amplifies).
+    pub fn set_volume(&mut self, vol: f64) {
+        self.set_f64("volume", vol);
+    }
+
+    pub fn set_muted(&mut self, muted: bool) {
+        let mut flag: c_int = muted as c_int;
+        let _ = unsafe {
+            (self.lib.mpv_set_property)(
+                self.handle,
+                cstr("mute").as_ptr(),
+                MPV_FORMAT_FLAG,
+                &mut flag as *mut c_int as *mut c_void,
+            )
+        };
+    }
+
+    pub fn set_speed(&mut self, speed: f64) {
+        self.set_f64("speed", speed);
+    }
+
+    pub fn set_looping(&mut self, looping: bool) {
+        let _ = self.command(&["set", "loop-file", if looping { "inf" } else { "no" }]);
+    }
+
+    fn set_f64(&mut self, name: &str, mut v: f64) {
+        let _ = unsafe {
+            (self.lib.mpv_set_property)(
+                self.handle,
+                cstr(name).as_ptr(),
+                MPV_FORMAT_DOUBLE,
+                &mut v as *mut f64 as *mut c_void,
+            )
+        };
+    }
+
     /// Pump events + timing. When mpv has a new frame ready for display (paced
     /// by mpv's own A/V clock), renders it into `slot` — reusing the old
     /// frame's allocation — and returns true. Otherwise leaves `slot` alone.

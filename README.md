@@ -8,13 +8,19 @@ not the finished tool, but real, honest v0.1 you can build and run today.
 
 ## What works in v0.1
 
-- **Plays video — through libmpv when present.** Open a file and it plays
-  immediately, aspect-fit, with a transport bar: play/pause, live
-  position/duration, and a seek slider. With libmpv (the Milestone 1 hot
-  path, auto-detected at runtime): hardware decode, correct colour
-  conversion, **audio with real A/V sync**, subtitles, and **frame-exact
-  seek**. Without it, the v0.1 ffmpeg-subprocess decoder still works
-  everywhere (keyframe seek, video only).
+- **Plays video — through libmpv when present.** Open a file (Open… dialog,
+  drag-and-drop, or `reel <path>`) and it plays immediately, aspect-fit.
+  With libmpv (the Milestone 1 hot path, auto-detected at runtime): hardware
+  decode, correct colour conversion, **audio with real A/V sync**, subtitles,
+  and **frame-exact seek + live scrubbing**. Without it, the v0.1
+  ffmpeg-subprocess decoder still works everywhere (keyframe seek, video only).
+- **A real player's controls.** Play/pause, frame step, jump ±5 s/±60 s,
+  volume/mute, 0.25–4× speed, loop, fullscreen — all on mpv/VLC-style
+  keyboard shortcuts (Space, ←/→, ,/., ↑/↓, M, L, F, [ ], E for editor).
+- **Convert without editing — the HandBrake seam.** Hit **⬇ Export** in the
+  player: H.264/H.265/AV1/VP9 with quality presets (or custom CRF),
+  resolution downscale, audio bitrate/copy, or an instant lossless MKV remux.
+  Live progress + cancel; runs on the system ffmpeg.
 - **Editor timeline.** A real NLE data model (Project → Tracks → Clips), drawn
   as a multi-track timeline with a time ruler, clip blocks and a playhead.
   Opening a file drops it onto the V1 track. Trimming/drag/effects/export are
@@ -50,7 +56,8 @@ src/
 │   ├── mpv.rs      libmpv backend (dlopen'd): hw decode, A/V sync, audio, exact seek
 │   └── decoder.rs  fallback: ffmpeg subprocess → raw RGBA frames over a bounded channel
 ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)
-├── ui.rs           player transport + editor timeline (all egui)
+├── export.rs       convert/export engine (ffmpeg encode, live progress, cancel)
+├── ui.rs           player transport, editor timeline, export dialog, shortcuts (all egui)
 └── theme.rs        Pixygon design tokens → egui visuals
 ```
 

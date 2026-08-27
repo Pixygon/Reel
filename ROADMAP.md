@@ -39,9 +39,12 @@ never leaving the GPU.
 
 ## Milestone 3 — finish & polish
 
-- [ ] **Export/encode** via libav (H.264/H.265/AV1, ProRes), with a render queue.
+- [x] **Convert/export of the source file** (the HandBrake seam, straight from
+      the player): H.264/H.265/AV1/VP9 + lossless remux, quality presets/CRF,
+      downscale, audio modes, live progress + cancel. — [ ] **Timeline export**
+      (render the composited edit) and a render queue; ProRes.
 - [ ] Effects/transitions (GPU shaders), a basic colour panel, audio levels/mixer.
-- [ ] Native file dialogs (rfd), drag-and-drop import, thumbnails/waveforms.
+- [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.
 
 ## Milestone 4 — the Pixygon seam
