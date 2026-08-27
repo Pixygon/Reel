@@ -16,12 +16,18 @@ straight into Reel). No separate viewer, converter and capture tools.
       extraction from video.
 - [x] Image viewing through the same GPU path (instant open; GPU-limit-aware
       downscale for display). PNG/JPEG/WebP conversion with resize.
-- [x] Screenshots and screen recording via runtime-probed system backends,
-      opening directly in Reel.
-- [ ] Waveform rendering for audio (player + timeline), image crop/rotate,
-      region capture, recording with camera/mic overlay.
-- [ ] Native portal ScreenCast backend (pipewire) so Wayland recording works
-      with zero external tools.
+- [x] Screenshots (full/region/window) and screen recording, opening directly
+      in Reel. Recording is **built in**: xdg-desktop-portal ScreenCast +
+      PipeWire in-process → ffmpeg encode, with the system picker choosing
+      screen/window/region, best-effort system audio, and a persisted restore
+      token. External tools remain as opportunistic fallbacks.
+- [x] Audio visualizers (spectrum bars/spectrogram/vectorscope/waveform)
+      rendered through the playback engine's lavfi graph.
+- [x] SVG rasterization (resvg) into the image path, exportable to PNG/JPEG/WebP.
+- [x] ffmpeg auto-download on first launch when missing (mainly Windows).
+- [ ] Waveform on the timeline, image crop/rotate, mic/camera overlay for
+      recordings, per-monitor shot pick, portal audio via PipeWire stream
+      (instead of the pulse monitor bridge).
 
 ## Where v0.1 stands
 

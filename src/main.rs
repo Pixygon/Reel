@@ -13,6 +13,8 @@ mod egui_backend;
 mod export;
 mod gpu;
 mod media;
+#[cfg(target_os = "linux")]
+mod portal;
 mod theme;
 mod ui;
 mod video;
@@ -147,7 +149,15 @@ impl ApplicationHandler for Reel {
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-    // Uses the system ffmpeg on PATH (no bundled/download path).
+
+    // No ffmpeg on this machine? Fetch a static build in the background so
+    // export/convert and the fallback decoder Just Work (mainly Windows).
+    if !ffmpeg_sidecar::command::ffmpeg_is_installed() {
+        std::thread::spawn(|| match ffmpeg_sidecar::download::auto_download() {
+            Ok(()) => log::info!("downloaded a private ffmpeg build"),
+            Err(e) => log::warn!("ffmpeg missing and auto-download failed: {e}"),
+        });
+    }
 
     let initial_open = std::env::args().nth(1);
     let event_loop = EventLoop::new().expect("event loop");

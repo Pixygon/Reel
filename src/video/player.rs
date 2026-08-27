@@ -10,6 +10,61 @@ use crate::media::MediaKind;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
+/// Audio visualizers — lavfi filter graphs mpv renders as the video track.
+/// The gnarly stuff: musical spectrum, scrolling spectrogram, vectorscope,
+/// waveform. All in the Pixygon palette where the filter allows it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Visualizer {
+    Off,
+    Cqt,
+    Spectrum,
+    Scope,
+    Waves,
+}
+
+impl Visualizer {
+    pub const ALL: [Visualizer; 5] =
+        [Visualizer::Off, Visualizer::Cqt, Visualizer::Spectrum, Visualizer::Scope, Visualizer::Waves];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Visualizer::Off => "Art / off",
+            Visualizer::Cqt => "Spectrum bars",
+            Visualizer::Spectrum => "Spectrogram",
+            Visualizer::Scope => "Vectorscope",
+            Visualizer::Waves => "Waveform",
+        }
+    }
+
+    pub fn next(self) -> Self {
+        let all = Self::ALL;
+        let i = all.iter().position(|v| *v == self).unwrap_or(0);
+        all[(i + 1) % all.len()]
+    }
+
+    fn graph(self) -> Option<(&'static str, (u32, u32))> {
+        match self {
+            Visualizer::Off => None,
+            Visualizer::Cqt => Some((
+                "[aid1]asplit[ao][a];[a]showcqt=s=1280x720:count=2:bar_g=2:sono_g=4[vo]",
+                (1280, 720),
+            )),
+            Visualizer::Spectrum => Some((
+                "[aid1]asplit[ao][a];[a]showspectrum=s=1280x720:mode=combined:color=fiery:scale=cbrt:slide=scroll[vo]",
+                (1280, 720),
+            )),
+            Visualizer::Scope => Some((
+                "[aid1]asplit[ao][a];[a]avectorscope=s=720x720:draw=line:scale=cbrt:zoom=1.5:rc=34:gc=211:bc=238[vo]",
+                (720, 720),
+            )),
+            Visualizer::Waves => Some((
+                "[aid1]asplit[ao][a];[a]showwaves=s=1280x720:mode=cline:colors=0x22D3EE|0xF43F5E:scale=sqrt[vo]",
+                (1280, 720),
+            )),
+        }
+    }
+}
+
 enum Backend {
     Mpv(MpvPlayer),
     /// ffmpeg subprocess: decode handle + wall-clock anchor (instant, media
@@ -41,6 +96,8 @@ pub struct Player {
     /// Playback rate, 1.0 = realtime.
     pub speed: f64,
     pub looping: bool,
+    /// Active audio visualizer (mpv backend, audio media).
+    pub visualizer: Visualizer,
     dirty: bool,
     /// Redraws are requested until this instant even while paused, so frames
     /// that land asynchronously (open, seek) reach the screen.
@@ -61,7 +118,7 @@ impl Player {
             }
             None => Self::open_subprocess(path)?,
         };
-        Ok(Self {
+        let mut player = Self {
             path: path.to_string(),
             info,
             kind,
@@ -74,9 +131,20 @@ impl Player {
             muted: false,
             speed: 1.0,
             looping: false,
+            visualizer: Visualizer::Off,
             dirty: true,
             active_until: Instant::now() + Duration::from_millis(500),
-        })
+        };
+        // Pure audio (no cover art) gets a visualizer by default — a player
+        // should never be a blank rectangle.
+        if player.kind == MediaKind::Audio && player.current.is_none() {
+            if let Backend::Mpv(m) = &player.backend {
+                if !m.has_video {
+                    player.set_visualizer(Visualizer::Cqt);
+                }
+            }
+        }
+        Ok(player)
     }
 
     fn open_subprocess(path: &str) -> Result<(VideoInfo, MediaKind, Backend)> {
@@ -178,6 +246,21 @@ impl Player {
     /// video-only, so its volume controls would lie).
     pub fn has_audio(&self) -> bool {
         matches!(self.backend, Backend::Mpv(_))
+    }
+
+    /// Visualizers apply to audio media on the mpv backend.
+    pub fn supports_visualizer(&self) -> bool {
+        self.kind == MediaKind::Audio && matches!(self.backend, Backend::Mpv(_))
+    }
+
+    pub fn set_visualizer(&mut self, v: Visualizer) {
+        let Backend::Mpv(m) = &mut self.backend else { return };
+        m.set_visualizer(v.graph());
+        // The old frame is the wrong size/content now; drop it.
+        self.current = None;
+        self.visualizer = v;
+        self.dirty = true;
+        self.touch();
     }
 
     /// Whether seeking is cheap enough to fire on every pointer move while
@@ -333,6 +416,26 @@ mod tests {
             std::thread::sleep(Duration::from_millis(30));
         }
         assert!(p.position >= 0.3, "audio position should advance, got {}", p.position);
+
+        // A pure-audio file auto-enables a visualizer, whose frames flow
+        // through the normal frame path at the graph's size.
+        assert_eq!(p.visualizer, Visualizer::Cqt);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while p.current.is_none() && Instant::now() < deadline {
+            p.update();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        let frame = p.current.as_ref().expect("visualizer should render frames");
+        assert_eq!((frame.width, frame.height), (1280, 720));
+
+        // Switching visualizers re-routes the graph without falling over.
+        p.set_visualizer(Visualizer::Waves);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while p.current.is_none() && Instant::now() < deadline {
+            p.update();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(p.current.is_some(), "waveform visualizer should render");
         let _ = std::fs::remove_file(&path);
     }
 }

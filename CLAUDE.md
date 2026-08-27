@@ -35,8 +35,20 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   busy loop.
 - `app.open()` is the single entry for ALL media (video/audio/image/captures)
   — route new sources through it, never a side door. `media.rs` owns kind
-  routing; `capture.rs` probes system tools at runtime (never link/require
-  them). Export codec lists are kind-filtered via `Codec::for_kind`.
+  routing (incl. SVG → resvg raster); export codec lists are kind-filtered
+  via `Codec::for_kind`.
+- Capture: `portal.rs` (Linux-only, cfg-gated) is the built-in recorder —
+  ashpd portal session + PipeWire stream (git pipewire-rs, `*Rc` API) →
+  latest-frame slot → 30 fps CFR ticker → ffmpeg stdin. `capture.rs`
+  dispatches: portal first, external tools as fallback; screenshots via
+  spectacle/grim/maim tiers with the portal's interactive dialog as the
+  tool-free fallback. Portal start blocks on the system picker — always call
+  from a worker thread. The Linux-only deps (ashpd/pipewire/tokio) MUST stay
+  under `[target.'cfg(target_os = "linux")'.dependencies]` or the Windows
+  cross-build breaks.
+- Audio visualizers are mpv `lavfi-complex` graphs (`Visualizer` in
+  player.rs); mpv renders them as the video track — no separate DSP/draw
+  path. The viewport sizes off `app.tex_dims()`, never `Player::info`.
 - GPU textures are capped at `gpu.max_texture_dim` — anything bigger must be
   downscaled before upload (see `ImageDoc::clamp_to`; an 8560×1440 ultrawide
   screenshot is the regression case).

@@ -62,6 +62,7 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         speed_up: bool,
         speed_down: bool,
         speed_reset: bool,
+        viz: bool,
     }
     let k = ctx.input(|i| Keys {
         space: i.key_pressed(Key::Space),
@@ -80,6 +81,7 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         speed_up: i.key_pressed(Key::CloseBracket),
         speed_down: i.key_pressed(Key::OpenBracket),
         speed_reset: i.key_pressed(Key::Backspace),
+        viz: i.key_pressed(Key::V),
     });
 
     if let Some(player) = app.player.as_mut() {
@@ -119,6 +121,9 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         }
         if k.speed_reset {
             player.set_speed(1.0);
+        }
+        if k.viz && player.supports_visualizer() {
+            player.set_visualizer(player.visualizer.next());
         }
     }
     if k.fullscreen {
@@ -164,27 +169,35 @@ fn top_bar(ctx: &egui::Context, app: &mut ReelApp) {
                 let recording = app.recorder.is_some();
                 let rec_label = if recording {
                     RichText::new("⏹ Stop").color(theme::EMBER).strong()
+                } else if app.record_starting() {
+                    RichText::new("⏺ …").color(theme::EMBER)
                 } else {
                     RichText::new("⏺ Record").color(theme::EMBER)
                 };
                 let rec_hover = if recording {
-                    "Stop recording — it opens right here".to_string()
+                    "Stop recording — it opens right here"
                 } else {
-                    match crate::capture::recording_backend() {
-                        Some(t) => format!("Record the screen (via {t})"),
-                        None => "Record the screen — needs gpu-screen-recorder (or wf-recorder) installed".to_string(),
-                    }
+                    "Record the screen — pick screen, window or region; opens here when stopped"
                 };
-                if ui.button(rec_label).on_hover_text(rec_hover).clicked() {
+                if ui.button(rec_label).on_hover_text(rec_hover).clicked() && !app.record_starting() {
                     app.toggle_record();
                 }
-                if ui
-                    .button("📷 Shot")
-                    .on_hover_text("Screenshot the screen — it opens right here")
-                    .clicked()
-                {
-                    app.take_screenshot();
-                }
+                ui.menu_button("📷 Shot", |ui| {
+                    if ui.button("Full screen").clicked() {
+                        app.take_screenshot(crate::capture::ShotMode::Full);
+                        ui.close_menu();
+                    }
+                    if ui.button("Region…").clicked() {
+                        app.take_screenshot(crate::capture::ShotMode::Region);
+                        ui.close_menu();
+                    }
+                    if ui.button("Window…").clicked() {
+                        app.take_screenshot(crate::capture::ShotMode::Window);
+                        ui.close_menu();
+                    }
+                })
+                .response
+                .on_hover_text("Screenshot — it opens right here");
             });
         });
     });
@@ -226,14 +239,8 @@ fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::VOID);
 
-    // What are we showing, and at what native size?
-    let dims = if let Some(img) = &app.image {
-        Some((img.width as f32, img.height as f32))
-    } else if let Some(p) = app.player.as_ref() {
-        (p.info.width > 0).then(|| (p.info.width as f32, p.info.height as f32))
-    } else {
-        None
-    };
+    // Native size of whatever is on the texture (frame, art, visualizer, image).
+    let dims = app.tex_dims().map(|(w, h)| (w as f32, h as f32));
 
     if let (Some(id), Some((vw, vh))) = (app.tex_id, dims) {
         if vw > 0.0 && vh > 0.0 {
@@ -407,6 +414,21 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
             if ui.toggle_value(&mut looping, "🔁").on_hover_text("Loop (L)").changed() {
                 player.set_looping(looping);
             }
+
+            // Audio visualizer picker (V cycles).
+            if player.supports_visualizer() {
+                let mut viz = player.visualizer;
+                egui::ComboBox::from_id_salt("visualizer")
+                    .selected_text(format!("〜 {}", viz.label()))
+                    .show_ui(ui, |ui| {
+                        for v in crate::video::player::Visualizer::ALL {
+                            ui.selectable_value(&mut viz, v, v.label());
+                        }
+                    });
+                if viz != player.visualizer {
+                    player.set_visualizer(viz);
+                }
+            }
         });
     });
 
@@ -575,7 +597,21 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 egui::Button::new(RichText::new("Start export").color(theme::STAR).strong()),
             );
             if start.clicked() {
-                match export::start(&source, &app.export_out, &app.export_settings, duration) {
+                // ffmpeg can't read SVG — hand it the rasterized copy instead.
+                let input = if crate::media::is_svg_path(&source) {
+                    app.image.as_ref().map(|img| img.write_temp_png())
+                } else {
+                    None
+                };
+                let input = match input {
+                    Some(Ok(p)) => p.to_string_lossy().into_owned(),
+                    Some(Err(e)) => {
+                        app.status = format!("Export: {e}");
+                        return;
+                    }
+                    None => source.clone(),
+                };
+                match export::start(&input, &app.export_out, &app.export_settings, duration) {
                     Ok(job) => app.export = Some(job),
                     Err(e) => app.status = format!("Export: {e}"),
                 }

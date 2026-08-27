@@ -42,7 +42,9 @@ pub struct ReelApp {
     /// Result channel of a screenshot being taken on a worker thread.
     shot_rx: Option<Receiver<Result<PathBuf, String>>>,
     /// A screen recording in progress.
-    pub recorder: Option<capture::Recorder>,
+    pub recorder: Option<capture::Recording>,
+    /// Result channel of a recording start (the system picker runs there).
+    rec_start_rx: Option<Receiver<Result<capture::Recording, String>>>,
     /// Result channel of a recording being finalized on a worker thread.
     rec_rx: Option<Receiver<Result<PathBuf, String>>>,
     pub fullscreen: bool,
@@ -69,6 +71,7 @@ impl ReelApp {
             picker: None,
             shot_rx: None,
             recorder: None,
+            rec_start_rx: None,
             rec_rx: None,
             fullscreen: false,
             window_title: "Reel".into(),
@@ -195,20 +198,28 @@ impl ReelApp {
         }
     }
 
-    /// Take a screenshot on a worker thread; when it lands, open it.
-    pub fn take_screenshot(&mut self) {
+    /// Take a screenshot (full/region/window) on a worker thread; when it
+    /// lands, open it.
+    pub fn take_screenshot(&mut self, mode: capture::ShotMode) {
         if self.shot_rx.is_some() {
             return;
         }
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            let _ = tx.send(capture::screenshot().map_err(|e| e.to_string()));
+            let _ = tx.send(capture::screenshot(mode).map_err(|e| e.to_string()));
         });
         self.shot_rx = Some(rx);
         self.status = "Taking screenshot…".into();
     }
 
-    /// Start/stop screen recording. The stopped file opens in the player.
+    /// Is a recording being started (system picker open) right now?
+    pub fn record_starting(&self) -> bool {
+        self.rec_start_rx.is_some()
+    }
+
+    /// Start/stop screen recording. Starting runs on a worker thread (the
+    /// system's screen/window picker may be shown); the stopped file opens
+    /// in the player.
     pub fn toggle_record(&mut self) {
         if let Some(rec) = self.recorder.take() {
             let (tx, rx) = crossbeam_channel::bounded(1);
@@ -217,19 +228,33 @@ impl ReelApp {
             });
             self.rec_rx = Some(rx);
             self.status = "Finalizing recording…".into();
-        } else {
-            match capture::start_recording() {
-                Ok(rec) => {
-                    self.status = format!("⏺ Recording via {}… click ⏹ to stop", rec.tool);
-                    self.recorder = Some(rec);
-                }
-                Err(e) => self.status = format!("Recording: {e}"),
-            }
+        } else if self.rec_start_rx.is_none() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            std::thread::spawn(move || {
+                let _ = tx.send(capture::start_recording().map_err(|e| e.to_string()));
+            });
+            self.rec_start_rx = Some(rx);
+            self.status = "Starting recording — pick what to share…".into();
         }
     }
 
     /// Collect finished captures (screenshot / recording) and open them.
     pub fn poll_captures(&mut self) {
+        if let Some(rx) = &self.rec_start_rx {
+            match rx.try_recv() {
+                Ok(Ok(rec)) => {
+                    self.rec_start_rx = None;
+                    self.status = "⏺ Recording… click ⏹ to stop".into();
+                    self.recorder = Some(rec);
+                }
+                Ok(Err(e)) => {
+                    self.rec_start_rx = None;
+                    self.status = format!("Recording: {e}");
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => self.rec_start_rx = None,
+            }
+        }
         let mut done: Vec<Result<PathBuf, String>> = Vec::new();
         for rx_slot in [&mut self.shot_rx, &mut self.rec_rx] {
             let Some(rx) = rx_slot else { continue };
@@ -300,6 +325,13 @@ impl ReelApp {
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
             || self.picker.is_some()
             || self.shot_rx.is_some()
+            || self.rec_start_rx.is_some()
             || self.rec_rx.is_some()
+    }
+
+    /// Native size of what the viewport is currently showing (frame, cover
+    /// art, visualizer or image) — drives aspect-fit.
+    pub fn tex_dims(&self) -> Option<(u32, u32)> {
+        self.tex.as_ref().map(|t| (t.width, t.height))
     }
 }

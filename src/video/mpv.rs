@@ -132,6 +132,8 @@ pub struct MpvPlayer {
     pub has_video: bool,
     /// True when the "video" is an audio file's embedded cover art.
     pub albumart: bool,
+    /// (width, height, has_video) before a visualizer took over.
+    orig_video: Option<(u32, u32, bool)>,
 }
 
 impl MpvPlayer {
@@ -148,6 +150,7 @@ impl MpvPlayer {
             info: VideoInfo { width: 0, height: 0, fps: 30.0, duration: 0.0 },
             has_video: false,
             albumart: false,
+            orig_video: None,
         };
 
         // Options must land before mpv_initialize. `config=no`: never load the
@@ -270,6 +273,32 @@ impl MpvPlayer {
 
     pub fn set_looping(&mut self, looping: bool) {
         let _ = self.command(&["set", "loop-file", if looping { "inf" } else { "no" }]);
+    }
+
+    /// Route the audio through a lavfi visualizer graph whose video output
+    /// becomes the rendered "video" track (`None` restores the original
+    /// video/cover-art/none state). `size` is the graph's output size.
+    pub fn set_visualizer(&mut self, graph: Option<(&str, (u32, u32))>) {
+        match graph {
+            Some((g, (w, h))) => {
+                if self.command(&["set", "lavfi-complex", g]).is_ok() {
+                    if self.orig_video.is_none() {
+                        self.orig_video = Some((self.info.width, self.info.height, self.has_video));
+                    }
+                    self.info.width = w;
+                    self.info.height = h;
+                    self.has_video = true;
+                }
+            }
+            None => {
+                let _ = self.command(&["set", "lavfi-complex", ""]);
+                if let Some((w, h, hv)) = self.orig_video.take() {
+                    self.info.width = w;
+                    self.info.height = h;
+                    self.has_video = hv;
+                }
+            }
+        }
     }
 
     fn set_f64(&mut self, name: &str, mut v: f64) {

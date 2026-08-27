@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.8.0"
+version = "0.9.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -26,7 +26,7 @@ bytemuck = { version = "1.18", features = ["derive"] }
 ffmpeg-sidecar = "2"
 
 # Native file-open dialog (Open… button).
-rfd = "0.15"
+rfd = { version = "0.15", default-features = false, features = ["tokio", "xdg-portal"] }
 
 # Still-image decode (instant open of png/jpg/webp/… into the same GPU path).
 image = "0.25"
@@ -42,7 +42,13 @@ log = "0.4"
 env_logger = "0.11"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+resvg = "0.45"
 
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { version = "0.11", default-features = false, features = ["tokio"] }
+pipewire = { git = "https://gitlab.freedesktop.org/pipewire/pipewire-rs" }
+tokio = { version = "1", features = ["rt"] }

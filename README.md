@@ -19,22 +19,29 @@ not the finished tool, but real, honest software you can build and run today.
   volume/mute, 0.25–4× speed, loop, fullscreen — all on mpv/VLC-style
   keyboard shortcuts (Space, ←/→, ,/., ↑/↓, M, L, F, [ ], E for editor).
 - **Plays audio and shows images too — one door for all media.** Audio files
-  play through the same transport (cover art displays when embedded; ♪ card
-  otherwise). Images open instantly through the same GPU path — ultrawide
-  screenshots and 8K stills included. Everything lands on the editor
-  timeline (video/stills on V1, audio on A1).
+  play through the same transport, with **audio visualizers rendered by the
+  playback engine itself** — musical spectrum bars, scrolling spectrogram,
+  vectorscope, waveform (V cycles; cover art shows when embedded). Images
+  open instantly through the same GPU path — ultrawide screenshots, 8K
+  stills, **and SVG, rasterized crisply via resvg**. Everything lands on the
+  editor timeline (video/stills on V1, audio on A1).
 - **Convert without editing — the HandBrake seam.** Hit **⬇ Export** on
   anything open: video → H.264/H.265/AV1/VP9 with quality presets (or custom
   CRF), downscale, audio bitrate/copy, instant lossless MKV remux — or
   **extract the audio** to MP3/M4A/Opus/FLAC/WAV. Audio sources convert
   between those formats; images convert to PNG/JPEG/WebP with resize. Live
   progress + cancel; runs on the system ffmpeg.
-- **Capture the screen.** **📷 Shot** grabs a screenshot, **⏺ Record**
-  records the screen (system audio included where the backend supports it) —
-  and the result opens right in Reel, ready to trim, convert or export.
-  Backends are probed at runtime: spectacle/grim/flameshot/maim for stills;
-  gpu-screen-recorder (recommended), wf-recorder, wl-screenrec or ffmpeg
-  x11grab/gdigrab for recording.
+- **Capture the screen — built in.** **📷 Shot** grabs a screenshot (full
+  screen, region, or window), **⏺ Record** records the screen — and the
+  result opens right in Reel, ready to trim, convert or export. Recording
+  needs **no external tools**: Reel speaks xdg-desktop-portal + PipeWire
+  directly (the same door OBS uses), so the system's own picker chooses
+  screen/window/region, system audio is captured when a monitor source
+  exists, and the portal's restore token skips the dialog after first
+  approval. Native desktop tools (spectacle, grim, gpu-screen-recorder, …)
+  are used opportunistically where they're better; ffmpeg gdigrab covers
+  Windows — and if ffmpeg itself is missing, Reel downloads a private
+  static build on first launch.
 - **Editor timeline.** A real NLE data model (Project → Tracks → Clips), drawn
   as a multi-track timeline with a time ruler, clip blocks and a playhead.
   Opening a file drops it onto the V1 track. Trimming/drag/effects/export are
@@ -69,8 +76,9 @@ src/
 │   ├── player.rs   the stable playback API (play/pause/seek/update) over two backends
 │   ├── mpv.rs      libmpv backend (dlopen'd): hw decode, A/V sync, audio, exact seek
 │   └── decoder.rs  fallback: ffmpeg subprocess → raw RGBA frames over a bounded channel
-├── media.rs        media kinds + instant still-image documents (image crate)
-├── capture.rs      screenshots + screen recording via the system's capture tools
+├── media.rs        media kinds + instant still-image documents (image crate, resvg for SVG)
+├── capture.rs      screenshots + recording dispatch (modes, tool tiers)
+├── portal.rs       built-in Linux capture: xdg-desktop-portal + PipeWire → ffmpeg encode
 ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)
 ├── export.rs       convert/export engine for video/audio/images (ffmpeg, live progress, cancel)
 ├── ui.rs           player transport, editor timeline, export dialog, shortcuts (all egui)

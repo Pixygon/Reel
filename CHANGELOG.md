@@ -4,6 +4,19 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.8.0] — 2026-08-27
+
+### Added
+- Screen recording is now built in on Linux — Reel talks directly to xdg-desktop-portal and PipeWire (the same mechanism OBS uses), so no external capture tool is required. The system's own picker lets you choose the screen, a window, or a region, system audio is captured when available, and your choice is remembered after the first approval.
+- Screenshots now support Full screen, Region, and Window modes via a new Shot menu, with the system's interactive portal dialog as a tool-free fallback on Linux.
+- Audio playback now includes built-in visualizers — spectrum bars, scrolling spectrogram, vectorscope, and waveform — rendered directly by the playback engine. Press V to cycle, or pick one from the transport bar.
+- SVG images now open instantly alongside other image formats, rasterized crisply, and can be exported to PNG/JPEG/WebP.
+- If ffmpeg isn't found on your system (mainly on Windows), Reel now downloads a private static build automatically on first launch so exporting and playback keep working.
+
+### Changed
+- The Record button now shows a starting state while the screen/window picker is open, since starting a recording may briefly wait on your selection.
+
+
 ## [0.7.0] — 2026-08-27
 
 ### Added

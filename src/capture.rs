@@ -69,29 +69,66 @@ fn stamped(dir: &Path, stem: &str, ext: &str) -> PathBuf {
     dir.join(format!("reel-{stem}-{y:04}{mo:02}{d:02}-{h:02}{m:02}{s:02}.{ext}"))
 }
 
-/// Take a full-screen screenshot. Blocks briefly (tools are fast) — call from
-/// a worker thread. Returns the saved file.
-pub fn screenshot() -> Result<PathBuf> {
+/// What to capture in a screenshot.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ShotMode {
+    /// The whole desktop.
+    Full,
+    /// Drag-select a rectangle.
+    Region,
+    /// The active window.
+    Window,
+}
+
+/// Take a screenshot. Region/Window modes wait for the user's selection —
+/// call from a worker thread. Returns the saved file.
+pub fn screenshot(mode: ShotMode) -> Result<PathBuf> {
     let out = stamped(&out_dir("Pictures"), "shot", "png");
     let out_s = out.to_string_lossy().to_string();
 
     let attempts: Vec<(&str, Vec<String>)> = if cfg!(target_os = "windows") {
         vec![("ffmpeg", vec!["-y".into(), "-f".into(), "gdigrab".into(), "-i".into(), "desktop".into(), "-frames:v".into(), "1".into(), out_s.clone()])]
     } else if cfg!(target_os = "macos") {
-        vec![("screencapture", vec!["-x".into(), out_s.clone()])]
-    } else if is_wayland() {
-        vec![
-            ("spectacle", vec!["-b".into(), "-n".into(), "-o".into(), out_s.clone()]),
-            ("grim", vec![out_s.clone()]),
-            ("flameshot", vec!["full".into(), "-p".into(), out_s.clone()]),
-        ]
+        let flag = match mode {
+            ShotMode::Full => vec!["-x".into()],
+            ShotMode::Region => vec!["-x".into(), "-i".into()],
+            ShotMode::Window => vec!["-x".into(), "-i".into(), "-W".into()],
+        };
+        vec![("screencapture", [flag, vec![out_s.clone()]].concat())]
     } else {
-        vec![
-            ("spectacle", vec!["-b".into(), "-n".into(), "-o".into(), out_s.clone()]),
-            ("maim", vec![out_s.clone()]),
-            ("scrot", vec![out_s.clone()]),
-            ("import", vec!["-window".into(), "root".into(), out_s.clone()]),
-        ]
+        // Linux: spectacle covers all three modes from the CLI; grim/maim
+        // handle full/region; the portal's interactive dialog is the
+        // built-in, tool-free fallback (it offers all modes itself).
+        let spectacle_mode = match mode {
+            ShotMode::Full => vec![],
+            ShotMode::Region => vec!["-r".into()],
+            ShotMode::Window => vec!["-a".into()],
+        };
+        let mut v: Vec<(&str, Vec<String>)> = vec![(
+            "spectacle",
+            [vec!["-b".into(), "-n".into()], spectacle_mode, vec!["-o".into(), out_s.clone()]].concat(),
+        )];
+        if is_wayland() {
+            match mode {
+                ShotMode::Full => v.push(("grim", vec![out_s.clone()])),
+                ShotMode::Region | ShotMode::Window => {
+                    // grim needs slurp for selection; run through a shell.
+                    if have("grim") && have("slurp") {
+                        v.push(("sh", vec!["-c".into(), format!("grim -g \"$(slurp)\" '{out_s}'")]));
+                    }
+                }
+            }
+        } else {
+            match mode {
+                ShotMode::Full => {
+                    v.push(("maim", vec![out_s.clone()]));
+                    v.push(("scrot", vec![out_s.clone()]));
+                }
+                ShotMode::Region => v.push(("maim", vec!["-s".into(), out_s.clone()])),
+                ShotMode::Window => v.push(("scrot", vec!["-u".into(), out_s.clone()])),
+            }
+        }
+        v
     };
 
     for (tool, args) in &attempts {
@@ -115,7 +152,14 @@ pub fn screenshot() -> Result<PathBuf> {
         }
         log::warn!("screenshot via {tool} failed; trying next backend");
     }
-    bail!("no screenshot tool worked (looked for spectacle/grim/flameshot/maim/scrot)")
+
+    // Built-in fallback: the portal's interactive dialog (its own UI offers
+    // screen/window/region, whatever `mode` asked for).
+    #[cfg(target_os = "linux")]
+    if crate::portal::available() {
+        return crate::portal::screenshot_interactive(out);
+    }
+    bail!("no screenshot backend worked")
 }
 
 enum StopMethod {
@@ -133,9 +177,26 @@ pub struct Recorder {
     pub tool: &'static str,
 }
 
-/// What `start_recording` would use, if anything — lets the UI say up front
-/// what's missing instead of failing on click.
-pub fn recording_backend() -> Option<&'static str> {
+/// A screen recording in progress, over whichever backend engaged.
+pub enum Recording {
+    /// Reel's built-in portal + PipeWire capture (Linux).
+    #[cfg(target_os = "linux")]
+    Portal(crate::portal::PortalRecorder),
+    /// An external capture tool.
+    Tool(Recorder),
+}
+
+impl Recording {
+    pub fn stop(self) -> Result<PathBuf> {
+        match self {
+            #[cfg(target_os = "linux")]
+            Recording::Portal(r) => r.stop(),
+            Recording::Tool(r) => r.stop(),
+        }
+    }
+}
+
+fn external_recording_tool() -> Option<&'static str> {
     let tools: &[&str] = if cfg!(target_os = "windows") {
         &["ffmpeg"]
     } else if cfg!(target_os = "macos") {
@@ -148,16 +209,28 @@ pub fn recording_backend() -> Option<&'static str> {
     tools.iter().copied().find(|t| have(t))
 }
 
-/// Start a full-screen recording (with system audio where the tool supports
-/// it). The returned Recorder must be `stop()`ped to finalize the file.
-pub fn start_recording() -> Result<Recorder> {
+/// Start a screen recording. On Linux the built-in portal path runs first —
+/// the system picker lets the user choose screen/window/region, no external
+/// tools needed; external recorders remain as fallbacks. Blocks through the
+/// picker: call from a worker thread.
+pub fn start_recording() -> Result<Recording> {
+    #[cfg(target_os = "linux")]
+    if crate::portal::available() {
+        let out = stamped(&out_dir("Videos"), "rec", "mp4");
+        match crate::portal::start_recording(out) {
+            Ok(r) => return Ok(Recording::Portal(r)),
+            Err(e) => log::warn!("built-in portal recording unavailable ({e}); trying external tools"),
+        }
+    }
+    start_tool_recording().map(Recording::Tool)
+}
+
+/// Start a full-screen recording via an external capture tool.
+fn start_tool_recording() -> Result<Recorder> {
     let out = stamped(&out_dir("Videos"), "rec", "mp4");
     let out_s = out.to_string_lossy().to_string();
-    let tool = recording_backend().ok_or_else(|| {
-        anyhow!(
-            "no screen recorder found — install gpu-screen-recorder (best; also \
-             captures system audio) or wf-recorder/wl-screenrec"
-        )
+    let tool = external_recording_tool().ok_or_else(|| {
+        anyhow!("no screen recording backend available on this system")
     })?;
 
     let (args, stop): (Vec<String>, StopMethod) = match tool {
