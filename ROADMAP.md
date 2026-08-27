@@ -25,9 +25,16 @@ straight into Reel). No separate viewer, converter and capture tools.
       rendered through the playback engine's lavfi graph.
 - [x] SVG rasterization (resvg) into the image path, exportable to PNG/JPEG/WebP.
 - [x] ffmpeg auto-download on first launch when missing (mainly Windows).
+- [x] Desktop citizenship: self-installed "Open with" entry, first-run
+      default-apps prompt (Video/Music/Images checkboxes, ⚙ dialog),
+      Arch package with mpv+ffmpeg deps + system desktop entry, installer
+      that offers the codecs on any distro.
 - [ ] Waveform on the timeline, image crop/rotate, mic/camera overlay for
       recordings, per-monitor shot pick, portal audio via PipeWire stream
       (instead of the pulse monitor bridge).
+- [ ] Drag-and-drop on Wayland — blocked upstream (winit has no Wayland
+      file-drop); works on X11/Windows today. Revisit when winit lands it.
+- [ ] Windows file associations (registry) + installer polish.
 
 ## Where v0.1 stands
 

@@ -31,6 +31,13 @@ not the finished tool, but real, honest software you can build and run today.
   **extract the audio** to MP3/M4A/Opus/FLAC/WAV. Audio sources convert
   between those formats; images convert to PNG/JPEG/WebP with resize. Live
   progress + cancel; runs on the system ffmpeg.
+- **Opens from your file manager — and sets itself up.** Reel registers an
+  "Open with" entry on first launch and asks (once) whether to become the
+  default for Video / Music / Images — checkboxes, your pick, changeable
+  under ⚙ → Default apps. The Arch package pulls in mpv + ffmpeg as
+  dependencies and installs the desktop entry system-wide; the site's
+  installer offers the codecs on other distros. The app is meant to be
+  entered by double-clicking media, not launched bare.
 - **Capture the screen — built in.** **📷 Shot** grabs a screenshot (full
   screen, region, or window), **⏺ Record** records the screen — and the
   result opens right in Reel, ready to trim, convert or export. Recording
