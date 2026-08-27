@@ -2,7 +2,7 @@
 //! and into egui for display.
 
 use crate::capture;
-use crate::edit::Project;
+use crate::edit::{EditorState, Project, TrackKind};
 use crate::egui_backend::EguiBackend;
 use crate::export::{self, ExportJob, ExportSettings};
 use crate::gpu::{Gpu, VideoTexture};
@@ -24,6 +24,10 @@ pub struct ReelApp {
     pub image: Option<ImageDoc>,
     image_uploaded: bool,
     pub project: Project,
+    pub editor: EditorState,
+    /// The in-flight open belongs to a loaded .reel project (don't re-append
+    /// the media onto the timeline).
+    opening_for_project: bool,
     pub tex_id: Option<egui::TextureId>,
     tex: Option<VideoTexture>,
     pub status: String,
@@ -77,6 +81,8 @@ impl ReelApp {
             image: None,
             image_uploaded: false,
             project: Project::default(),
+            editor: EditorState::default(),
+            opening_for_project: false,
             tex_id: None,
             tex: None,
             status: "Ready.".into(),
@@ -196,13 +202,14 @@ impl ReelApp {
         }
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            let filters: [(&str, &[&str]); 4] = [
+            let filters: [(&str, &[&str]); 5] = [
                 ("Media", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
                             "mp3", "flac", "ogg", "opus", "m4a", "wav",
                             "png", "jpg", "jpeg", "webp", "bmp", "svg"]),
                 ("Video", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"]),
                 ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
                 ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
+                ("Reel project", &["reel"]),
             ];
             // Linux: rfd talks to the portal over zbus built in tokio mode.
             // MUST run on the process-wide runtime (see runtime.rs) — a
@@ -256,13 +263,34 @@ impl ReelApp {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string());
 
+        // A .reel document opens the whole edit: load the project, open its
+        // first source, land in the editor.
+        if path.to_lowercase().ends_with(".reel") {
+            match Project::load(path) {
+                Ok(project) => {
+                    let first_source = project
+                        .tracks
+                        .iter()
+                        .flat_map(|t| t.clips.iter())
+                        .map(|c| c.source.clone())
+                        .next();
+                    self.project = project;
+                    self.editor = EditorState::default();
+                    self.editor.project_path = Some(path.to_string());
+                    self.mode = Mode::Editor;
+                    self.window_title = format!("{name} — Reel");
+                    self.status = format!("Project {name} loaded.");
+                    if let Some(src) = first_source {
+                        self.open_media_async(&src, true);
+                    }
+                }
+                Err(e) => self.status = format!("Could not open project {path}: {e}"),
+            }
+            return;
+        }
+
         if !media::is_image_path(path) {
-            let (tx, rx) = crossbeam_channel::bounded(1);
-            let t_path = path.to_string();
-            std::thread::spawn(move || {
-                let _ = tx.send(Player::open(&t_path).map_err(|e| e.to_string()));
-            });
-            self.opening = Some(rx);
+            self.open_media_async(path, false);
             self.status = format!("Opening {name}…");
             return;
         }
@@ -287,6 +315,16 @@ impl ReelApp {
             return;
         }
 
+    }
+
+    fn open_media_async(&mut self, path: &str, for_project: bool) {
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        let t_path = path.to_string();
+        std::thread::spawn(move || {
+            let _ = tx.send(Player::open(&t_path).map_err(|e| e.to_string()));
+        });
+        self.opening = Some(rx);
+        self.opening_for_project = for_project;
     }
 
     /// Land a player opened on the worker thread.
@@ -315,6 +353,21 @@ impl ReelApp {
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path.clone());
+        if std::mem::take(&mut self.opening_for_project) {
+            // Source of a loaded .reel: stay paused at the playhead's mapped
+            // source position; the timeline already has its clips.
+            if let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) {
+                if clip.source == path {
+                    p.seek(clip.in_point + (self.editor.playhead - clip.start));
+                }
+            }
+            self.image = None;
+            self.image_uploaded = false;
+            self.tex_id = None;
+            self.tex = None;
+            self.player = Some(p);
+            return;
+        }
         p.toggle_play();
         match p.kind {
             MediaKind::Audio => {
@@ -477,6 +530,137 @@ impl ReelApp {
         match self.tex_id {
             Some(id) => egui.update_registered(id, &gpu.device, &tex.view),
             None => self.tex_id = Some(egui.register_texture(&gpu.device, &tex.view)),
+        }
+    }
+
+    /// Enter the editor with the playhead where the player is.
+    pub fn enter_editor(&mut self) {
+        self.mode = Mode::Editor;
+        if let Some(p) = &self.player {
+            if let Some(t) = self.project.source_to_timeline(&p.path, p.position) {
+                self.editor.playhead = t;
+                self.editor.active_clip =
+                    self.project.clip_at(TrackKind::Video, t).map(|c| c.id);
+            }
+        }
+    }
+
+    /// Timeline scrub: move the playhead and preview the frame under it.
+    pub fn seek_timeline(&mut self, t: f64) {
+        self.editor.playhead = t.max(0.0);
+        if let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) {
+            let (id, src, in_point, start) =
+                (clip.id, clip.source.clone(), clip.in_point, clip.start);
+            if let Some(player) = self.player.as_mut() {
+                if src == player.path {
+                    player.seek(in_point + (self.editor.playhead - start));
+                    self.editor.active_clip = Some(id);
+                }
+            }
+        }
+    }
+
+    /// Editor playback = sequencing: advance the timeline playhead from the
+    /// source position, and when the active clip's window runs out, jump to
+    /// the next clip on the timeline (skipping gaps).
+    pub fn update_editor_playback(&mut self) {
+        if self.mode != Mode::Editor {
+            return;
+        }
+        let Some(player) = self.player.as_mut() else { return };
+        if !player.playing {
+            return;
+        }
+        let pos = player.position;
+        let active = self
+            .editor
+            .active_clip
+            .and_then(|id| self.project.clip(id))
+            .filter(|c| c.source == player.path)
+            .or_else(|| self.project.clip_at(TrackKind::Video, self.editor.playhead))
+            .cloned();
+        let Some(clip) = active else { return };
+        self.editor.active_clip = Some(clip.id);
+        if pos <= clip.in_point + clip.duration + 0.02 {
+            self.editor.playhead = clip.start + (pos - clip.in_point).max(0.0);
+        } else {
+            match self.project.clip_after(TrackKind::Video, clip.start).cloned() {
+                Some(next) if next.source == player.path => {
+                    self.editor.playhead = next.start;
+                    self.editor.active_clip = Some(next.id);
+                    player.seek(next.in_point);
+                }
+                _ => {
+                    // End of the edit.
+                    if player.playing {
+                        player.toggle_play();
+                    }
+                    self.editor.playhead = clip.end();
+                }
+            }
+        }
+    }
+
+    /// Split every clip under the playhead (S).
+    pub fn editor_split(&mut self) {
+        let t = self.editor.playhead;
+        let would = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|tr| tr.clips.iter())
+            .any(|c| c.start + 0.05 < t && t < c.end() - 0.05);
+        if !would {
+            self.status = "Nothing under the playhead to split.".into();
+            return;
+        }
+        self.editor.push_undo(&self.project);
+        let n = self.project.split_at(t);
+        self.status = format!("Split {n} clip(s) at {t:.2}s.");
+    }
+
+    /// Delete the selected clip (Del).
+    pub fn editor_delete(&mut self) {
+        if let Some(id) = self.editor.selected {
+            self.editor.push_undo(&self.project);
+            self.project.delete_clip(id);
+            self.editor.selected = None;
+            self.status = "Clip deleted.".into();
+        }
+    }
+
+    /// Save the project as a .reel document (Ctrl+S). Defaults to sitting
+    /// next to the first source file.
+    pub fn editor_save(&mut self) {
+        let path = match self.editor.project_path.clone() {
+            Some(p) => p,
+            None => {
+                let src = self
+                    .project
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.clips.iter())
+                    .map(|c| c.source.clone())
+                    .next();
+                match src {
+                    Some(s) => std::path::Path::new(&s)
+                        .with_extension("reel")
+                        .to_string_lossy()
+                        .into_owned(),
+                    None => {
+                        self.status = "Nothing on the timeline to save yet.".into();
+                        return;
+                    }
+                }
+            }
+        };
+        match self.project.save(&path) {
+            Ok(()) => {
+                self.editor.project_path = Some(path.clone());
+                self.editor.dirty = false;
+                self.status = format!("Project saved → {path}");
+            }
+            Err(e) => self.status = format!("Save failed: {e}"),
         }
     }
 

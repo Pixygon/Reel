@@ -4,6 +4,20 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.13.2] — 2026-08-27
+
+### Added
+- Reel now has a real timeline editor: zoom and pan with the scroll wheel, click to select clips, drag clip bodies to move them and drag clip edges to trim, with snapping to nearby clip edges and the playhead. _(8094d7d)_
+- Split (S) and delete (Del) clips directly on the timeline, plus full undo/redo (Ctrl+Z / Ctrl+Shift+Z) for all editing actions. _(8094d7d)_
+- Save your edit as a .reel project file (Ctrl+S) and reopen it later — Reel reloads the timeline and its source media exactly where you left off. _(8094d7d)_
+- The file open dialog now accepts .reel project files alongside media files. _(8094d7d)_
+
+### Improved
+- Playback in the editor now follows the sequence of clips on the timeline, automatically jumping to the next clip and skipping gaps instead of just playing the raw source file. _(8094d7d)_
+- The timeline ruler now adapts its tick spacing to the current zoom level and shows readable time labels, and the editor toolbar gained zoom, split, delete, undo/redo, and save controls with a live unsaved-changes indicator. _(8094d7d)_
+- Selecting a clip in the media/clips list now shows its position, length, and source in-point details in the side panel. _(8094d7d)_
+
+
 ## [0.13.1] — 2026-08-27
 
 ### Improved

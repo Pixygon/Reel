@@ -100,4 +100,325 @@ impl Project {
             });
         }
     }
+
+    pub fn clip(&self, id: u64) -> Option<&Clip> {
+        self.tracks.iter().flat_map(|t| t.clips.iter()).find(|c| c.id == id)
+    }
+
+    pub fn clip_mut(&mut self, id: u64) -> Option<&mut Clip> {
+        self.tracks.iter_mut().flat_map(|t| t.clips.iter_mut()).find(|c| c.id == id)
+    }
+
+    /// The clip on the given kind of track under timeline time `t`.
+    pub fn clip_at(&self, kind: TrackKind, t: f64) -> Option<&Clip> {
+        self.tracks
+            .iter()
+            .filter(|tr| tr.kind == kind)
+            .flat_map(|tr| tr.clips.iter())
+            .find(|c| c.start <= t && t < c.end())
+    }
+
+    /// The next clip (by start) on the given track kind strictly after `t`.
+    pub fn clip_after(&self, kind: TrackKind, t: f64) -> Option<&Clip> {
+        self.tracks
+            .iter()
+            .filter(|tr| tr.kind == kind)
+            .flat_map(|tr| tr.clips.iter())
+            .filter(|c| c.start > t + 1e-9)
+            .min_by(|a, b| a.start.total_cmp(&b.start))
+    }
+
+    /// Split every clip containing timeline time `t` into two at `t`.
+    /// Returns how many clips were split.
+    pub fn split_at(&mut self, t: f64) -> usize {
+        const MIN: f64 = 0.05;
+        let mut split = 0;
+        let mut new_id = self.next_id;
+        for track in &mut self.tracks {
+            let mut additions = Vec::new();
+            for clip in &mut track.clips {
+                if clip.start + MIN < t && t < clip.end() - MIN {
+                    let cut = t - clip.start; // offset into the clip
+                    let mut right = clip.clone();
+                    right.id = new_id;
+                    new_id += 1;
+                    right.start = t;
+                    right.in_point = clip.in_point + cut;
+                    right.duration = clip.duration - cut;
+                    clip.duration = cut;
+                    additions.push(right);
+                    split += 1;
+                }
+            }
+            track.clips.extend(additions);
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        }
+        self.next_id = new_id;
+        split
+    }
+
+    pub fn delete_clip(&mut self, id: u64) -> bool {
+        for track in &mut self.tracks {
+            let before = track.clips.len();
+            track.clips.retain(|c| c.id != id);
+            if track.clips.len() != before {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Legal range for a clip's `start` when moving: between its neighbours
+    /// on the same track (overlaps are not allowed).
+    pub fn move_range(&self, id: u64) -> (f64, f64) {
+        for track in &self.tracks {
+            if let Some(clip) = track.clips.iter().find(|c| c.id == id) {
+                let mut lo = 0.0f64;
+                let mut hi = f64::INFINITY;
+                for other in &track.clips {
+                    if other.id == id {
+                        continue;
+                    }
+                    if other.end() <= clip.start + 1e-9 {
+                        lo = lo.max(other.end());
+                    } else if other.start + 1e-9 >= clip.end() {
+                        hi = hi.min(other.start - clip.duration);
+                    }
+                }
+                return (lo, hi.max(lo));
+            }
+        }
+        (0.0, f64::INFINITY)
+    }
+
+    /// Every interesting time to snap against: clip edges (excluding `skip`)
+    /// and timeline zero.
+    pub fn snap_targets(&self, skip: Option<u64>) -> Vec<f64> {
+        let mut v = vec![0.0];
+        for track in &self.tracks {
+            for c in &track.clips {
+                if Some(c.id) == skip {
+                    continue;
+                }
+                v.push(c.start);
+                v.push(c.end());
+            }
+        }
+        v
+    }
+
+    /// Map a source-media position to timeline time via a clip of `source`,
+    /// preferring the clip whose source window contains `pos`.
+    pub fn source_to_timeline(&self, source: &str, pos: f64) -> Option<f64> {
+        self.tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .flat_map(|t| t.clips.iter())
+            .filter(|c| c.source == source)
+            .find(|c| c.in_point <= pos && pos <= c.in_point + c.duration)
+            .map(|c| c.start + (pos - c.in_point))
+    }
+
+    pub fn save(&self, path: &str) -> anyhow::Result<()> {
+        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
+        Ok(())
+    }
+
+    pub fn load(path: &str) -> anyhow::Result<Self> {
+        let mut p: Project = serde_json::from_str(&std::fs::read_to_string(path)?)?;
+        // next_id is serde(skip); re-seed above every stored id.
+        p.next_id = p
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.id)
+            .max()
+            .unwrap_or(99)
+            + 1;
+        Ok(p)
+    }
+}
+
+/// Per-session editor state: zoom/scroll, selection, drag-in-progress, the
+/// timeline playhead (timeline seconds — NOT source seconds), and undo/redo
+/// as whole-model snapshots (the model is small; snapshots are simple and
+/// unbreakable).
+pub struct EditorState {
+    pub px_per_s: f32,
+    pub scroll_x: f32,
+    pub selected: Option<u64>,
+    pub drag: Option<Drag>,
+    /// Timeline position of the playhead, in seconds.
+    pub playhead: f64,
+    /// Clip currently feeding the preview during editor playback.
+    pub active_clip: Option<u64>,
+    pub dirty: bool,
+    pub project_path: Option<String>,
+    undo: Vec<Project>,
+    redo: Vec<Project>,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum Drag {
+    Move { id: u64, grab: f64 },
+    TrimL { id: u64 },
+    TrimR { id: u64 },
+    Playhead,
+}
+
+impl Default for EditorState {
+    fn default() -> Self {
+        Self {
+            px_per_s: 60.0,
+            scroll_x: 0.0,
+            selected: None,
+            drag: None,
+            playhead: 0.0,
+            active_clip: None,
+            dirty: false,
+            project_path: None,
+            undo: Vec::new(),
+            redo: Vec::new(),
+        }
+    }
+}
+
+impl EditorState {
+    /// Snapshot before a mutating operation.
+    pub fn push_undo(&mut self, project: &Project) {
+        self.undo.push(project.clone());
+        if self.undo.len() > 100 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+        self.dirty = true;
+    }
+
+    pub fn undo(&mut self, project: &mut Project) -> bool {
+        if let Some(prev) = self.undo.pop() {
+            self.redo.push(std::mem::replace(project, prev));
+            self.selected = None;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn redo(&mut self, project: &mut Project) -> bool {
+        if let Some(next) = self.redo.pop() {
+            self.undo.push(std::mem::replace(project, next));
+            self.selected = None;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn can_undo(&self) -> bool {
+        !self.undo.is_empty()
+    }
+
+    pub fn can_redo(&self) -> bool {
+        !self.redo.is_empty()
+    }
+
+    /// Snap `t` to the nearest target within `tolerance` seconds.
+    /// Returns (possibly snapped t, the target hit).
+    pub fn snap(t: f64, targets: &[f64], tolerance: f64) -> (f64, Option<f64>) {
+        let mut best: Option<f64> = None;
+        for &target in targets {
+            let d = (t - target).abs();
+            if d <= tolerance && best.map_or(true, |b| d < (t - b).abs()) {
+                best = Some(target);
+            }
+        }
+        (best.unwrap_or(t), best)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn one_clip_project() -> Project {
+        let mut p = Project::default();
+        p.append_video("a", "/tmp/a.mp4", 10.0);
+        p.append_audio("a", "/tmp/a.mp4", 10.0);
+        p
+    }
+
+    #[test]
+    fn split_divides_both_tracks_and_preserves_source_mapping() {
+        let mut p = one_clip_project();
+        assert_eq!(p.split_at(4.0), 2);
+        let v: Vec<_> = p.tracks[0].clips.iter().collect();
+        assert_eq!(v.len(), 2);
+        assert_eq!((v[0].start, v[0].duration, v[0].in_point), (0.0, 4.0, 0.0));
+        assert_eq!((v[1].start, v[1].duration, v[1].in_point), (4.0, 6.0, 4.0));
+        // Splitting outside any clip does nothing.
+        assert_eq!(p.split_at(20.0), 0);
+    }
+
+    #[test]
+    fn move_range_respects_neighbours() {
+        let mut p = one_clip_project();
+        p.split_at(4.0);
+        let right_id = p.tracks[0].clips[1].id;
+        // Move the right piece later, leaving a gap.
+        p.clip_mut(right_id).unwrap().start = 7.0;
+        let left_id = p.tracks[0].clips[0].id;
+        let (lo, hi) = p.move_range(left_id);
+        assert_eq!(lo, 0.0);
+        assert!((hi - 3.0).abs() < 1e-9, "left clip (4s) may start at most at 3.0, got {hi}");
+    }
+
+    #[test]
+    fn snapping_picks_nearest_within_tolerance() {
+        let targets = [0.0, 4.0, 10.0];
+        assert_eq!(EditorState::snap(3.9, &targets, 0.2), (4.0, Some(4.0)));
+        assert_eq!(EditorState::snap(5.0, &targets, 0.2), (5.0, None));
+    }
+
+    #[test]
+    fn undo_redo_roundtrip() {
+        let mut p = one_clip_project();
+        let mut ed = EditorState::default();
+        ed.push_undo(&p);
+        p.split_at(5.0);
+        assert_eq!(p.tracks[0].clips.len(), 2);
+        assert!(ed.undo(&mut p));
+        assert_eq!(p.tracks[0].clips.len(), 1);
+        assert!(ed.redo(&mut p));
+        assert_eq!(p.tracks[0].clips.len(), 2);
+    }
+
+    #[test]
+    fn project_saves_and_loads() {
+        let mut p = one_clip_project();
+        p.split_at(3.0);
+        let path = std::env::temp_dir().join(format!("reel-proj-test-{}.reel", std::process::id()));
+        p.save(&path.to_string_lossy()).expect("save");
+        let loaded = Project::load(&path.to_string_lossy()).expect("load");
+        assert_eq!(loaded.tracks[0].clips.len(), 2);
+        // next_id re-seeded above the stored max — appends must not collide.
+        let max_id = loaded.tracks.iter().flat_map(|t| t.clips.iter()).map(|c| c.id).max().unwrap();
+        let mut loaded2 = loaded;
+        loaded2.append_video("b", "/tmp/b.mp4", 1.0);
+        let new_max = loaded2.tracks[0].clips.iter().map(|c| c.id).max().unwrap();
+        assert!(new_max > max_id);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn source_timeline_mapping_follows_trims() {
+        let mut p = one_clip_project();
+        p.split_at(4.0);
+        // Delete the left piece; right piece starts at 4.0 with in_point 4.0.
+        let left_id = p.tracks[0].clips[0].id;
+        p.delete_clip(left_id);
+        assert_eq!(p.source_to_timeline("/tmp/a.mp4", 5.0), Some(5.0));
+        assert_eq!(p.source_to_timeline("/tmp/a.mp4", 2.0), None); // trimmed away
+    }
 }

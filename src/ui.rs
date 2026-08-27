@@ -12,6 +12,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_picker();
     app.poll_opening();
     app.poll_captures();
+    app.update_editor_playback();
     app.track_status();
     dropped_files(ctx, app);
     shortcuts(ctx, app);
@@ -220,7 +221,45 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         app.fullscreen = false;
     }
     if k.edit {
-        app.mode = if app.mode == Mode::Editor { Mode::Player } else { Mode::Editor };
+        if app.mode == Mode::Editor {
+            app.mode = Mode::Player;
+        } else {
+            app.enter_editor();
+        }
+    }
+
+    // Editor-only keys.
+    if app.mode == Mode::Editor {
+        struct EdKeys {
+            split: bool,
+            delete: bool,
+            undo: bool,
+            redo: bool,
+            save: bool,
+        }
+        let ek = ctx.input(|i| EdKeys {
+            split: i.key_pressed(Key::S) && !i.modifiers.ctrl && !i.modifiers.command,
+            delete: i.key_pressed(Key::Delete),
+            undo: (i.modifiers.ctrl || i.modifiers.command) && !i.modifiers.shift && i.key_pressed(Key::Z),
+            redo: (i.modifiers.ctrl || i.modifiers.command)
+                && (i.key_pressed(Key::Y) || (i.modifiers.shift && i.key_pressed(Key::Z))),
+            save: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::S),
+        });
+        if ek.split {
+            app.editor_split();
+        }
+        if ek.delete {
+            app.editor_delete();
+        }
+        if ek.undo {
+            app.editor.undo(&mut app.project);
+        }
+        if ek.redo {
+            app.editor.redo(&mut app.project);
+        }
+        if ek.save {
+            app.editor_save();
+        }
     }
 }
 
@@ -358,9 +397,17 @@ fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
 fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
     // The controls live at the very bottom (added first → outermost), always
     // visible in the editor — this is a workspace, nothing fades here.
-    egui::TopBottomPanel::bottom("editor_chrome").show(ctx, |ui| {
-        chrome(ui, app);
-        ui.label(RichText::new(&app.status).color(theme::CYAN).small());
+    // exact_height + a bounded child: chrome's greedy slider/columns layout
+    // must never see unbounded space (same trap as the player overlay).
+    egui::TopBottomPanel::bottom("editor_chrome").exact_height(102.0).show(ctx, |ui| {
+        let inner = ui.max_rect().shrink2(Vec2::new(8.0, 4.0));
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(inner)
+                .layout(egui::Layout::top_down(egui::Align::Min)),
+        );
+        chrome(&mut child, app);
+        child.label(RichText::new(&app.status).color(theme::CYAN).small());
     });
     egui::SidePanel::left("media").resizable(true).default_width(220.0).show(ctx, |ui| {
         ui.heading("Project");
@@ -369,9 +416,23 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
         ui.label(RichText::new("Media / Clips").color(theme::CYAN));
         for track in &app.project.tracks {
             for clip in &track.clips {
-                ui.label(format!("• {} ({:.1}s)", clip.name, clip.duration));
+                let selected = app.editor.selected == Some(clip.id);
+                if ui.selectable_label(selected, format!("• {} ({:.1}s)", clip.name, clip.duration)).clicked() {
+                    app.editor.selected = Some(clip.id);
+                }
             }
         }
+        if let Some(clip) = app.editor.selected.and_then(|id| app.project.clip(id)) {
+            ui.separator();
+            ui.label(RichText::new("Selected clip").color(theme::CYAN));
+            ui.label(format!("{}", clip.name));
+            ui.label(RichText::new(format!(
+                "at {}  ·  {:.2}s long\nsource in-point {}",
+                fmt_time(clip.start), clip.duration, fmt_time(clip.in_point)
+            )).small().color(egui::Color32::from_gray(150)));
+        }
+        ui.separator();
+        ui.label(RichText::new("S split · Del delete · drag edges to trim\nCtrl+scroll zoom · Ctrl+S save").small().color(egui::Color32::from_gray(120)));
     });
     egui::TopBottomPanel::bottom("timeline_panel").resizable(true).default_height(220.0).show(ctx, |ui| {
         timeline(ui, app);
@@ -623,7 +684,7 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
     });
 
     if goto_editor {
-        app.mode = Mode::Editor;
+        app.enter_editor();
     }
     if goto_player {
         app.mode = Mode::Player;
@@ -813,62 +874,307 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
     app.export_open = keep_open;
 }
 
-/// The NLE timeline — a time ruler, one lane per track, clips as blocks, and a
-/// playhead at the current position. v0.1 renders + shows structure; trimming
-/// and drag are on the roadmap.
+/// The NLE timeline: adaptive ruler, zoom/pan, clip select/move/trim with
+/// snapping, split/delete, undo/redo, and a draggable playhead that previews
+/// (and during playback, sequences) the edit.
 fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
-    ui.horizontal(|ui| {
-        ui.heading("Timeline");
-        ui.label(RichText::new(format!("{:.1}s", app.project.duration())).color(theme::CYAN).small());
-    });
-    let total = app.project.duration().max(10.0);
-    let full = ui.available_rect_before_wrap();
-    let px_per_s = (full.width() / total as f32).max(2.0);
-    let lane_h = 34.0;
+    use crate::edit::{Drag, EditorState};
 
-    let painter = ui.painter();
-    // Ruler ticks every second.
-    let mut t = 0.0;
-    while t <= total {
-        let x = full.left() + t as f32 * px_per_s;
-        painter.line_segment([egui::pos2(x, full.top()), egui::pos2(x, full.top() + 8.0)], Stroke::new(1.0, Color32::from_gray(70)));
-        t += 1.0;
+    // ── Toolbar ──────────────────────────────────────────────────────────
+    ui.horizontal(|ui| {
+        if ui.button("−").on_hover_text("Zoom out (Ctrl+scroll)").clicked() {
+            app.editor.px_per_s = (app.editor.px_per_s / 1.5).max(2.0);
+        }
+        if ui.button("+").on_hover_text("Zoom in (Ctrl+scroll)").clicked() {
+            app.editor.px_per_s = (app.editor.px_per_s * 1.5).min(600.0);
+        }
+        if ui.button("↔").on_hover_text("Fit the whole edit").clicked() {
+            let w = ui.available_width().max(200.0);
+            app.editor.px_per_s = (w / app.project.duration().max(1.0) as f32).clamp(2.0, 600.0);
+            app.editor.scroll_x = 0.0;
+        }
+        ui.separator();
+        if ui.button("✂ Split").on_hover_text("Split under the playhead (S)").clicked() {
+            app.editor_split();
+        }
+        let del = ui.add_enabled(app.editor.selected.is_some(), egui::Button::new("🗑 Delete"));
+        if del.on_hover_text("Delete selected clip (Del)").clicked() {
+            app.editor_delete();
+        }
+        ui.separator();
+        if ui.add_enabled(app.editor.can_undo(), egui::Button::new("Undo")).on_hover_text("Undo (Ctrl+Z)").clicked() {
+            app.editor.undo(&mut app.project);
+        }
+        if ui.add_enabled(app.editor.can_redo(), egui::Button::new("Redo")).on_hover_text("Redo (Ctrl+Shift+Z)").clicked() {
+            app.editor.redo(&mut app.project);
+        }
+        ui.separator();
+        if ui.button("💾 Save").on_hover_text("Save .reel project (Ctrl+S)").clicked() {
+            app.editor_save();
+        }
+        if app.editor.dirty {
+            ui.label(RichText::new("●").color(theme::EMBER).small());
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                RichText::new(format!("{}  ·  {:.1}s", app.project.name, app.project.duration()))
+                    .color(theme::CYAN)
+                    .small(),
+            );
+        });
+    });
+    ui.add_space(2.0);
+
+    // ── Canvas ───────────────────────────────────────────────────────────
+    // Allocate the space explicitly — a painter-only canvas claims nothing,
+    // and an unclaimed resizable panel collapses to its toolbar.
+    let want = Vec2::new(ui.available_width(), ui.available_height().max(120.0));
+    let (full, _) = ui.allocate_exact_size(want, Sense::hover());
+    if full.height() < 40.0 {
+        return;
+    }
+    let ruler_h = 18.0;
+    let lane_h = ((full.height() - ruler_h - 8.0) / app.project.tracks.len().max(1) as f32)
+        .clamp(24.0, 46.0);
+
+    // Wheel: pan; Ctrl+wheel: zoom around the cursor.
+    if ui.rect_contains_pointer(full) {
+        let (scroll, modifiers, pointer) =
+            ui.ctx().input(|i| (i.raw_scroll_delta, i.modifiers, i.pointer.hover_pos()));
+        let pps = app.editor.px_per_s;
+        if modifiers.ctrl || modifiers.command {
+            if scroll.y.abs() > 0.0 {
+                let factor = (scroll.y * 0.0035).exp();
+                let new_pps = (pps * factor).clamp(2.0, 600.0);
+                if let Some(p) = pointer {
+                    let anchor_t = ((p.x - full.left()) / pps) + app.editor.scroll_x;
+                    app.editor.scroll_x = anchor_t - (p.x - full.left()) / new_pps;
+                }
+                app.editor.px_per_s = new_pps;
+            }
+        } else {
+            let d = if scroll.x.abs() > scroll.y.abs() { scroll.x } else { scroll.y };
+            app.editor.scroll_x -= d / pps;
+        }
+        app.editor.scroll_x = app.editor.scroll_x.max(0.0);
+    }
+    let pps = app.editor.px_per_s;
+    let scroll_x = app.editor.scroll_x;
+    let t_to_x = move |t: f64| full.left() + (t as f32 - scroll_x) * pps;
+    let x_to_t = move |x: f32| ((((x - full.left()) / pps) + scroll_x).max(0.0)) as f64;
+    let snap_tol = (8.0 / pps) as f64;
+
+    let painter = ui.painter_at(full);
+    painter.rect_filled(full, 0.0, theme::VOID);
+
+    // Ruler with adaptive tick spacing (a "nice" step at least ~70 px wide).
+    let step = {
+        let candidates = [0.1, 0.25, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0];
+        *candidates.iter().find(|&&s| s as f32 * pps >= 70.0).unwrap_or(&600.0)
+    };
+    let t_end = x_to_t(full.right());
+    let mut t = ((scroll_x as f64 / step).floor() * step).max(0.0);
+    while t <= t_end {
+        let x = t_to_x(t);
+        painter.line_segment(
+            [egui::pos2(x, full.top()), egui::pos2(x, full.top() + ruler_h)],
+            Stroke::new(1.0, Color32::from_gray(80)),
+        );
+        painter.text(
+            egui::pos2(x + 4.0, full.top() + 1.0),
+            egui::Align2::LEFT_TOP,
+            fmt_time(t),
+            egui::FontId::monospace(10.0),
+            Color32::from_gray(140),
+        );
+        for k in 1..4 {
+            let xm = t_to_x(t + step * k as f64 / 4.0);
+            painter.line_segment(
+                [egui::pos2(xm, full.top() + ruler_h - 5.0), egui::pos2(xm, full.top() + ruler_h)],
+                Stroke::new(1.0, Color32::from_gray(55)),
+            );
+        }
+        t += step;
     }
 
-    for (i, track) in app.project.tracks.iter().enumerate() {
-        let top = full.top() + 12.0 + i as f32 * (lane_h + 4.0);
+    // Background interact FIRST — clips registered afterwards sit on top.
+    let bg = ui.interact(full, ui.id().with("tl_bg"), Sense::click_and_drag());
+    if bg.drag_started() {
+        app.editor.drag = Some(Drag::Playhead);
+    }
+    if bg.clicked() {
+        app.editor.selected = None;
+        if let Some(p) = bg.interact_pointer_pos() {
+            app.seek_timeline(x_to_t(p.x));
+        }
+    }
+    if matches!(app.editor.drag, Some(Drag::Playhead)) && bg.dragged() {
+        if let Some(p) = bg.interact_pointer_pos() {
+            app.seek_timeline(x_to_t(p.x));
+        }
+    }
+    if bg.drag_stopped() {
+        app.editor.drag = None;
+    }
+
+    // Lanes + clips (drawn from a snapshot; edits go through clip_mut).
+    let mut snap_line: Option<f64> = None;
+    let track_data: Vec<(TrackKind, String, Vec<crate::edit::Clip>)> = app
+        .project
+        .tracks
+        .iter()
+        .map(|tr| (tr.kind.clone(), tr.name.clone(), tr.clips.clone()))
+        .collect();
+    for (i, (kind, tname, clips)) in track_data.iter().enumerate() {
+        let top = full.top() + ruler_h + 4.0 + i as f32 * (lane_h + 4.0);
         let lane = Rect::from_min_size(egui::pos2(full.left(), top), Vec2::new(full.width(), lane_h));
         painter.rect_filled(lane, 4.0, theme::VOID_2);
-        painter.text(egui::pos2(lane.left() + 4.0, lane.top() + 2.0), egui::Align2::LEFT_TOP,
-            &track.name, egui::FontId::monospace(11.0), Color32::from_gray(130));
+        painter.text(
+            egui::pos2(lane.left() + 5.0, lane.center().y),
+            egui::Align2::LEFT_CENTER,
+            tname,
+            egui::FontId::monospace(10.0),
+            Color32::from_gray(110),
+        );
 
-        let col = match track.kind {
-            TrackKind::Video => theme::CYAN.linear_multiply(0.5),
-            TrackKind::Audio => theme::EMBER.linear_multiply(0.5),
+        let base = match kind {
+            TrackKind::Video => theme::CYAN,
+            TrackKind::Audio => theme::EMBER,
         };
-        for clip in &track.clips {
-            let x0 = full.left() + clip.start as f32 * px_per_s;
-            let w = (clip.duration as f32 * px_per_s).max(2.0);
-            let cr = Rect::from_min_size(egui::pos2(x0, top + 2.0), Vec2::new(w, lane_h - 4.0));
-            painter.rect_filled(cr, 4.0, col);
-            painter.rect_stroke(cr, 4.0, Stroke::new(1.0, theme::STAR), egui::StrokeKind::Inside);
-            painter.text(egui::pos2(cr.left() + 4.0, cr.center().y), egui::Align2::LEFT_CENTER,
-                &clip.name, egui::FontId::proportional(11.0), theme::STAR);
-        }
-    }
+        for clip in clips {
+            let x0 = t_to_x(clip.start);
+            let x1 = t_to_x(clip.end());
+            if x1 < full.left() || x0 > full.right() {
+                continue;
+            }
+            let cr = Rect::from_min_max(
+                egui::pos2(x0, top + 2.0),
+                egui::pos2(x1.max(x0 + 2.0), top + lane_h - 2.0),
+            );
+            let selected = app.editor.selected == Some(clip.id);
+            let fill = if selected { base.linear_multiply(0.55) } else { base.linear_multiply(0.30) };
+            painter.rect_filled(cr, 5.0, fill);
+            painter.rect_stroke(
+                cr,
+                5.0,
+                Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { base }),
+                egui::StrokeKind::Inside,
+            );
+            if cr.width() > 40.0 {
+                painter.text(
+                    egui::pos2(cr.left() + 6.0, cr.center().y),
+                    egui::Align2::LEFT_CENTER,
+                    format!("{}  {:.1}s", clip.name, clip.duration),
+                    egui::FontId::proportional(11.0),
+                    theme::STAR,
+                );
+            }
 
-    // Playhead — click/drag the timeline to scrub it.
-    if let Some(player) = app.player.as_mut() {
-        let resp = ui.interact(full, ui.id().with("timeline_scrub"), Sense::click_and_drag());
-        if resp.clicked() || resp.dragged() {
-            if let Some(p) = resp.interact_pointer_pos() {
-                let t = (((p.x - full.left()) / px_per_s) as f64).clamp(0.0, total);
-                player.seek(t);
+            // Interaction: edges trim, body moves.
+            let resp = ui.interact(cr, ui.id().with(("clip", clip.id)), Sense::click_and_drag());
+            let zone = resp
+                .hover_pos()
+                .map(|p| {
+                    if p.x < cr.left() + 7.0 {
+                        1
+                    } else if p.x > cr.right() - 7.0 {
+                        2
+                    } else {
+                        0
+                    }
+                })
+                .unwrap_or(0);
+            if resp.hovered() {
+                ui.ctx().set_cursor_icon(if zone == 0 {
+                    egui::CursorIcon::Grab
+                } else {
+                    egui::CursorIcon::ResizeHorizontal
+                });
+            }
+            if resp.clicked() || resp.drag_started() {
+                app.editor.selected = Some(clip.id);
+            }
+            if resp.drag_started() {
+                app.editor.push_undo(&app.project);
+                app.editor.drag = Some(match zone {
+                    1 => Drag::TrimL { id: clip.id },
+                    2 => Drag::TrimR { id: clip.id },
+                    _ => Drag::Move {
+                        id: clip.id,
+                        grab: resp
+                            .interact_pointer_pos()
+                            .map(|p| x_to_t(p.x) - clip.start)
+                            .unwrap_or(0.0),
+                    },
+                });
+            }
+            if let (Some(drag), true, Some(p)) = (app.editor.drag, resp.dragged(), resp.interact_pointer_pos()) {
+                let pt = x_to_t(p.x);
+                let mut targets = app.project.snap_targets(Some(clip.id));
+                targets.push(app.editor.playhead);
+                let (lo, hi) = app.project.move_range(clip.id);
+                match drag {
+                    Drag::Move { id, grab } if id == clip.id => {
+                        let (snapped, hit) = EditorState::snap(pt - grab, &targets, snap_tol);
+                        snap_line = hit;
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.start = snapped.clamp(lo, hi.max(lo));
+                        }
+                    }
+                    Drag::TrimL { id } if id == clip.id => {
+                        let (snapped, hit) = EditorState::snap(pt, &targets, snap_tol);
+                        snap_line = hit;
+                        if let Some(c) = app.project.clip_mut(id) {
+                            let min_start = lo.max(c.start - c.in_point);
+                            let new_start = snapped.clamp(min_start, c.end() - 0.05);
+                            let delta = new_start - c.start;
+                            c.start = new_start;
+                            c.in_point += delta;
+                            c.duration -= delta;
+                        }
+                    }
+                    Drag::TrimR { id } if id == clip.id => {
+                        let (snapped, hit) = EditorState::snap(pt, &targets, snap_tol);
+                        snap_line = hit;
+                        let next_start = if hi.is_finite() { hi + clip.duration } else { f64::INFINITY };
+                        if let Some(c) = app.project.clip_mut(id) {
+                            let new_end = snapped.clamp(c.start + 0.05, next_start);
+                            c.duration = new_end - c.start;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            if resp.drag_stopped() {
+                app.editor.drag = None;
             }
         }
-        let x = full.left() + player.position as f32 * px_per_s;
-        ui.painter().line_segment([egui::pos2(x, full.top()), egui::pos2(x, full.bottom())], Stroke::new(1.5, theme::EMBER));
     }
+
+    // Snap indicator.
+    if let Some(st) = snap_line {
+        let x = t_to_x(st);
+        painter.line_segment(
+            [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
+            Stroke::new(1.0, theme::STAR),
+        );
+    }
+
+    // Playhead: ember line + grab triangle in the ruler.
+    let px = t_to_x(app.editor.playhead);
+    painter.line_segment(
+        [egui::pos2(px, full.top()), egui::pos2(px, full.bottom())],
+        Stroke::new(1.5, theme::EMBER),
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            egui::pos2(px - 6.0, full.top()),
+            egui::pos2(px + 6.0, full.top()),
+            egui::pos2(px, full.top() + 10.0),
+        ],
+        theme::EMBER,
+        Stroke::NONE,
+    ));
 }
 
 fn fmt_time(secs: f64) -> String {
