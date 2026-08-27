@@ -79,6 +79,13 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Textures handed to egui MUST be premultiplied-alpha (egui's blend mode
   assumes it). ImageDoc stays straight-alpha for exports; `sync_frame`
   premultiplies the uploaded copy. Transparent stills get the checkerboard.
+- Cold-open speed rules (measured with the `timing!` macro — keep it):
+  video/audio opens go through `app.opening` (worker thread; MpvPlayer is
+  deliberately `unsafe impl Send`) so the window/UI never blocks on a
+  demuxer; mpv starts with `hwdec=no` and upgrades via `enable_hwdec()`
+  after 1 s of playback (hwdec probing costs ~500 ms before first pixel);
+  wgpu uses Backends::PRIMARY (GL probing is slow and never chosen). Don't
+  reintroduce synchronous opens or eager hwdec.
 - Known upstream gap: winit 0.30 has no Wayland file-drop — DnD works on
   X11/Windows only. Don't advertise drops on Wayland (empty-state hint
   already branches on WAYLAND_DISPLAY).
