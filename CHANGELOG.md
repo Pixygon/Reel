@@ -4,6 +4,13 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.13.1] — 2026-08-27
+
+### Improved
+- Opening a video or audio file no longer freezes the window — Reel now loads media on a background thread and shows an "Opening…" status while it works.
+- App startup and cold-opening a file is noticeably faster: GPU backend selection skips unnecessary probing, and video decoding starts in software mode immediately, upgrading to hardware decoding a second later once playback is smoothly rolling.
+
+
 ## [0.13.0] — 2026-08-27
 
 ### Changed

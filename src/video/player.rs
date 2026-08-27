@@ -98,6 +98,9 @@ pub struct Player {
     pub looping: bool,
     /// Active audio visualizer (mpv backend, audio media).
     pub visualizer: Visualizer,
+    /// Hardware decode is enabled lazily (~1 s in) — probing GPUs before the
+    /// first pixel costs ~500 ms of cold-open time.
+    hwdec_upgraded: bool,
     dirty: bool,
     /// Redraws are requested until this instant even while paused, so frames
     /// that land asynchronously (open, seek) reach the screen.
@@ -132,6 +135,7 @@ impl Player {
             speed: 1.0,
             looping: false,
             visualizer: Visualizer::Off,
+            hwdec_upgraded: false,
             dirty: true,
             active_until: Instant::now() + Duration::from_millis(500),
         };
@@ -317,6 +321,14 @@ impl Player {
             }
             self.playing = false;
             self.ended = true;
+        }
+        // First second is software-decoded for instant startup; upgrade to
+        // hardware decode once the picture is up (video with real frames only).
+        if !self.hwdec_upgraded && self.kind == MediaKind::Video && self.position > 1.0 {
+            self.hwdec_upgraded = true;
+            if let Backend::Mpv(m) = &mut self.backend {
+                m.enable_hwdec();
+            }
         }
     }
 

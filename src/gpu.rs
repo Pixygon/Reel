@@ -19,8 +19,10 @@ pub struct Gpu {
 
 impl Gpu {
     pub async fn new(window: Arc<Window>) -> Result<Self> {
+        // PRIMARY = Vulkan/Metal/DX12. Enumerating the GL backends too costs
+        // real startup time (EGL config probing) and we never pick GL anyway.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::all(),
+            backends: wgpu::Backends::PRIMARY,
             ..Default::default()
         });
 

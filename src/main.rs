@@ -81,7 +81,9 @@ impl ApplicationHandler<UserEvent> for Reel {
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 760.0));
         let window = Arc::new(event_loop.create_window(attrs).expect("create window"));
 
+        timing!("window created");
         let gpu = pollster::block_on(Gpu::new(window.clone())).expect("init gpu");
+        timing!("gpu ready");
         let egui = EguiBackend::new(&gpu, &window);
         theme::apply(&egui.ctx);
 
@@ -91,8 +93,10 @@ impl ApplicationHandler<UserEvent> for Reel {
 
         if let Some(path) = self.initial_open.take() {
             self.app.open(&path);
+            timing!("media opened");
         }
         self.app.init_integration();
+        timing!("integration done");
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -205,8 +209,24 @@ impl ApplicationHandler<UserEvent> for Reel {
     }
 }
 
+/// Process start, for cold-open timing logs.
+static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+pub fn t0() -> std::time::Instant {
+    *T0.get_or_init(std::time::Instant::now)
+}
+#[macro_export]
+macro_rules! timing {
+    ($($arg:tt)*) => {
+        log::info!("[t+{:>5.0}ms] {}", crate::t0().elapsed().as_secs_f64() * 1000.0, format!($($arg)*));
+    };
+}
+
 fn main() {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    t0();
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info,zbus=warn,tracing=warn"),
+    )
+    .init();
 
     // No ffmpeg on this machine? Fetch a static build in the background so
     // export/convert and the fallback decoder Just Work (mainly Windows).
@@ -247,6 +267,7 @@ fn main() {
 
     #[cfg(target_os = "linux")]
     let tray = tray::spawn(event_loop.create_proxy());
+    timing!("tray registered");
 
     let mut reel = Reel {
         window: None,

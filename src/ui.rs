@@ -10,6 +10,7 @@ use egui::{Color32, Key, Rect, RichText, Sense, Stroke, Vec2};
 
 pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_picker();
+    app.poll_opening();
     app.poll_captures();
     app.track_status();
     dropped_files(ctx, app);

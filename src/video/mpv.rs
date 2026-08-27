@@ -121,8 +121,7 @@ pub fn lib() -> Option<Arc<Lib>> {
     .clone()
 }
 
-/// One open media file driven by libmpv. Not Send — lives with the UI thread,
-/// exactly like the `Player` that owns it.
+/// One open media file driven by libmpv.
 pub struct MpvPlayer {
     lib: Arc<Lib>,
     handle: *mut c_void,
@@ -135,6 +134,12 @@ pub struct MpvPlayer {
     /// (width, height, has_video) before a visualizer took over.
     orig_video: Option<(u32, u32, bool)>,
 }
+
+// SAFETY: libmpv's client API is documented fully thread-safe, and the render
+// context may be used from any thread as long as calls aren't concurrent.
+// Reel opens the player on a worker thread (so the UI never blocks on
+// demuxing) and then hands it to the UI thread, which does all further calls.
+unsafe impl Send for MpvPlayer {}
 
 impl MpvPlayer {
     pub fn open(lib: Arc<Lib>, path: &str) -> Result<Self> {
@@ -159,11 +164,18 @@ impl MpvPlayer {
             ("config", "no"),
             ("terminal", "no"),
             ("vo", "libmpv"),
-            ("hwdec", "auto-copy-safe"),
+            // Start decoding in software: hwdec probing (CUDA/VAAPI init)
+            // costs ~half a second before the first pixel. `enable_hwdec`
+            // upgrades once playback is rolling.
+            ("hwdec", "no"),
             ("keep-open", "yes"),
             ("pause", "yes"),
             ("input-default-bindings", "no"),
             ("audio-client-name", "reel"),
+            // Cold-open speed: no built-in scripts (ytdl_hook etc.) — Reel
+            // opens local files; script init measurably delays FILE_LOADED.
+            ("load-scripts", "no"),
+            ("ytdl", "no"),
         ] {
             p.check(unsafe {
                 (p.lib.mpv_set_option_string)(
@@ -174,8 +186,10 @@ impl MpvPlayer {
             })
             .map_err(|e| anyhow!("mpv option {k}={v}: {e}"))?;
         }
+        crate::timing!("mpv options set");
         p.check(unsafe { (p.lib.mpv_initialize)(p.handle) })
             .map_err(|e| anyhow!("mpv_initialize: {e}"))?;
+        crate::timing!("mpv initialized");
 
         // Software render target: mpv decodes (hw where possible), converts to
         // RGBA with proper colour management, we upload. See module docs.
@@ -191,6 +205,7 @@ impl MpvPlayer {
         .map_err(|e| anyhow!("mpv render context: {e}"))?;
         p.render = render;
 
+        crate::timing!("mpv render ctx ready");
         p.command(&["loadfile", path])?;
 
         // Block until the file is demuxed (or fails) so `open` can return real
@@ -209,6 +224,7 @@ impl MpvPlayer {
                 bail!("mpv timed out opening {path}");
             }
         }
+        crate::timing!("mpv FILE_LOADED");
 
         let width = p.get_i64("width").unwrap_or(0) as u32;
         let height = p.get_i64("height").unwrap_or(0) as u32;
@@ -243,6 +259,12 @@ impl MpvPlayer {
     /// Frame-exact seek: mpv decodes from the keyframe and steps to the target.
     pub fn seek(&mut self, secs: f64) {
         let _ = self.command(&["seek", &format!("{secs:.4}"), "absolute+exact"]);
+    }
+
+    /// Switch to hardware decode (copy-back). Called shortly after playback
+    /// starts — mpv reinitializes the decoder in the background.
+    pub fn enable_hwdec(&mut self) {
+        let _ = self.command(&["set", "hwdec", "auto-copy-safe"]);
     }
 
     /// Step exactly one frame forward/back; mpv pauses as part of the step.

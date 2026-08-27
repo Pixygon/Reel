@@ -37,6 +37,8 @@ pub struct ReelApp {
 
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
+    /// A video/audio open in progress on a worker thread.
+    opening: Option<Receiver<Result<Player, String>>>,
     /// Result channel of a screenshot being taken on a worker thread.
     shot_rx: Option<Receiver<Result<PathBuf, String>>>,
     /// A screen recording in progress.
@@ -83,6 +85,7 @@ impl ReelApp {
             export_out: String::new(),
             export: None,
             picker: None,
+            opening: None,
             shot_rx: None,
             recorder: None,
             rec_start_rx: None,
@@ -244,14 +247,25 @@ impl ReelApp {
         }
     }
 
-    /// Open any media path — video, audio or image — and register it on the
-    /// timeline so the editor has something to work with. Video/audio starts
-    /// playing immediately; images just appear.
+    /// Open any media path — video, audio or image. Images decode inline
+    /// (instant); video/audio open on a worker thread so the window never
+    /// blocks on a demuxer — `poll_opening` lands the player when ready.
     pub fn open(&mut self, path: &str) {
         let name = std::path::Path::new(path)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| path.to_string());
+
+        if !media::is_image_path(path) {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            let t_path = path.to_string();
+            std::thread::spawn(move || {
+                let _ = tx.send(Player::open(&t_path).map_err(|e| e.to_string()));
+            });
+            self.opening = Some(rx);
+            self.status = format!("Opening {name}…");
+            return;
+        }
 
         if media::is_image_path(path) {
             match ImageDoc::open(path) {
@@ -273,44 +287,65 @@ impl ReelApp {
             return;
         }
 
-        match Player::open(path) {
-            Ok(mut p) => {
-                p.toggle_play();
-                match p.kind {
-                    MediaKind::Audio => {
-                        self.project.append_audio(&name, path, p.info.duration);
-                        self.status = format!(
-                            "♪ {name} — {:.1}s [{}]",
-                            p.info.duration,
-                            p.backend_name()
-                        );
-                        self.export_settings.codec = crate::export::Codec::Mp3;
-                    }
-                    _ => {
-                        self.project.append_video(&name, path, p.info.duration);
-                        self.project.fps = p.info.fps;
-                        self.project.width = p.info.width;
-                        self.project.height = p.info.height;
-                        self.status = format!(
-                            "{name} — {}×{} @ {:.2}fps, {:.1}s [{}]",
-                            p.info.width, p.info.height, p.info.fps, p.info.duration,
-                            p.backend_name()
-                        );
-                        self.export_settings.codec = crate::export::Codec::H264;
-                    }
-                }
-                self.window_title = format!("{name} — Reel");
-                self.export_out = export::default_output(path, self.export_settings.codec);
-                self.image = None;
-                self.image_uploaded = false;
-                self.tex_id = None;
-                self.tex = None;
-                self.player = Some(p);
+    }
+
+    /// Land a player opened on the worker thread.
+    pub fn poll_opening(&mut self) {
+        let Some(rx) = &self.opening else { return };
+        match rx.try_recv() {
+            Ok(Ok(p)) => {
+                self.opening = None;
+                self.finish_open(p);
             }
-            Err(e) => {
-                self.status = format!("Could not open {path}: {e}");
+            Ok(Err(e)) => {
+                self.opening = None;
+                self.status = format!("Could not open: {e}");
+            }
+            Err(crossbeam_channel::TryRecvError::Empty) => {}
+            Err(crossbeam_channel::TryRecvError::Disconnected) => {
+                self.opening = None;
+                self.status = "Open failed unexpectedly.".into();
             }
         }
+    }
+
+    fn finish_open(&mut self, mut p: Player) {
+        let path = p.path.clone();
+        let name = std::path::Path::new(&path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.clone());
+        p.toggle_play();
+        match p.kind {
+            MediaKind::Audio => {
+                self.project.append_audio(&name, &path, p.info.duration);
+                self.status = format!(
+                    "♪ {name} — {:.1}s [{}]",
+                    p.info.duration,
+                    p.backend_name()
+                );
+                self.export_settings.codec = crate::export::Codec::Mp3;
+            }
+            _ => {
+                self.project.append_video(&name, &path, p.info.duration);
+                self.project.fps = p.info.fps;
+                self.project.width = p.info.width;
+                self.project.height = p.info.height;
+                self.status = format!(
+                    "{name} — {}×{} @ {:.2}fps, {:.1}s [{}]",
+                    p.info.width, p.info.height, p.info.fps, p.info.duration,
+                    p.backend_name()
+                );
+                self.export_settings.codec = crate::export::Codec::H264;
+            }
+        }
+        self.window_title = format!("{name} — Reel");
+        self.export_out = export::default_output(&path, self.export_settings.codec);
+        self.image = None;
+        self.image_uploaded = false;
+        self.tex_id = None;
+        self.tex = None;
+        self.player = Some(p);
     }
 
     /// Take a screenshot (full/region/window) on a worker thread; when it
@@ -432,6 +467,7 @@ impl ReelApp {
             None => true,
         };
         if need_new {
+            crate::timing!("first frame on GPU ({}×{})", frame.width, frame.height);
             self.tex = Some(VideoTexture::new(&gpu.device, frame.width, frame.height));
             self.tex_id = None;
         }
@@ -451,6 +487,7 @@ impl ReelApp {
         self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
             || self.picker.is_some()
+            || self.opening.is_some()
             || self.shot_rx.is_some()
             || self.rec_start_rx.is_some()
             || self.rec_rx.is_some()
