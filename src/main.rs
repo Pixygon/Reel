@@ -160,6 +160,30 @@ fn main() {
     }
 
     let initial_open = std::env::args().nth(1);
+    // A media path is the only argument Reel takes — but a terminal user who
+    // types --help deserves an answer, not a window titled "--help".
+    if let Some(arg) = initial_open.as_deref() {
+        match arg {
+            "--help" | "-h" => {
+                println!(
+                    "Reel {} — a native media player, editor and capture tool.\n\n\
+                     Usage: reel [FILE]\n\n\
+                     FILE can be a video, an audio file, or an image (SVG included).\n\
+                     With no FILE, Reel opens ready for drag-and-drop.\n\n\
+                     Keys: Space play/pause · ←/→ seek · ,/. frame step · ↑/↓ volume\n\
+                     \x20     M mute · L loop · F fullscreen · V visualizer · E editor\n\n\
+                     Docs & downloads: https://reel.pixygon.io",
+                    env!("CARGO_PKG_VERSION")
+                );
+                return;
+            }
+            "--version" | "-V" => {
+                println!("reel {}", env!("CARGO_PKG_VERSION"));
+                return;
+            }
+            _ => {}
+        }
+    }
     let event_loop = EventLoop::new().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
 

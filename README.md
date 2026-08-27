@@ -102,6 +102,9 @@ on the GPU end-to-end (render API GL/Vulkan interop, libplacebo-class output).
 
 ## Status
 
-Early foundation. It plays and scrubs video and shows the editor; it does not
-yet trim, composite, or export. See [ROADMAP.md](ROADMAP.md) for the path to the
-stated bar.
+A capable daily driver for playing, converting and capturing; the deep-edit
+milestones (trim/composite/timeline-export) are the current frontier. See
+[ROADMAP.md](ROADMAP.md) for the path to the stated bar.
+
+**Download & docs: [reel.pixygon.io](https://reel.pixygon.io)** — one-line
+Linux install, Arch repo, Windows zip.

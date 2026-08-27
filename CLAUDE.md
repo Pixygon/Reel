@@ -1,5 +1,7 @@
 # Reel — working notes for Claude
 
+**https://reel.pixygon.io** — download, setup, usage.
+
 Native cross-platform media player + editor + capture tool (video, audio,
 images — one door). The bar: **better than VLC to play, Premiere-class to
 edit. Linux first.** README.md and ROADMAP.md are current and honest — read

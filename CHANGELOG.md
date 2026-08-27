@@ -4,6 +4,12 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.9.0] — 2026-08-27
+
+### Added
+- Added command-line --help/-h and --version/-V flags, so running Reel from a terminal now prints usage, keyboard shortcuts, and version info instead of just opening a window.
+
+
 ## [0.8.0] — 2026-08-27
 
 ### Added
