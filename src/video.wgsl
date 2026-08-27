@@ -7,15 +7,23 @@
 // the colour is premultiplied to match egui's blending, and the tint uniform
 // is the hook compositing/fades will use.
 
+// FIELD ORDER MUST MATCH `Uniforms` in video_pass.rs, exactly. (Getting this
+// wrong is silent: the shader reads one field's bytes as another's. It once
+// made exposure read 0 and the whole picture went black.)
 struct Uniforms {
     tint: vec4<f32>,
     // x: 1 = honour the texture's alpha (still images, which really can be
     //    transparent); 0 = force opaque (video — mpv's software target leaves
     //    a padding byte in the alpha channel, and fixing that on the CPU
     //    costs a full pass over every pixel of every frame).
-    // yzw: reserved for effect parameters. Kept as one vec4 so the Rust and
-    //      WGSL layouts can't drift (vec3 padding rules are a trap).
+    // y: 1 = apply the effects block below; 0 = show the picture untouched.
+    // zw: reserved. Kept as one vec4 so the Rust and WGSL layouts can't drift
+    //     (vec3 padding rules are a trap).
     params: vec4<f32>,
+    // Per-clip effects: x = exposure, y = contrast, z = saturation, w unused.
+    // These MUST match effects::Effects::apply_reference — that formula is
+    // also what the ffmpeg render performs, and a test holds the two together.
+    fx: vec4<f32>,
 };
 
 @group(0) @binding(0) var frame_tex: texture_2d<f32>;
@@ -39,12 +47,44 @@ fn vs(@builtin(vertex_index) idx: u32) -> VsOut {
     return out;
 }
 
+// The frame texture is sRGB, so sampling returns LINEAR values — but the
+// effects formula (and ffmpeg's filters) are defined on sRGB-encoded values.
+// Convert around the adjustment so preview and render agree.
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+    let lo = c * 12.92;
+    let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - 0.055;
+    return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((max(c, vec3<f32>(0.0)) + 0.055) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
+// Mirrors effects::Effects::apply_reference exactly: exposure, then contrast
+// about mid-grey, then saturation about Rec.709 luma.
+fn apply_effects(rgb: vec3<f32>) -> vec3<f32> {
+    let exposure = u.fx.x;
+    let contrast = u.fx.y;
+    let saturation = u.fx.z;
+    var c = rgb * exposure;
+    c = (c - vec3<f32>(0.5)) * contrast + vec3<f32>(0.5);
+    let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+    c = vec3<f32>(luma) + (c - vec3<f32>(luma)) * saturation;
+    return clamp(c, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let s = textureSample(frame_tex, frame_sampler, in.uv);
     // Images arrive premultiplied (see app::sync_frame); video is opaque.
     let a_src = mix(1.0, s.a, u.params.x);
-    let rgb = s.rgb * u.tint.rgb;
+    var rgb = s.rgb;
+    if (u.params.y > 0.5) {
+        rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
+    }
+    rgb = rgb * u.tint.rgb;
     // Premultiplied output: egui's pipeline blends the UI over this.
     return vec4<f32>(rgb * u.tint.a, a_src * u.tint.a);
 }

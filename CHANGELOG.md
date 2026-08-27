@@ -4,6 +4,16 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.18.0] — 2026-08-27
+
+### Added
+- You can now adjust exposure, contrast, and saturation per clip, plus add fade-in and fade-out — with live sliders in the clip inspector under a new "Look" section.
+- The editor preview now shows your colour adjustments and fades exactly as they'll appear in the exported video, so what you see while editing matches the final render.
+
+### Improved
+- Timeline exports now apply each clip's colour and fade settings when rendering the final video, keeping the exported look consistent with the editor.
+
+
 ## [0.17.0] — 2026-08-27
 
 ### Added

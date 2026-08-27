@@ -25,8 +25,11 @@ use wgpu::util::DeviceExt;
 struct Uniforms {
     /// Multiplied into the sampled colour (fades, opacity — compositing hook).
     tint: [f32; 4],
-    /// x = use the texture's alpha (1.0) or force opaque (0.0); yzw reserved.
+    /// x = use the texture's alpha (1.0) or force opaque (0.0);
+    /// y = apply the effects block (1.0) or skip it (0.0); zw reserved.
     params: [f32; 4],
+    /// exposure, contrast, saturation, unused — see effects::Effects.
+    fx: [f32; 4],
 }
 
 pub struct VideoPass {
@@ -121,6 +124,9 @@ pub struct VideoDraw {
     pub tint: [f32; 4],
     /// Still images can be genuinely transparent; video cannot.
     pub use_src_alpha: bool,
+    /// The active clip's colour adjustments, previewed live. `None` = show
+    /// the picture untouched.
+    pub effects: Option<crate::effects::Effects>,
 }
 
 /// Bind group + uniform buffer built during `prepare`, consumed in `paint`.
@@ -142,7 +148,16 @@ impl CallbackTrait for VideoDraw {
             label: Some("reel-video-ubo"),
             contents: bytemuck::bytes_of(&Uniforms {
                 tint: self.tint,
-                params: [if self.use_src_alpha { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                params: [
+                    if self.use_src_alpha { 1.0 } else { 0.0 },
+                    if self.effects.is_some_and(|e| e.has_colour()) { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
+                ],
+                fx: self
+                    .effects
+                    .map(|e| [e.exposure, e.contrast, e.saturation, 0.0])
+                    .unwrap_or([1.0, 1.0, 1.0, 0.0]),
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

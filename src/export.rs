@@ -3,6 +3,7 @@
 //! worker thread and reports live progress; the UI polls `ExportJob::state()`.
 //! Timeline (composited) export is Milestone 3 — this is source-file convert.
 
+use crate::edit::Segment;
 use crate::media::MediaKind;
 use anyhow::{anyhow, Result};
 use ffmpeg_sidecar::command::FfmpegCommand;
@@ -579,7 +580,7 @@ pub fn has_audio_stream(path: &str) -> bool {
 /// have sound), then encoded with the chosen video codec settings. This is
 /// the timeline export — the cut itself becomes the file.
 pub fn build_timeline_args(
-    segments: &[(String, f64, f64)],
+    segments: &[Segment],
     output: &str,
     s: &ExportSettings,
     with_audio: bool,
@@ -589,9 +590,9 @@ pub fn build_timeline_args(
     let mut a: Vec<String> = Vec::new();
     // One -i per unique source, in first-appearance order.
     let mut sources: Vec<&str> = Vec::new();
-    for (src, _, _) in segments {
-        if !sources.contains(&src.as_str()) {
-            sources.push(src);
+    for seg in segments {
+        if !sources.contains(&seg.source.as_str()) {
+            sources.push(&seg.source);
         }
     }
     for src in &sources {
@@ -606,11 +607,16 @@ pub fn build_timeline_args(
     let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
 
     let mut graph = String::new();
-    for (k, (src, in_point, duration)) in segments.iter().enumerate() {
-        let i = sources.iter().position(|s| s == src).unwrap();
+    for (k, seg) in segments.iter().enumerate() {
+        let i = sources.iter().position(|s| *s == seg.source).unwrap();
+        let (in_point, duration) = (seg.in_point, seg.duration);
+        // Per-clip effects run before the frame is fitted to the target, so
+        // fades and colour behave the same whatever the output shape is.
+        let fx = seg.effects.filters(duration);
+        let fx = if fx.is_empty() { String::new() } else { format!("{},", fx.join(",")) };
         let vnorm = format!("{},fps={tfps:.4}", s.fit.chain(tw, th, &k.to_string()));
         graph.push_str(&format!(
-            "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{vnorm}[v{k}];"
+            "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{fx}{vnorm}[v{k}];"
         ));
         if with_audio {
             graph.push_str(&format!(
@@ -654,7 +660,7 @@ pub fn build_timeline_args(
 /// Start a timeline (edit) export. Progress is driven by the cut's total
 /// duration = the sum of segment durations.
 pub fn start_timeline(
-    segments: &[(String, f64, f64)],
+    segments: &[Segment],
     output: &str,
     settings: &ExportSettings,
     project: (u32, u32, f64),
@@ -665,8 +671,8 @@ pub fn start_timeline(
     if Path::new(output).exists() {
         return Err(anyhow!("output already exists: {output}"));
     }
-    let with_audio = segments.iter().all(|(src, _, _)| has_audio_stream(src));
-    let total: f64 = segments.iter().map(|(_, _, d)| d).sum();
+    let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
+    let total: f64 = segments.iter().map(|seg| seg.duration).sum();
     let args = build_timeline_args(segments, output, settings, with_audio, render_target(project, settings));
     spawn_job(args, output, total)
 }
@@ -782,6 +788,15 @@ mod tests {
     use super::*;
     use std::time::{Duration, Instant};
 
+    fn seg(source: &str, in_point: f64, duration: f64) -> Segment {
+        Segment {
+            source: source.to_string(),
+            in_point,
+            duration,
+            effects: crate::effects::Effects::default(),
+        }
+    }
+
     fn fixture() -> String {
         format!("{}/tests/fixture.mp4", env!("CARGO_MANIFEST_DIR"))
     }
@@ -879,9 +894,9 @@ mod tests {
     #[test]
     fn timeline_graph_trims_and_concats_in_order() {
         let segs = vec![
-            ("/m/a.mp4".to_string(), 0.0, 2.0),
-            ("/m/a.mp4".to_string(), 5.0, 1.5),
-            ("/m/b.mp4".to_string(), 1.0, 3.0),
+            seg("/m/a.mp4", 0.0, 2.0),
+            seg("/m/a.mp4", 5.0, 1.5),
+            seg("/m/b.mp4", 1.0, 3.0),
         ];
         let s = ExportSettings { hardware: false, ..Default::default() };
         let a = build_timeline_args(&segs, "out.mp4", &s, true, (1280, 720, 30.0));
@@ -898,7 +913,7 @@ mod tests {
 
     #[test]
     fn timeline_graph_without_audio_or_with_scale() {
-        let segs = vec![("/m/a.mp4".to_string(), 0.0, 2.0)];
+        let segs = vec![seg("/m/a.mp4", 0.0, 2.0)];
         let s = ExportSettings {
             resolution: Resolution::H720,
             hardware: false,
@@ -923,10 +938,7 @@ mod tests {
         let out = std::env::temp_dir().join(format!("reel-cut-test-{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
         // fixture is ~2s; take 0.0–0.4 and 1.4–1.8 → expect ≈0.8s.
-        let segs = vec![
-            (fixture(), 0.0, 0.4),
-            (fixture(), 1.4, 0.4),
-        ];
+        let segs = vec![seg(&fixture(), 0.0, 0.4), seg(&fixture(), 1.4, 0.4)];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
         let job = start_timeline(&segs, &out.to_string_lossy(), &s, (320, 240, 30.0))
             .expect("start timeline export");
@@ -1014,9 +1026,9 @@ mod tests {
                      &b.to_string_lossy()]));
 
         let segs = vec![
-            (a.to_string_lossy().into_owned(), 0.2, 0.8),
-            (b.to_string_lossy().into_owned(), 0.5, 0.7),
-            (a.to_string_lossy().into_owned(), 1.2, 0.5),
+            seg(&a.to_string_lossy(), 0.2, 0.8),
+            seg(&b.to_string_lossy(), 0.5, 0.7),
+            seg(&a.to_string_lossy(), 1.2, 0.5),
         ];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
         let job = start_timeline(&segs, &out.to_string_lossy(), &s, (640, 480, 25.0))

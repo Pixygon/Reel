@@ -9,6 +9,7 @@
 mod app;
 mod capture;
 mod edit;
+mod effects;
 mod egui_backend;
 mod export;
 mod gpu;

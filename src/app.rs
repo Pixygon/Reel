@@ -824,6 +824,20 @@ impl ReelApp {
         self.tex.as_ref().map(|t| (t.width, t.height))
     }
 
+    /// What the viewport should apply to the picture right now: the clip
+    /// under the playhead's colour adjustments, and its fade level at this
+    /// instant. Only in the editor — the player shows media as it is.
+    pub fn preview_effects(&self) -> (Option<crate::effects::Effects>, f32) {
+        if self.mode != Mode::Editor {
+            return (None, 1.0);
+        }
+        let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) else {
+            return (None, 1.0);
+        };
+        let t = self.editor.playhead - clip.start;
+        (Some(clip.effects), clip.effects.fade_alpha(t, clip.duration))
+    }
+
     /// A view of the current picture for Reel's own render pass.
     pub fn tex_view(&self) -> Option<wgpu::TextureView> {
         self.tex

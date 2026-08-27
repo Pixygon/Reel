@@ -449,14 +449,51 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
                 }
             }
         }
-        if let Some(clip) = app.editor.selected.and_then(|id| app.project.clip(id)) {
-            ui.separator();
-            ui.label(RichText::new("Selected clip").color(theme::CYAN));
-            ui.label(format!("{}", clip.name));
-            ui.label(RichText::new(format!(
-                "at {}  ·  {:.2}s long\nsource in-point {}",
-                fmt_time(clip.start), clip.duration, fmt_time(clip.in_point)
-            )).small().color(egui::Color32::from_gray(150)));
+        if let Some(id) = app.editor.selected {
+            let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.effects));
+            if let Some((name, start, duration, in_point, before)) = info {
+                ui.separator();
+                ui.label(RichText::new("Selected clip").color(theme::CYAN));
+                ui.label(name);
+                ui.label(RichText::new(format!(
+                    "at {}  ·  {duration:.2}s long\nsource in-point {}",
+                    fmt_time(start), fmt_time(in_point)
+                )).small().color(egui::Color32::from_gray(150)));
+
+                // ── Effects ─────────────────────────────────────────────
+                // What you set here is what the export renders — the preview
+                // and the ffmpeg filters share one formula (effects.rs).
+                ui.add_space(6.0);
+                ui.label(RichText::new("Look").color(theme::CYAN));
+                let mut fx = before;
+                ui.add(egui::Slider::new(&mut fx.exposure, 0.2..=2.0).text("Exposure"));
+                ui.add(egui::Slider::new(&mut fx.contrast, 0.2..=2.5).text("Contrast"));
+                ui.add(egui::Slider::new(&mut fx.saturation, 0.0..=2.5).text("Saturation"));
+                ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).text("Fade in (s)"));
+                ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
+                ui.horizontal(|ui| {
+                    if ui.button("Reset look").clicked() {
+                        fx = crate::effects::Effects::default();
+                    }
+                    if !fx.is_identity() {
+                        ui.label(RichText::new("● applied on export").small().color(theme::EMBER));
+                    }
+                });
+                if fx != before {
+                    // One undo step per gesture, not per pixel of slider drag.
+                    if !ui.ctx().input(|i| i.pointer.any_down()) || app.editor.fx_gesture != Some(id) {
+                        app.editor.push_undo(&app.project);
+                        app.editor.fx_gesture = Some(id);
+                    }
+                    if let Some(c) = app.project.clip_mut(id) {
+                        c.effects = fx;
+                    }
+                    app.editor.dirty = true;
+                }
+                if !ui.ctx().input(|i| i.pointer.any_down()) {
+                    app.editor.fx_gesture = None;
+                }
+            }
         }
         ui.separator();
         ui.label(RichText::new("S split · Del delete · drag edges to trim\nCtrl+scroll zoom · Ctrl+S save").small().color(egui::Color32::from_gray(120)));
@@ -499,12 +536,17 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             // Reel's own pipeline draws the picture (see video_pass.rs):
             // opaque alpha without a CPU pass, and the seam where colour and
             // compositing will live.
+            // In the editor, preview the clip under the playhead exactly as
+            // it will render: its colour adjustments, and its fade at this
+            // moment. (Same formula as the export — see effects.rs.)
+            let (effects, fade) = app.preview_effects();
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 img_rect,
                 crate::video_pass::VideoDraw {
                     view,
-                    tint: [1.0, 1.0, 1.0, 1.0],
+                    tint: [1.0, 1.0, 1.0, fade],
                     use_src_alpha: app.image.is_some(),
+                    effects,
                 },
             ));
             return;
@@ -773,7 +815,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             let segments = app
                 .project
                 .export_segments_range(app.editor.range_in, app.editor.range_out);
-            let cut_len: f64 = segments.iter().map(|(_, _, d)| d).sum();
+            let cut_len: f64 = segments.iter().map(|seg| seg.duration).sum();
             let ranged = app.editor.range_in.is_some() || app.editor.range_out.is_some();
             let can_timeline = kind != crate::media::MediaKind::Image && !segments.is_empty();
             if can_timeline && app.export.is_none() {

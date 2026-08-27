@@ -3,6 +3,7 @@
 //! effects and export are on the roadmap. Kept serde-serializable so a project
 //! is a saveable `.reel` document from the start.
 
+use crate::effects::Effects;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -21,12 +22,26 @@ pub struct Clip {
     pub start: f64,     // timeline position
     pub in_point: f64,  // offset into the source
     pub duration: f64,
+    /// Colour adjustments and fades for this clip. Defaults to identity, and
+    /// is `serde(default)` so `.reel` files written before effects still load.
+    #[serde(default)]
+    pub effects: Effects,
 }
 
 impl Clip {
     pub fn end(&self) -> f64 {
         self.start + self.duration
     }
+}
+
+/// One piece of the flattened edit, ready to render: a window of a source
+/// file plus the effects that piece carries.
+#[derive(Clone, Debug)]
+pub struct Segment {
+    pub source: String,
+    pub in_point: f64,
+    pub duration: f64,
+    pub effects: Effects,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -97,6 +112,7 @@ impl Project {
                 start,
                 in_point: 0.0,
                 duration,
+                effects: Effects::default(),
             });
         }
     }
@@ -222,7 +238,7 @@ impl Project {
     /// The edit flattened for export: V1 clips in timeline order as
     /// (source, in_point, duration). Gaps are collapsed — exactly how editor
     /// playback sequences the cut.
-    pub fn export_segments(&self) -> Vec<(String, f64, f64)> {
+    pub fn export_segments(&self) -> Vec<Segment> {
         self.export_segments_range(None, None)
     }
 
@@ -233,7 +249,7 @@ impl Project {
         &self,
         range_in: Option<f64>,
         range_out: Option<f64>,
-    ) -> Vec<(String, f64, f64)> {
+    ) -> Vec<Segment> {
         let lo = range_in.unwrap_or(f64::NEG_INFINITY);
         let hi = range_out.unwrap_or(f64::INFINITY);
         let mut clips: Vec<&Clip> = self
@@ -252,7 +268,12 @@ impl Project {
                     return None; // outside the range (or a sliver)
                 }
                 let head = start - c.start; // trimmed off the clip's front
-                Some((c.source.clone(), c.in_point + head, end - start))
+                Some(Segment {
+                    source: c.source.clone(),
+                    in_point: c.in_point + head,
+                    duration: end - start,
+                    effects: c.effects,
+                })
             })
             .collect()
     }
@@ -295,6 +316,8 @@ pub struct EditorState {
     pub range_out: Option<f64>,
     pub dirty: bool,
     pub project_path: Option<String>,
+    /// The clip whose effect sliders are mid-drag — one undo step per gesture.
+    pub fx_gesture: Option<u64>,
     undo: Vec<Project>,
     redo: Vec<Project>,
 }
@@ -320,6 +343,7 @@ impl Default for EditorState {
             range_out: None,
             dirty: false,
             project_path: None,
+            fx_gesture: None,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -445,9 +469,9 @@ mod tests {
         // in-points shifted to match where the markers landed.
         let segs = p.export_segments_range(Some(2.0), Some(6.0));
         assert_eq!(segs.len(), 2);
-        assert_eq!((segs[0].1, segs[0].2), (2.0, 2.0)); // in_point 2, 2s long
-        assert_eq!((segs[1].1, segs[1].2), (4.0, 2.0)); // in_point 4, 2s long
-        let total: f64 = segs.iter().map(|s| s.2).sum();
+        assert_eq!((segs[0].in_point, segs[0].duration), (2.0, 2.0));
+        assert_eq!((segs[1].in_point, segs[1].duration), (4.0, 2.0));
+        let total: f64 = segs.iter().map(|s| s.duration).sum();
         assert!((total - 4.0).abs() < 1e-9);
         // A range beyond every clip exports nothing.
         assert!(p.export_segments_range(Some(50.0), None).is_empty());
