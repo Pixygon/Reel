@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -27,6 +27,9 @@ ffmpeg-sidecar = "2"
 
 # Native file-open dialog (Open… button).
 rfd = "0.15"
+
+# Still-image decode (instant open of png/jpg/webp/… into the same GPU path).
+image = "0.25"
 
 # Milestone 1: libmpv is dlopen'd at runtime when present (hardware decode,
 # A/V sync, audio, exact seek) — never linked, so builds and machines without

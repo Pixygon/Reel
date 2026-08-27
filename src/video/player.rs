@@ -6,6 +6,7 @@
 
 use super::decoder::{self, DecodeHandle, Frame, VideoInfo};
 use super::mpv::{self, MpvPlayer};
+use crate::media::MediaKind;
 use anyhow::Result;
 use std::time::{Duration, Instant};
 
@@ -22,6 +23,9 @@ enum Backend {
 pub struct Player {
     pub path: String,
     pub info: VideoInfo,
+    /// Video, or Audio (pure audio and audio-with-cover-art both count —
+    /// cover art still renders as `current` frames).
+    pub kind: MediaKind,
     backend: Backend,
     pub playing: bool,
     /// Playback position in seconds.
@@ -45,10 +49,11 @@ pub struct Player {
 
 impl Player {
     pub fn open(path: &str) -> Result<Self> {
-        let (info, backend) = match mpv::lib().map(|lib| MpvPlayer::open(lib, path)) {
+        let (info, kind, backend) = match mpv::lib().map(|lib| MpvPlayer::open(lib, path)) {
             Some(Ok(p)) => {
                 let info = p.info.clone();
-                (info, Backend::Mpv(p))
+                let kind = if p.has_video && !p.albumart { MediaKind::Video } else { MediaKind::Audio };
+                (info, kind, Backend::Mpv(p))
             }
             Some(Err(e)) => {
                 log::warn!("libmpv open failed ({e}); falling back to ffmpeg subprocess");
@@ -59,6 +64,7 @@ impl Player {
         Ok(Self {
             path: path.to_string(),
             info,
+            kind,
             backend,
             playing: false,
             position: 0.0,
@@ -73,10 +79,11 @@ impl Player {
         })
     }
 
-    fn open_subprocess(path: &str) -> Result<(VideoInfo, Backend)> {
+    fn open_subprocess(path: &str) -> Result<(VideoInfo, MediaKind, Backend)> {
+        // The subprocess pipeline is video-only; audio files need libmpv.
         let info = decoder::probe(path)?;
         let decode = decoder::spawn(path, 0.0, &info)?;
-        Ok((info, Backend::Subprocess { decode: Some(decode), anchor: None }))
+        Ok((info, MediaKind::Video, Backend::Subprocess { decode: Some(decode), anchor: None }))
     }
 
     /// Which decode backend is live — for the status line / logs.
@@ -289,5 +296,43 @@ impl Player {
             self.ended = true;
             self.playing = false;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Audio files are first-class: open one through the same Player and it
+    /// plays (position advances on mpv's clock, no video frames required).
+    #[test]
+    fn audio_file_opens_and_plays() {
+        if mpv::lib().is_none() {
+            eprintln!("libmpv not installed — skipping audio playback test");
+            return;
+        }
+        // Generate a 2 s tone on the fly; keeps binary fixtures out of git.
+        let path = std::env::temp_dir().join(format!("reel-audio-test-{}.m4a", std::process::id()));
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2",
+                   "-c:a", "aac", &path.to_string_lossy()])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "ffmpeg could not generate the audio fixture");
+
+        let mut p = Player::open(&path.to_string_lossy()).expect("open audio");
+        assert_eq!(p.kind, MediaKind::Audio);
+        assert!(p.info.duration > 1.5 && p.info.duration < 2.5, "≈2s, got {}", p.info.duration);
+        assert!(p.has_audio());
+
+        p.toggle_play();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while p.position < 0.3 && Instant::now() < deadline {
+            p.update();
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(p.position >= 0.3, "audio position should advance, got {}", p.position);
+        let _ = std::fs::remove_file(&path);
     }
 }

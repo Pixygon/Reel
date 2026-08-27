@@ -13,6 +13,8 @@ pub struct Gpu {
     pub surface_config: wgpu::SurfaceConfiguration,
     pub surface_format: wgpu::TextureFormat,
     pub size: (u32, u32),
+    /// Largest 2D texture edge the device accepts.
+    pub max_texture_dim: u32,
 }
 
 impl Gpu {
@@ -36,12 +38,19 @@ impl Gpu {
         let info = adapter.get_info();
         log::info!("GPU: {} ({:?}, {:?})", info.name, info.backend, info.device_type);
 
+        // Ask for the adapter's real texture ceiling — ultrawide screenshots
+        // and 8K stills are bigger than the 8192 conservative default.
+        let limits = wgpu::Limits {
+            max_texture_dimension_2d: adapter.limits().max_texture_dimension_2d,
+            ..Default::default()
+        };
+        let max_texture_dim = limits.max_texture_dimension_2d;
         let (device, queue) = adapter
             .request_device(
                 &wgpu::DeviceDescriptor {
                     label: Some("reel-device"),
                     required_features: wgpu::Features::empty(),
-                    required_limits: wgpu::Limits::default(),
+                    required_limits: limits,
                     memory_hints: wgpu::MemoryHints::Performance,
                 },
                 None,
@@ -83,6 +92,7 @@ impl Gpu {
             surface_config,
             surface_format,
             size: (width, height),
+            max_texture_dim,
         })
     }
 

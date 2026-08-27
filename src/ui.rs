@@ -10,6 +10,7 @@ use egui::{Color32, Key, Rect, RichText, Sense, Stroke, Vec2};
 
 pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_picker();
+    app.poll_captures();
     dropped_files(ctx, app);
     shortcuts(ctx, app);
 
@@ -157,6 +158,34 @@ fn top_bar(ctx: &egui::Context, app: &mut ReelApp) {
             ui.separator();
             ui.selectable_value(&mut app.mode, Mode::Player, "▶ Player");
             ui.selectable_value(&mut app.mode, Mode::Editor, "✂ Editor");
+
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                // Capture — the screen is media too.
+                let recording = app.recorder.is_some();
+                let rec_label = if recording {
+                    RichText::new("⏹ Stop").color(theme::EMBER).strong()
+                } else {
+                    RichText::new("⏺ Record").color(theme::EMBER)
+                };
+                let rec_hover = if recording {
+                    "Stop recording — it opens right here".to_string()
+                } else {
+                    match crate::capture::recording_backend() {
+                        Some(t) => format!("Record the screen (via {t})"),
+                        None => "Record the screen — needs gpu-screen-recorder (or wf-recorder) installed".to_string(),
+                    }
+                };
+                if ui.button(rec_label).on_hover_text(rec_hover).clicked() {
+                    app.toggle_record();
+                }
+                if ui
+                    .button("📷 Shot")
+                    .on_hover_text("Screenshot the screen — it opens right here")
+                    .clicked()
+                {
+                    app.take_screenshot();
+                }
+            });
         });
     });
 }
@@ -189,26 +218,58 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
     });
 }
 
-/// The video viewport — aspect-fit the current frame, or a placeholder.
+/// The media viewport — aspect-fit the current frame / image / cover art,
+/// a ♪ card for pure audio, or the drop hint.
 fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
     let avail = ui.available_size();
     let (rect, _) = ui.allocate_exact_size(avail, Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::VOID);
 
-    if let (Some(id), Some(player)) = (app.tex_id, app.player.as_ref()) {
-        let (vw, vh) = (player.info.width as f32, player.info.height as f32);
+    // What are we showing, and at what native size?
+    let dims = if let Some(img) = &app.image {
+        Some((img.width as f32, img.height as f32))
+    } else if let Some(p) = app.player.as_ref() {
+        (p.info.width > 0).then(|| (p.info.width as f32, p.info.height as f32))
+    } else {
+        None
+    };
+
+    if let (Some(id), Some((vw, vh))) = (app.tex_id, dims) {
         if vw > 0.0 && vh > 0.0 {
             let scale = (rect.width() / vw).min(rect.height() / vh);
             let size = Vec2::new(vw * scale, vh * scale);
             let img_rect = Rect::from_center_size(rect.center(), size);
             painter.image(id, img_rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+            return;
         }
+    }
+
+    if let Some(p) = app.player.as_ref() {
+        // Audio with no cover art: a simple sound card.
+        let name = std::path::Path::new(&p.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| p.path.clone());
+        painter.text(
+            rect.center() - Vec2::new(0.0, 24.0),
+            egui::Align2::CENTER_CENTER,
+            "♪",
+            egui::FontId::proportional(72.0),
+            theme::CYAN,
+        );
+        painter.text(
+            rect.center() + Vec2::new(0.0, 40.0),
+            egui::Align2::CENTER_CENTER,
+            name,
+            egui::FontId::proportional(18.0),
+            theme::STAR,
+        );
     } else {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "drop a video here",
+            "drop a video, song or image here",
             egui::FontId::proportional(20.0),
             Color32::from_gray(90),
         );
@@ -220,6 +281,40 @@ fn transport(ui: &mut egui::Ui, app: &mut ReelApp) {
     let mut goto_editor = false;
     let mut open_export = false;
     let mut toggle_fullscreen = false;
+
+    // An image gets an info bar instead of a transport.
+    if let Some(img) = &app.image {
+        let name = std::path::Path::new(&img.path)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| img.path.clone());
+        let (w, h) = (img.width, img.height);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new(name).color(theme::STAR));
+            ui.label(RichText::new(format!("{w}×{h}")).monospace());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui
+                    .button(RichText::new("⬇ Export").color(theme::CYAN))
+                    .on_hover_text("Convert — PNG/JPEG/WebP, resize")
+                    .clicked()
+                {
+                    open_export = true;
+                }
+                if mode == Mode::Player {
+                    if ui.button(RichText::new("✂ Edit").color(theme::EMBER)).clicked() {
+                        goto_editor = true;
+                    }
+                }
+            });
+        });
+        if goto_editor {
+            app.mode = Mode::Editor;
+        }
+        if open_export {
+            app.export_open = true;
+        }
+        return;
+    }
 
     let Some(player) = app.player.as_mut() else {
         ui.horizontal(|ui| ui.label("—"));
@@ -332,13 +427,14 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
     if !app.export_open {
         return;
     }
-    let (source, duration) = match app.player.as_ref() {
-        Some(p) => (p.path.clone(), p.info.duration),
-        None => {
+    let (source, kind) = match (app.media_path(), app.media_kind()) {
+        (Some(s), Some(k)) => (s, k),
+        _ => {
             app.export_open = false;
             return;
         }
     };
+    let duration = app.player.as_ref().map(|p| p.info.duration).unwrap_or(0.0);
 
     let mut keep_open = app.export_open;
     egui::Window::new("Export / Convert")
@@ -386,6 +482,11 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             }
 
             let s = &mut app.export_settings;
+            // Keep the codec legal for what's open (kind can change between opens).
+            let codecs = Codec::for_kind(kind);
+            if !codecs.contains(&s.codec) {
+                s.codec = codecs[0];
+            }
             let prev_codec = s.codec;
 
             egui::Grid::new("export_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
@@ -394,13 +495,15 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .selected_text(s.codec.label())
                     .width(260.0)
                     .show_ui(ui, |ui| {
-                        for c in Codec::ALL {
+                        for &c in codecs {
                             ui.selectable_value(&mut s.codec, c, c.label());
                         }
                     });
                 ui.end_row();
 
-                if s.codec != Codec::Remux {
+                let is_video_out = !s.codec.is_audio_only() && !s.codec.is_image() && s.codec != Codec::Remux;
+
+                if s.codec.has_quality() {
                     ui.label("Quality");
                     ui.horizontal(|ui| {
                         egui::ComboBox::from_id_salt("quality")
@@ -409,21 +512,27 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                                 for q in [Quality::High, Quality::Balanced, Quality::Small] {
                                     ui.selectable_value(&mut s.quality, q, q.label());
                                 }
-                                if ui
-                                    .selectable_label(matches!(s.quality, Quality::Custom(_)), Quality::Custom(23).label())
-                                    .clicked()
+                                // Raw CRF is a video-encoder knob.
+                                if is_video_out
+                                    && ui
+                                        .selectable_label(matches!(s.quality, Quality::Custom(_)), Quality::Custom(23).label())
+                                        .clicked()
                                 {
                                     s.quality = Quality::Custom(23);
                                 }
                             });
-                        if let Quality::Custom(crf) = &mut s.quality {
-                            let mut v = *crf as i32;
-                            ui.add(egui::Slider::new(&mut v, 10..=50).text("CRF"));
-                            *crf = v as u8;
+                        if is_video_out {
+                            if let Quality::Custom(crf) = &mut s.quality {
+                                let mut v = *crf as i32;
+                                ui.add(egui::Slider::new(&mut v, 10..=50).text("CRF"));
+                                *crf = v as u8;
+                            }
                         }
                     });
                     ui.end_row();
+                }
 
+                if is_video_out || s.codec.is_image() {
                     ui.label("Resolution");
                     egui::ComboBox::from_id_salt("resolution")
                         .selected_text(s.resolution.label())
@@ -433,7 +542,9 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                             }
                         });
                     ui.end_row();
+                }
 
+                if is_video_out {
                     ui.label("Audio");
                     egui::ComboBox::from_id_salt("audio")
                         .selected_text(match s.audio {

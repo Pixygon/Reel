@@ -1,8 +1,9 @@
 # Reel — working notes for Claude
 
-Native cross-platform video player + editor. The bar: **better than VLC to
-play, Premiere-class to edit. Linux first.** README.md and ROADMAP.md are
-current and honest — read them; keep them that way when you change reality.
+Native cross-platform media player + editor + capture tool (video, audio,
+images — one door). The bar: **better than VLC to play, Premiere-class to
+edit. Linux first.** README.md and ROADMAP.md are current and honest — read
+them; keep them that way when you change reality.
 
 ## Commands
 
@@ -32,6 +33,13 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Event loop is `ControlFlow::Wait` + `wants_redraw()` pacing: continuous
   redraws only while playing or briefly after open/seek. Don't introduce a
   busy loop.
+- `app.open()` is the single entry for ALL media (video/audio/image/captures)
+  — route new sources through it, never a side door. `media.rs` owns kind
+  routing; `capture.rs` probes system tools at runtime (never link/require
+  them). Export codec lists are kind-filtered via `Codec::for_kind`.
+- GPU textures are capped at `gpu.max_texture_dim` — anything bigger must be
+  downscaled before upload (see `ImageDoc::clamp_to`; an 8560×1440 ultrawide
+  screenshot is the regression case).
 
 ## Verifying changes
 

@@ -3,6 +3,7 @@
 //! worker thread and reports live progress; the UI polls `ExportJob::state()`.
 //! Timeline (composited) export is Milestone 3 — this is source-file convert.
 
+use crate::media::MediaKind;
 use anyhow::{anyhow, Result};
 use ffmpeg_sidecar::command::FfmpegCommand;
 use ffmpeg_sidecar::event::{FfmpegEvent, LogLevel};
@@ -22,10 +23,44 @@ pub enum Codec {
     Vp9,
     /// No re-encode: remux the streams into MKV as-is. Instant, lossless.
     Remux,
+    // Audio-only outputs — for audio sources, or extracting from a video.
+    Mp3,
+    M4a,
+    OpusAudio,
+    Flac,
+    Wav,
+    // Image outputs.
+    Png,
+    Jpeg,
+    WebpImage,
 }
 
 impl Codec {
-    pub const ALL: [Codec; 5] = [Codec::H264, Codec::H265, Codec::Av1, Codec::Vp9, Codec::Remux];
+    /// The codecs that make sense for a given source kind. Video sources also
+    /// offer the audio-only outputs — that's "extract the audio".
+    pub fn for_kind(kind: MediaKind) -> &'static [Codec] {
+        match kind {
+            MediaKind::Video => &[
+                Codec::H264, Codec::H265, Codec::Av1, Codec::Vp9, Codec::Remux,
+                Codec::Mp3, Codec::M4a, Codec::OpusAudio, Codec::Flac, Codec::Wav,
+            ],
+            MediaKind::Audio => &[Codec::Mp3, Codec::M4a, Codec::OpusAudio, Codec::Flac, Codec::Wav],
+            MediaKind::Image => &[Codec::Png, Codec::Jpeg, Codec::WebpImage],
+        }
+    }
+
+    pub fn is_audio_only(self) -> bool {
+        matches!(self, Codec::Mp3 | Codec::M4a | Codec::OpusAudio | Codec::Flac | Codec::Wav)
+    }
+
+    pub fn is_image(self) -> bool {
+        matches!(self, Codec::Png | Codec::Jpeg | Codec::WebpImage)
+    }
+
+    /// Lossless outputs have no quality knob.
+    pub fn has_quality(self) -> bool {
+        !matches!(self, Codec::Remux | Codec::Flac | Codec::Wav | Codec::Png)
+    }
 
     pub fn label(self) -> &'static str {
         match self {
@@ -34,6 +69,14 @@ impl Codec {
             Codec::Av1 => "MP4 · AV1 (smallest, slow)",
             Codec::Vp9 => "WebM · VP9 (web)",
             Codec::Remux => "MKV · no re-encode (instant)",
+            Codec::Mp3 => "MP3 · audio only",
+            Codec::M4a => "M4A/AAC · audio only",
+            Codec::OpusAudio => "Opus · audio only",
+            Codec::Flac => "FLAC · audio, lossless",
+            Codec::Wav => "WAV · audio, uncompressed",
+            Codec::Png => "PNG · lossless",
+            Codec::Jpeg => "JPEG · small",
+            Codec::WebpImage => "WebP · web",
         }
     }
 
@@ -42,6 +85,29 @@ impl Codec {
             Codec::H264 | Codec::H265 | Codec::Av1 => "mp4",
             Codec::Vp9 => "webm",
             Codec::Remux => "mkv",
+            Codec::Mp3 => "mp3",
+            Codec::M4a => "m4a",
+            Codec::OpusAudio => "opus",
+            Codec::Flac => "flac",
+            Codec::Wav => "wav",
+            Codec::Png => "png",
+            Codec::Jpeg => "jpg",
+            Codec::WebpImage => "webp",
+        }
+    }
+
+    /// Audio bitrate (kb/s) for the quality tiers of audio-only codecs.
+    fn audio_kbps(self, q: Quality) -> u32 {
+        let (high, balanced, small) = match self {
+            Codec::Mp3 => (320, 192, 128),
+            Codec::M4a => (256, 160, 96),
+            Codec::OpusAudio => (192, 128, 64),
+            _ => (0, 0, 0),
+        };
+        match q {
+            Quality::High => high,
+            Quality::Balanced | Quality::Custom(_) => balanced,
+            Quality::Small => small,
         }
     }
 
@@ -52,7 +118,7 @@ impl Codec {
             Codec::H265 => (20, 23, 28),
             Codec::Av1 => (24, 32, 40),
             Codec::Vp9 => (24, 31, 36),
-            Codec::Remux => (0, 0, 0),
+            _ => (0, 0, 0),
         };
         match q {
             Quality::High => high,
@@ -193,6 +259,58 @@ impl ExportJob {
 pub fn build_args(input: &str, output: &str, s: &ExportSettings) -> Vec<String> {
     let mut a: Vec<String> = vec!["-i".into(), input.into()];
 
+    // Audio-only output: drop video, encode audio, done.
+    if s.codec.is_audio_only() {
+        a.push("-vn".into());
+        match s.codec {
+            Codec::Mp3 => a.extend(["-c:a".into(), "libmp3lame".into()]),
+            Codec::M4a => a.extend(["-c:a".into(), "aac".into()]),
+            Codec::OpusAudio => a.extend(["-c:a".into(), "libopus".into()]),
+            Codec::Flac => a.extend(["-c:a".into(), "flac".into()]),
+            Codec::Wav => a.extend(["-c:a".into(), "pcm_s16le".into()]),
+            _ => unreachable!(),
+        }
+        let kbps = s.codec.audio_kbps(s.quality);
+        if kbps > 0 {
+            a.extend(["-b:a".into(), format!("{kbps}k")]);
+        }
+        a.push(output.into());
+        return a;
+    }
+
+    // Image output: one frame, optional downscale, per-format quality.
+    if s.codec.is_image() {
+        if let Some(h) = s.resolution.height() {
+            a.extend(["-vf".into(), format!("scale=-2:{h}:flags=lanczos")]);
+        }
+        match s.codec {
+            Codec::Png => a.extend(["-c:v".into(), "png".into()]),
+            Codec::Jpeg => {
+                // mjpeg quality scale is 2 (best) … 31 (worst).
+                let q = match s.quality {
+                    Quality::High => 2,
+                    Quality::Balanced => 5,
+                    Quality::Small => 10,
+                    Quality::Custom(v) => (v as i32).clamp(2, 31),
+                };
+                a.extend(["-c:v".into(), "mjpeg".into(), "-q:v".into(), q.to_string()]);
+            }
+            Codec::WebpImage => {
+                let q = match s.quality {
+                    Quality::High => 95,
+                    Quality::Balanced => 80,
+                    Quality::Small => 60,
+                    Quality::Custom(v) => (v as i32).clamp(1, 100),
+                };
+                a.extend(["-c:v".into(), "libwebp".into(), "-quality".into(), q.to_string()]);
+            }
+            _ => unreachable!(),
+        }
+        a.extend(["-frames:v".into(), "1".into()]);
+        a.push(output.into());
+        return a;
+    }
+
     if s.codec != Codec::Remux {
         if let Some(h) = s.resolution.height() {
             // -2: keep aspect, round width to even (encoders require it).
@@ -206,6 +324,7 @@ pub fn build_args(input: &str, output: &str, s: &ExportSettings) -> Vec<String> 
         Codec::Av1 => a.extend(["-c:v".into(), "libsvtav1".into(), "-preset".into(), "6".into()]),
         Codec::Vp9 => a.extend(["-c:v".into(), "libvpx-vp9".into(), "-b:v".into(), "0".into(), "-row-mt".into(), "1".into()]),
         Codec::Remux => a.extend(["-c".into(), "copy".into()]),
+        _ => unreachable!(),
     }
     if s.codec != Codec::Remux {
         a.extend(["-crf".into(), s.codec.crf(s.quality).to_string()]);
@@ -354,6 +473,45 @@ mod tests {
         assert!(joined.contains("-c copy"));
         assert!(!joined.contains("scale"));
         assert!(!joined.contains("-crf"));
+    }
+
+    #[test]
+    fn args_for_audio_extraction() {
+        let s = ExportSettings {
+            codec: Codec::Mp3,
+            quality: Quality::High,
+            resolution: Resolution::H720, // must be ignored for audio
+            audio: AudioMode::Copy,       // ignored; codec defines the audio
+        };
+        let a = build_args("in.mp4", "out.mp3", &s);
+        let joined = a.join(" ");
+        assert!(joined.contains("-vn"));
+        assert!(joined.contains("-c:a libmp3lame -b:a 320k"));
+        assert!(!joined.contains("scale"));
+        assert!(!joined.contains("-crf"));
+    }
+
+    #[test]
+    fn args_for_image_jpeg() {
+        let s = ExportSettings {
+            codec: Codec::Jpeg,
+            quality: Quality::Small,
+            resolution: Resolution::H1080,
+            audio: AudioMode::Copy,
+        };
+        let a = build_args("in.png", "out.jpg", &s);
+        let joined = a.join(" ");
+        assert!(joined.contains("-c:v mjpeg -q:v 10"));
+        assert!(joined.contains("scale=-2:1080"));
+        assert!(joined.contains("-frames:v 1"));
+        assert!(!joined.contains("-c:a"));
+    }
+
+    #[test]
+    fn codec_lists_per_kind() {
+        assert!(Codec::for_kind(MediaKind::Video).contains(&Codec::Mp3)); // extract audio
+        assert!(!Codec::for_kind(MediaKind::Audio).contains(&Codec::H264));
+        assert_eq!(Codec::for_kind(MediaKind::Image), &[Codec::Png, Codec::Jpeg, Codec::WebpImage]);
     }
 
     #[test]

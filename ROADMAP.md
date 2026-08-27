@@ -4,6 +4,25 @@ Two targets, stated plainly: **playback better than VLC**, **editing at the
 level of Premiere**. Neither is a v0.1 claim; this is the sequence that gets
 there. Linux is the reference platform; Windows/macOS follow each milestone.
 
+Scope, widened deliberately: Reel is **one door for all media** — video,
+audio and images play/display in the same window, convert through the same
+export seam, and the screen itself is a source (screenshots + recording open
+straight into Reel). No separate viewer, converter and capture tools.
+
+## Media unification (landed)
+
+- [x] Audio playback through the same `Player`/transport (mpv; cover art
+      shown when embedded). Audio → MP3/M4A/Opus/FLAC/WAV conversion; audio
+      extraction from video.
+- [x] Image viewing through the same GPU path (instant open; GPU-limit-aware
+      downscale for display). PNG/JPEG/WebP conversion with resize.
+- [x] Screenshots and screen recording via runtime-probed system backends,
+      opening directly in Reel.
+- [ ] Waveform rendering for audio (player + timeline), image crop/rotate,
+      region capture, recording with camera/mic overlay.
+- [ ] Native portal ScreenCast backend (pipewire) so Wayland recording works
+      with zero external tools.
+
 ## Where v0.1 stands
 
 Plays and scrubs video (ffmpeg-subprocess decode → wgpu texture → egui), and

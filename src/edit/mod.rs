@@ -77,9 +77,18 @@ impl Project {
 
     /// Append a clip to the end of the first video track (v0.1 "add to timeline").
     pub fn append_video(&mut self, name: &str, source: &str, duration: f64) {
+        self.append(TrackKind::Video, name, source, duration);
+    }
+
+    /// Append a clip to the end of the first audio track.
+    pub fn append_audio(&mut self, name: &str, source: &str, duration: f64) {
+        self.append(TrackKind::Audio, name, source, duration);
+    }
+
+    fn append(&mut self, kind: TrackKind, name: &str, source: &str, duration: f64) {
         let id = self.next_id;
         self.next_id += 1;
-        if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == TrackKind::Video) {
+        if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
             let start = track.clips.iter().map(|c| c.end()).fold(0.0, f64::max);
             track.clips.push(Clip {
                 id,

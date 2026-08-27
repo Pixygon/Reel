@@ -128,6 +128,10 @@ pub struct MpvPlayer {
     handle: *mut c_void,
     render: *mut c_void,
     pub info: VideoInfo,
+    /// False for pure audio (no video track, no cover art): nothing to render.
+    pub has_video: bool,
+    /// True when the "video" is an audio file's embedded cover art.
+    pub albumart: bool,
 }
 
 impl MpvPlayer {
@@ -142,6 +146,8 @@ impl MpvPlayer {
             handle,
             render: ptr::null_mut(),
             info: VideoInfo { width: 0, height: 0, fps: 30.0, duration: 0.0 },
+            has_video: false,
+            albumart: false,
         };
 
         // Options must land before mpv_initialize. `config=no`: never load the
@@ -203,15 +209,18 @@ impl MpvPlayer {
 
         let width = p.get_i64("width").unwrap_or(0) as u32;
         let height = p.get_i64("height").unwrap_or(0) as u32;
-        if width == 0 || height == 0 {
-            bail!("no video stream in {path}");
+        let duration = p.get_f64("duration").unwrap_or(0.0);
+        p.has_video = width > 0 && height > 0;
+        p.albumart = p.get_flag("current-tracks/video/albumart");
+        // Pure audio is welcome — it just needs *something* to play.
+        if !p.has_video && duration <= 0.0 {
+            bail!("nothing playable in {path}");
         }
         let fps = p
             .get_f64("container-fps")
             .or_else(|| p.get_f64("estimated-vf-fps"))
             .filter(|f| *f > 0.0)
             .unwrap_or(30.0);
-        let duration = p.get_f64("duration").unwrap_or(0.0);
         p.info = VideoInfo { width, height, fps, duration };
         Ok(p)
     }
@@ -287,7 +296,7 @@ impl MpvPlayer {
         }
 
         let flags = unsafe { (self.lib.mpv_render_context_update)(self.render) };
-        if flags & MPV_RENDER_UPDATE_FRAME == 0 {
+        if flags & MPV_RENDER_UPDATE_FRAME == 0 || !self.has_video {
             return false;
         }
 
@@ -326,11 +335,15 @@ impl MpvPlayer {
     }
 
     pub fn eof_reached(&self) -> bool {
+        self.get_flag("eof-reached")
+    }
+
+    fn get_flag(&self, name: &str) -> bool {
         let mut flag: c_int = 0;
         let r = unsafe {
             (self.lib.mpv_get_property)(
                 self.handle,
-                cstr("eof-reached").as_ptr(),
+                cstr(name).as_ptr(),
                 MPV_FORMAT_FLAG,
                 &mut flag as *mut c_int as *mut c_void,
             )

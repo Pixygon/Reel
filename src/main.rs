@@ -7,10 +7,12 @@
 //! ROADMAP.md; this is the running foundation it builds on.
 
 mod app;
+mod capture;
 mod edit;
 mod egui_backend;
 mod export;
 mod gpu;
+mod media;
 mod theme;
 mod ui;
 mod video;
