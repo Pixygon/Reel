@@ -133,6 +133,10 @@ pub struct MpvPlayer {
     pub albumart: bool,
     /// (width, height, has_video) before a visualizer took over.
     orig_video: Option<(u32, u32, bool)>,
+    /// Size mpv renders into — the on-screen size, never larger than the
+    /// source. Rendering a 4K frame just to draw it 1280px wide costs ~9×
+    /// the conversion, copy and upload for pixels nobody sees.
+    render_size: Option<(u32, u32)>,
 }
 
 // SAFETY: libmpv's client API is documented fully thread-safe, and the render
@@ -156,6 +160,7 @@ impl MpvPlayer {
             has_video: false,
             albumart: false,
             orig_video: None,
+            render_size: None,
         };
 
         // Options must land before mpv_initialize. `config=no`: never load the
@@ -295,6 +300,23 @@ impl MpvPlayer {
         Ok(())
     }
 
+    /// Ask mpv to render at this size (already aspect-matched to the video by
+    /// the caller, and never upscaled). Returns true when it changed, so the
+    /// caller can drop the stale frame.
+    pub fn set_render_size(&mut self, w: u32, h: u32) -> bool {
+        let want = (w.max(2) / 2 * 2, h.max(2) / 2 * 2); // even dims
+        if self.render_size == Some(want) {
+            return false;
+        }
+        self.render_size = Some(want);
+        true
+    }
+
+    /// The size mpv is currently rendering into.
+    pub fn render_size(&self) -> (u32, u32) {
+        self.render_size.unwrap_or((self.info.width, self.info.height))
+    }
+
     /// Switch to hardware decode (copy-back). Called shortly after playback
     /// starts — mpv reinitializes the decoder in the background.
     pub fn enable_hwdec(&mut self) {
@@ -385,7 +407,7 @@ impl MpvPlayer {
             return false;
         }
 
-        let (w, h) = (self.info.width, self.info.height);
+        let (w, h) = self.render_size.unwrap_or((self.info.width, self.info.height));
         let len = (w * h * 4) as usize;
         let mut buf = match slot.take() {
             Some(f) if f.data.len() == len => f.data,
@@ -402,15 +424,17 @@ impl MpvPlayer {
             RenderParam { kind: MPV_RENDER_PARAM_SW_POINTER, data: buf.as_mut_ptr() as *mut c_void },
             RenderParam { kind: MPV_RENDER_PARAM_INVALID, data: ptr::null_mut() },
         ];
+        let t_render = Instant::now();
         let r = unsafe { (self.lib.mpv_render_context_render)(self.render, params.as_mut_ptr()) };
         if r < 0 {
             log::warn!("mpv render: {}", self.err(r));
             return false;
         }
-        // "rgb0"'s padding byte lands in the texture's alpha channel — force opaque.
-        for px in buf.chunks_exact_mut(4) {
-            px[3] = 0xFF;
-        }
+        let render_us = t_render.elapsed().as_micros();
+        // No CPU alpha fixup: "rgb0"'s padding byte lands in the alpha
+        // channel, and Reel's video shader forces opacity instead — a whole
+        // pass over every pixel of every frame, deleted (video.wgsl).
+        crate::perf::note_decode(render_us as f64, 0.0);
         *slot = Some(Frame { data: buf, width: w, height: h, pts: self.position() });
         true
     }
@@ -527,7 +551,10 @@ mod tests {
             if p.update(&mut slot) {
                 let f = slot.as_ref().unwrap();
                 assert_eq!(f.data.len(), 320 * 240 * 4, "RGBA frame size");
-                assert_eq!(f.data[3], 0xFF, "alpha forced opaque");
+                // The alpha byte is mpv's padding and is deliberately NOT
+                // fixed up here — video.wgsl forces opacity on the GPU, which
+                // saves a full CPU pass over every pixel of every frame. (If
+                // that shader ever stops doing it, video renders invisible.)
                 frames += 1;
             } else {
                 std::thread::sleep(Duration::from_millis(5));

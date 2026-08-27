@@ -15,6 +15,7 @@ mod gpu;
 #[cfg(target_os = "linux")]
 mod integration;
 mod media;
+mod perf;
 #[cfg(target_os = "linux")]
 mod portal;
 #[cfg(target_os = "linux")]
@@ -33,6 +34,7 @@ pub enum UserEvent {
 mod theme;
 mod ui;
 mod video;
+mod video_pass;
 
 use app::ReelApp;
 use egui_backend::EguiBackend;
@@ -111,6 +113,7 @@ impl ApplicationHandler<UserEvent> for Reel {
             WindowEvent::Resized(size) => gpu.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
                 // 1) advance playback and push any new frame to the GPU + egui.
+                perf::note_redraw();
                 self.app.sync_frame(gpu, egui);
 
                 // 2) build the UI.
@@ -223,6 +226,7 @@ macro_rules! timing {
 
 fn main() {
     t0();
+    perf::init();
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("info,zbus=warn,tracing=warn"),
     )

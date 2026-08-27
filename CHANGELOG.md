@@ -4,6 +4,16 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.16.0] — 2026-08-27
+
+### Added
+- Laid groundwork in the new video pipeline for future compositing features like tinting, fades, and multi-track blending. _(8c64756)_
+
+### Improved
+- Video is now drawn through Reel's own GPU render pipeline instead of a generic texture blit, removing a per-pixel CPU alpha-fixup pass on every frame for smoother, more efficient playback. _(8c64756)_
+- mpv now renders video at the exact on-screen size instead of always decoding at full source resolution, cutting rendering, copying and upload work dramatically when a large video is displayed at a smaller size (e.g. up to ~9x less work at 1280px display for a 4K source). _(8c64756)_
+
+
 ## [0.15.0] — 2026-08-27
 
 ### Added

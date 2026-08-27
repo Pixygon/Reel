@@ -545,7 +545,9 @@ impl ReelApp {
             self.tex_id = None;
         }
         let tex = self.tex.as_ref().unwrap();
+        let t_up = std::time::Instant::now();
         tex.write(&gpu.queue, &frame.data);
+        crate::perf::note_upload(t_up.elapsed().as_micros() as f64, frame.width, frame.height);
 
         match self.tex_id {
             Some(id) => egui.update_registered(id, &gpu.device, &tex.view),
@@ -799,5 +801,12 @@ impl ReelApp {
     /// art, visualizer or image) — drives aspect-fit.
     pub fn tex_dims(&self) -> Option<(u32, u32)> {
         self.tex.as_ref().map(|t| (t.width, t.height))
+    }
+
+    /// A view of the current picture for Reel's own render pass.
+    pub fn tex_view(&self) -> Option<wgpu::TextureView> {
+        self.tex
+            .as_ref()
+            .map(|t| t.texture.create_view(&wgpu::TextureViewDescriptor::default()))
     }
 }

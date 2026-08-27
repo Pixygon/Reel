@@ -252,6 +252,30 @@ impl Player {
         matches!(self.backend, Backend::Mpv(_))
     }
 
+    /// Tell the backend how large the video is actually being drawn, in
+    /// physical pixels. mpv then renders (and we copy and upload) only the
+    /// pixels that reach the screen — the difference between a 4K frame and
+    /// a 1280px one is ~9× the work per frame.
+    pub fn set_display_size(&mut self, view_w: f32, view_h: f32) {
+        let Backend::Mpv(m) = &mut self.backend else { return };
+        let (vw, vh) = (self.info.width, self.info.height);
+        if vw == 0 || vh == 0 || view_w < 16.0 || view_h < 16.0 {
+            return;
+        }
+        // Fit the video's aspect into the viewport, never upscaling past the
+        // source (upscaling is the GPU's job at draw time, and free).
+        let scale = (view_w / vw as f32).min(view_h / vh as f32).min(1.0);
+        let (w, h) = ((vw as f32 * scale) as u32, (vh as f32 * scale) as u32);
+        // Ignore sub-6% jitter so a slow window drag doesn't thrash mpv.
+        let (cw, ch) = m.render_size();
+        if (w as f32 - cw as f32).abs() / cw.max(1) as f32 > 0.06 || (h as f32 - ch as f32).abs() / ch.max(1) as f32 > 0.06 {
+            if m.set_render_size(w, h) {
+                self.current = None; // old frame is the wrong size now
+                self.dirty = true;
+            }
+        }
+    }
+
     /// Point this player at a different file (multi-source timelines).
     /// Cheap on the mpv backend; the subprocess fallback can't do it.
     pub fn switch_source(&mut self, path: &str, start: f64) -> bool {

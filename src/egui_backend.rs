@@ -28,7 +28,13 @@ impl EguiBackend {
             None,
             None,
         );
-        let renderer = egui_wgpu::Renderer::new(&gpu.device, gpu.surface_format, None, 1, false);
+        let mut renderer = egui_wgpu::Renderer::new(&gpu.device, gpu.surface_format, None, 1, false);
+        // Reel's own video pipeline lives in the callback resources — see
+        // video_pass.rs. Registered once; every frame's draw reuses it.
+        renderer.callback_resources.insert(crate::video_pass::VideoPass::new(
+            &gpu.device,
+            gpu.surface_format,
+        ));
         Self { state, renderer, ctx }
     }
 

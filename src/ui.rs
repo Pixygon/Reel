@@ -471,16 +471,23 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
 
 /// The media viewport — aspect-fit the current frame / image / cover art,
 /// a ♪ card for pure audio, or the drop hint.
-fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
+fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
     let avail = ui.available_size();
     let (rect, _) = ui.allocate_exact_size(avail, Sense::hover());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::VOID);
 
+    // Tell the player how big the picture actually is on screen (physical
+    // pixels) so it renders exactly those pixels — see Player::set_display_size.
+    let ppp = ui.ctx().pixels_per_point();
+    if let Some(player) = app.player.as_mut() {
+        player.set_display_size(rect.width() * ppp, rect.height() * ppp);
+    }
+
     // Native size of whatever is on the texture (frame, art, visualizer, image).
     let dims = app.tex_dims().map(|(w, h)| (w as f32, h as f32));
 
-    if let (Some(id), Some((vw, vh))) = (app.tex_id, dims) {
+    if let (Some(view), Some((vw, vh))) = (app.tex_view(), dims) {
         if vw > 0.0 && vh > 0.0 {
             let scale = (rect.width() / vw).min(rect.height() / vh);
             let size = Vec2::new(vw * scale, vh * scale);
@@ -489,7 +496,17 @@ fn viewport(ui: &mut egui::Ui, app: &ReelApp) {
                 // Stills can be transparent — show it honestly, viewer-style.
                 checkerboard(&painter, img_rect);
             }
-            painter.image(id, img_rect, Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), Color32::WHITE);
+            // Reel's own pipeline draws the picture (see video_pass.rs):
+            // opaque alpha without a CPU pass, and the seam where colour and
+            // compositing will live.
+            painter.add(egui_wgpu::Callback::new_paint_callback(
+                img_rect,
+                crate::video_pass::VideoDraw {
+                    view,
+                    tint: [1.0, 1.0, 1.0, 1.0],
+                    use_src_alpha: app.image.is_some(),
+                },
+            ));
             return;
         }
     }
