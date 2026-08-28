@@ -22,6 +22,11 @@ struct Uniforms {
     reframe: [f32; 4],
     /// exposure, contrast, saturation, unused.
     fx: [f32; 4],
+    /// Chroma key: rgb + similarity; softness in params.w... no — softness
+    /// rides in params[3]? See uniforms(): params = [use_src_alpha,
+    /// apply_fx, opacity, key_softness]; key.w = similarity; key_on when
+    /// key != vec4(0).
+    key: [f32; 4],
 }
 
 pub struct Compositor {
@@ -241,10 +246,20 @@ impl Compositor {
                 if l.use_src_alpha { 1.0 } else { 0.0 },
                 if l.effects.has_colour() { 1.0 } else { 0.0 },
                 l.opacity.clamp(0.0, 1.0),
-                0.0,
+                l.effects.key_softness,
             ],
             reframe: [l.effects.zoom, l.effects.pan_x, l.effects.pan_y, 0.0],
-            fx: [l.effects.exposure, l.effects.contrast, l.effects.saturation, 0.0],
+            fx: [
+                l.effects.exposure,
+                l.effects.contrast,
+                l.effects.saturation,
+                if l.effects.key_color.is_some() { 1.0 } else { 0.0 },
+            ],
+            key: l
+                .effects
+                .key_color
+                .map(|c| [c[0], c[1], c[2], l.effects.key_similarity])
+                .unwrap_or([0.0; 4]),
         }
     }
 

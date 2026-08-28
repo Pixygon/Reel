@@ -490,6 +490,9 @@ pub struct OverlaySegment {
     pub at: f64,
     pub pip: Pip,
     pub gain_db: f32,
+    /// The clip's effect stack — chroma key included, which is how a
+    /// green-screen inset composites over the cut.
+    pub effects: Effects,
     /// Animated parameters (PipX/PipY/PipScale/Opacity), clip-local time.
     pub keys: Vec<(Param, Vec<Keyframe>)>,
 }
@@ -650,6 +653,104 @@ impl Project {
         id
     }
 
+    /// The clip immediately BEFORE `id` on its own track, if they touch
+    /// (within tolerance) — the adjacency roll and slide need.
+    fn touching_prev(&self, id: u64) -> Option<u64> {
+        let (c, kind) = self.clip_with_kind(id)?;
+        self.tracks
+            .iter()
+            .filter(|t| t.kind == kind)
+            .flat_map(|t| t.clips.iter())
+            .find(|p| (p.end() - c.start).abs() < 0.02 && p.id != id)
+            .map(|p| p.id)
+    }
+
+    fn touching_next(&self, id: u64) -> Option<u64> {
+        let (c, kind) = self.clip_with_kind(id)?;
+        self.tracks
+            .iter()
+            .filter(|t| t.kind == kind)
+            .flat_map(|t| t.clips.iter())
+            .find(|n| (n.start - c.end()).abs() < 0.02 && n.id != id)
+            .map(|n| n.id)
+    }
+
+    /// SLIP: move the clip's window through its SOURCE without moving the
+    /// clip on the timeline. The cut points stay; what plays between them
+    /// changes. Returns the amount actually slipped (clamped at the
+    /// source's start).
+    pub fn slip(&mut self, id: u64, by: f64) -> f64 {
+        let Some(c) = self.clip_mut(id) else { return 0.0 };
+        let applied = if c.in_point + by < 0.0 { -c.in_point } else { by };
+        c.in_point += applied;
+        applied
+    }
+
+    /// ROLL: move the cut between this clip and the one it touches on its
+    /// left. One gets longer, the other shorter; the total length of the
+    /// timeline does not change. Returns the amount actually rolled.
+    pub fn roll(&mut self, id: u64, by: f64) -> f64 {
+        const MIN: f64 = 0.05;
+        let Some(prev_id) = self.touching_prev(id) else { return 0.0 };
+        let (c, _) = self.clip_with_kind(id).unwrap();
+        let (p, _) = self.clip_with_kind(prev_id).unwrap();
+        // Clamp: neither side may vanish, and this clip's in_point can't go
+        // below the source's start.
+        let lo = (-(p.duration - MIN)).max(-c.in_point / c.speed.max(0.01) as f64);
+        let hi = c.duration - MIN;
+        let by = by.clamp(lo, hi);
+        if by.abs() < 1e-9 {
+            return 0.0;
+        }
+        let rate = c.speed.max(0.01) as f64;
+        if let Some(p) = self.clip_mut(prev_id) {
+            p.duration += by;
+        }
+        if let Some(c) = self.clip_mut(id) {
+            c.start += by;
+            c.in_point += by * rate;
+            c.duration -= by;
+        }
+        by
+    }
+
+    /// SLIDE: move this clip along the timeline while its neighbours absorb
+    /// the motion — the previous clip stretches, the next one trims from its
+    /// head. The three clips' combined span is unchanged. Returns the amount
+    /// actually slid.
+    pub fn slide(&mut self, id: u64, by: f64) -> f64 {
+        const MIN: f64 = 0.05;
+        let (Some(prev_id), Some(next_id)) = (self.touching_prev(id), self.touching_next(id))
+        else {
+            return 0.0;
+        };
+        let (p, _) = self.clip_with_kind(prev_id).unwrap();
+        let (n, _) = self.clip_with_kind(next_id).unwrap();
+        let lo = (-(p.duration - MIN)).max(-self.clip(id).map(|c| c.start).unwrap_or(0.0));
+        let hi = (n.duration - MIN).min(
+            // The next clip's in_point can't go below its source start when
+            // sliding left... (sliding RIGHT consumes the next clip's head).
+            f64::INFINITY,
+        );
+        let by = by.clamp(lo, hi);
+        if by.abs() < 1e-9 {
+            return 0.0;
+        }
+        let n_rate = self.clip(next_id).map(|c| c.speed.max(0.01) as f64).unwrap_or(1.0);
+        if let Some(p) = self.clip_mut(prev_id) {
+            p.duration += by;
+        }
+        if let Some(c) = self.clip_mut(id) {
+            c.start += by;
+        }
+        if let Some(n) = self.clip_mut(next_id) {
+            n.start += by;
+            n.in_point += by * n_rate;
+            n.duration -= by;
+        }
+        by
+    }
+
     /// Make sure a track of this kind exists, creating it if not. Overlay
     /// tracks are made on demand so a project that never uses one never shows
     /// an empty lane.
@@ -688,6 +789,7 @@ impl Project {
                 at: c.start,
                 pip: c.pip,
                 gain_db: c.gain_db,
+                effects: c.effects,
                 keys: c.keys.clone(),
             })
             .collect();
@@ -1149,6 +1251,12 @@ pub enum Drag {
     Move { id: u64, grab: f64 },
     TrimL { id: u64 },
     TrimR { id: u64 },
+    /// Move the cut between this clip and its left neighbour (Ctrl+edge).
+    Roll { id: u64, last: f64 },
+    /// Move the clip's window through its source (Alt+body).
+    Slip { id: u64, last: f64 },
+    /// Move the clip; neighbours absorb (Ctrl+Alt+body).
+    Slide { id: u64, last: f64 },
     Playhead,
 }
 
@@ -1480,6 +1588,76 @@ mod tests {
         assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
         assert!(c.clear_key(Param::Exposure, 2.0));
         assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
+    }
+
+    /// Roll moves a cut without moving the timeline's total length; slip
+    /// changes WHAT plays without moving WHEN; slide moves a clip while its
+    /// neighbours absorb the motion. These invariants are the definitions.
+    #[test]
+    fn roll_slip_and_slide_hold_their_invariants() {
+        let mut p = one_clip_project();
+        p.split_at(4.0);
+        p.split_at(7.0); // 0..4, 4..7, 7..10 — all from the same source
+        let ids: Vec<u64> = p.tracks[0].clips.iter().map(|c| c.id).collect();
+        let total_before = p.duration();
+
+        // ROLL the middle clip's head +1: prev grows, middle shrinks, and
+        // the middle now begins one second LATER in its source.
+        let mid_in_before = p.clip(ids[1]).unwrap().in_point;
+        let rolled = p.roll(ids[1], 1.0);
+        assert!((rolled - 1.0).abs() < 1e-9);
+        assert!((p.clip(ids[0]).unwrap().duration - 5.0).abs() < 1e-9);
+        assert!((p.clip(ids[1]).unwrap().start - 5.0).abs() < 1e-9);
+        assert!((p.clip(ids[1]).unwrap().duration - 2.0).abs() < 1e-9);
+        assert!((p.clip(ids[1]).unwrap().in_point - (mid_in_before + 1.0)).abs() < 1e-9);
+        assert!((p.duration() - total_before).abs() < 1e-9, "roll must not change the total");
+        // Clips still butt.
+        assert!((p.clip(ids[0]).unwrap().end() - p.clip(ids[1]).unwrap().start).abs() < 1e-9);
+
+        // ROLL clamps: a huge roll can't erase either side.
+        let big = p.roll(ids[1], 100.0);
+        assert!(big < 100.0 && p.clip(ids[1]).unwrap().duration >= 0.05);
+        let _ = p.roll(ids[1], -big); // put it back roughly
+
+        // SLIP: the clip's window moves through the source; the timeline
+        // does not move at all.
+        let mut q = one_clip_project();
+        q.split_at(4.0);
+        let id1 = q.tracks[0].clips[1].id;
+        let (s_before, d_before) = {
+            let c = q.clip(id1).unwrap();
+            (c.start, c.duration)
+        };
+        // in_point starts at 4; slipping -10 clamps at the source's start.
+        let slipped = q.slip(id1, -10.0);
+        assert!((slipped + 4.0).abs() < 1e-9, "slip clamps at source 0, got {slipped}");
+        let c = q.clip(id1).unwrap();
+        assert_eq!((c.start, c.duration), (s_before, d_before), "slip must not move the clip");
+        assert!((c.in_point - 0.0).abs() < 1e-9);
+
+        // SLIDE: middle moves, neighbours absorb, three-clip span unchanged.
+        let mut r = one_clip_project();
+        r.split_at(3.0);
+        r.split_at(6.0);
+        let rids: Vec<u64> = r.tracks[0].clips.iter().map(|c| c.id).collect();
+        let span_before = r.clip(rids[2]).unwrap().end() - r.clip(rids[0]).unwrap().start;
+        let next_in_before = r.clip(rids[2]).unwrap().in_point;
+        let slid = r.slide(rids[1], 1.5);
+        assert!((slid - 1.5).abs() < 1e-9);
+        assert!((r.clip(rids[1]).unwrap().start - 4.5).abs() < 1e-9);
+        assert!((r.clip(rids[0]).unwrap().duration - 4.5).abs() < 1e-9);
+        assert!((r.clip(rids[2]).unwrap().in_point - (next_in_before + 1.5)).abs() < 1e-9);
+        let span_after = r.clip(rids[2]).unwrap().end() - r.clip(rids[0]).unwrap().start;
+        assert!((span_after - span_before).abs() < 1e-9, "slide must keep the span");
+        // Still gapless.
+        assert!((r.clip(rids[0]).unwrap().end() - r.clip(rids[1]).unwrap().start).abs() < 1e-9);
+        assert!((r.clip(rids[1]).unwrap().end() - r.clip(rids[2]).unwrap().start).abs() < 1e-9);
+
+        // No neighbour → no roll, no slide.
+        let mut lone = one_clip_project();
+        let lid = lone.tracks[0].clips[0].id;
+        assert_eq!(lone.roll(lid, 1.0), 0.0);
+        assert_eq!(lone.slide(lid, 1.0), 0.0);
     }
 
     /// The ramp integral is the contract between picture and sound: both

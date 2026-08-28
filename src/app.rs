@@ -90,6 +90,8 @@ pub struct ReelApp {
     /// The user's mute intent — kept apart from `player.muted`, which the
     /// editor borrows while the mixer speaks for the timeline.
     pub user_muted: bool,
+    /// Scopes panel visibility (histogram + waveform).
+    pub show_scopes: bool,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -162,6 +164,7 @@ impl ReelApp {
             proxies: crate::proxy::Cache::default(),
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
+            show_scopes: false,
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -471,6 +474,7 @@ impl ReelApp {
         if std::env::var("REEL_DEBUG_SELECT").as_deref() == Ok("1")
             && self.editor.selected.is_none()
         {
+            self.show_scopes = true; // the headless check photographs these too
             let first = self
                 .project
                 .tracks
@@ -933,6 +937,7 @@ impl ReelApp {
                 titles: self.project.titles.clone(),
                 music: self.project.music.clone(),
                 overlays: self.project.overlay_segments(),
+                markers: self.project.markers.clone(),
             }
         } else {
             let Some(path) = self.media_path() else { return };
@@ -1106,6 +1111,52 @@ impl ReelApp {
         };
         if let Some(m) = target {
             self.seek_timeline(m);
+        }
+    }
+
+    /// Export the frame under the playhead as a PNG, through the engine —
+    /// so what lands on disk is the composed edit, not just the raw source.
+    pub fn export_current_frame(&mut self) {
+        let segments = self.project.export_segments();
+        if segments.is_empty() {
+            self.status = "Nothing on the timeline yet.".into();
+            return;
+        }
+        let t = self.editor.playhead;
+        let dir = self
+            .editor
+            .project_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let out = dir.join(format!("frame-{t:.2}s.png"));
+        let settings = export::ExportSettings {
+            hardware: false,
+            ..self.export_settings.clone()
+        };
+        let overlays_owned = self.project.overlay_segments();
+        let ov = export::Overlays {
+            captions: &self.project.captions,
+            caption_size: self.project.caption_size,
+            titles: &self.project.titles,
+            music: None,
+            overlays: &overlays_owned,
+            markers: &[],
+        };
+        match crate::engine::render::render_still(
+            &segments,
+            &ov,
+            (self.project.width, self.project.height, self.project.fps),
+            &settings,
+            t,
+        ) {
+            Ok((rgba, w, h)) => {
+                match image::save_buffer(&out, &rgba, w, h, image::ColorType::Rgba8) {
+                    Ok(()) => self.status = format!("Frame saved: {}", out.display()),
+                    Err(e) => self.status = format!("Could not save the frame: {e}"),
+                }
+            }
+            Err(e) => self.status = format!("Frame export failed: {e}"),
         }
     }
 

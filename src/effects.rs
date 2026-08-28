@@ -44,6 +44,25 @@ pub struct Effects {
     pub pan_x: f32,
     #[serde(default)]
     pub pan_y: f32,
+    /// Chroma key: knock out this colour (sRGB 0..1) so what's underneath
+    /// shows through. `None` = no keying. Applied on the GPU in both the
+    /// preview and the frame-server render — the graph fallback cannot key.
+    #[serde(default)]
+    pub key_color: Option<[f32; 3]>,
+    /// How far from the key colour still counts as background (0..1).
+    #[serde(default = "default_key_similarity")]
+    pub key_similarity: f32,
+    /// Width of the soft edge beyond `similarity` (0..1).
+    #[serde(default = "default_key_softness")]
+    pub key_softness: f32,
+}
+
+fn default_key_similarity() -> f32 {
+    0.30
+}
+
+fn default_key_softness() -> f32 {
+    0.10
 }
 
 fn one() -> f32 {
@@ -61,6 +80,9 @@ impl Default for Effects {
             zoom: 1.0,
             pan_x: 0.0,
             pan_y: 0.0,
+            key_color: None,
+            key_similarity: default_key_similarity(),
+            key_softness: default_key_softness(),
         }
     }
 }
@@ -76,6 +98,7 @@ impl Effects {
             && self.fade_in <= 0.0
             && self.fade_out <= 0.0
             && !self.has_reframe()
+            && self.key_color.is_none()
     }
 
     pub fn has_reframe(&self) -> bool {

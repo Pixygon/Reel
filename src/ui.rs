@@ -738,6 +738,51 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 }
 
+                // ── Green screen ────────────────────────────────────────
+                {
+                    let mut fx2 = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
+                    let before2 = fx2;
+                    let mut keyed = fx2.key_color.is_some();
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut keyed, "Green screen").changed() {
+                            fx2.key_color = if keyed {
+                                Some([0.0, 0.69, 0.25])
+                            } else {
+                                None
+                            };
+                        }
+                        if let Some(c) = &mut fx2.key_color {
+                            let mut rgb = [
+                                (c[0] * 255.0) as u8,
+                                (c[1] * 255.0) as u8,
+                                (c[2] * 255.0) as u8,
+                            ];
+                            if ui.color_edit_button_srgb(&mut rgb).changed() {
+                                *c = [
+                                    rgb[0] as f32 / 255.0,
+                                    rgb[1] as f32 / 255.0,
+                                    rgb[2] as f32 / 255.0,
+                                ];
+                            }
+                        }
+                    });
+                    if fx2.key_color.is_some() {
+                        ui.add(egui::Slider::new(&mut fx2.key_similarity, 0.02..=0.8).text("Reach"));
+                        ui.add(egui::Slider::new(&mut fx2.key_softness, 0.0..=0.5).text("Soften"));
+                        ui.label(
+                            RichText::new("Keys live in the preview and the render alike. Put the clip on the overlay track to composite it over the cut.")
+                                .small()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                    }
+                    if fx2 != before2 {
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.effects = fx2;
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+
                 // Playback rate. Changing it keeps the footage and resizes
                 // the clip's slot, which is what "speed this bit up" means.
                 let mut rate = app.project.clip(id).map(|c| c.speed).unwrap_or(1.0);
@@ -825,6 +870,28 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
         }
+        // ── Frame export ────────────────────────────────────────────────
+        if ui
+            .button("📷 Export this frame")
+            .on_hover_text("The frame under the playhead — effects, overlays and animation included — as a PNG next to the project")
+            .clicked()
+        {
+            app.export_current_frame();
+        }
+
+        // ── Scopes ──────────────────────────────────────────────────────
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Scopes").color(theme::CYAN));
+            let label = if app.show_scopes { "Hide" } else { "Show" };
+            if ui.small_button(label).clicked() {
+                app.show_scopes = !app.show_scopes;
+            }
+        });
+        if app.show_scopes {
+            scopes(ui, app);
+        }
+
         // ── Captions ────────────────────────────────────────────────────
         ui.separator();
         ui.label(RichText::new("Captions").color(theme::CYAN));
@@ -999,7 +1066,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new(
             "J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\n\
              Del delete · Shift+Del ripple delete · right-click to close gaps\n\
-             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+Left/Right jump",
+             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+Left/Right jump\n\
+             Ctrl+drag an edge: roll · Alt+drag: slip · Ctrl+Alt+drag: slide",
         ).small().color(egui::Color32::from_gray(120)));
     }
 }
@@ -1201,15 +1269,23 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         let box_rect = Rect::from_center_size(centre, Vec2::new(w, h));
 
         let mut drew = false;
-        // Live frames from the preview pool play in the inset; the thumbnail
-        // sheet is only the fallback for the instant before a player opens.
+        // Live frames from the preview pool play in the inset, drawn through
+        // Reel's own video pass so the clip's colour effects — chroma key
+        // included — preview exactly as they render.
         if let Some(ov) = app.overlay_previews.get(&clip_id) {
-            if let Some(id) = ov.tex_id {
-                painter.add(egui::Shape::image(
-                    id,
+            if let Some(tex) = &ov.tex {
+                let fx = app.project.clip(clip_id).map(|c| {
+                    let local = (app.editor.playhead - c.start).max(0.0);
+                    c.animated(local).0
+                });
+                painter.add(egui_wgpu::Callback::new_paint_callback(
                     box_rect,
-                    Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                    Color32::WHITE,
+                    crate::video_pass::VideoDraw {
+                        view: tex.texture.create_view(&wgpu::TextureViewDescriptor::default()),
+                        tint: [1.0, 1.0, 1.0, 1.0],
+                        use_src_alpha: false,
+                        effects: fx,
+                    },
                 ));
                 drew = true;
             }
@@ -1476,6 +1552,107 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
             .color(egui::Color32::from_gray(120)),
     );
     let _ = Param::ALL; // (silence an unused-import trap if params shrink)
+}
+
+/// Video scopes, read from the CURRENT preview frame: an RGB histogram and
+/// a luma waveform. CPU on a downsampled grid — a preview frame is already
+/// CPU-visible on the mpv software path, so this costs a fraction of a
+/// millisecond and updates live during playback.
+fn scopes(ui: &mut egui::Ui, app: &ReelApp) {
+    let Some(frame) = app.player.as_ref().and_then(|p| p.current.as_ref()) else {
+        ui.label(RichText::new("No picture yet.").small().color(egui::Color32::from_gray(120)));
+        return;
+    };
+    let (w, h) = (frame.width as usize, frame.height as usize);
+    if frame.data.len() < w * h * 4 || w == 0 || h == 0 {
+        return;
+    }
+    // Sample a ~120×68 grid: plenty for scopes, nothing for the CPU.
+    let (gx, gy) = (120usize.min(w), 68usize.min(h));
+    let mut hist = [[0u32; 64]; 3];
+    const COLS: usize = 96;
+    let mut wave_min = [255u8; COLS];
+    let mut wave_max = [0u8; COLS];
+    let mut wave_sum = [0u32; COLS];
+    let mut wave_n = [0u32; COLS];
+    for iy in 0..gy {
+        let y = iy * h / gy;
+        for ix in 0..gx {
+            let x = ix * w / gx;
+            let i = (y * w + x) * 4;
+            let (r, g, b) = (frame.data[i], frame.data[i + 1], frame.data[i + 2]);
+            hist[0][(r >> 2) as usize] += 1;
+            hist[1][(g >> 2) as usize] += 1;
+            hist[2][(b >> 2) as usize] += 1;
+            let luma =
+                (0.2126 * r as f32 + 0.7152 * g as f32 + 0.0722 * b as f32) as u8;
+            let col = ix * COLS / gx;
+            wave_min[col] = wave_min[col].min(luma);
+            wave_max[col] = wave_max[col].max(luma);
+            wave_sum[col] += luma as u32;
+            wave_n[col] += 1;
+        }
+    }
+
+    // Histogram strip.
+    let width = ui.available_width().max(60.0);
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 56.0), Sense::hover());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, theme::VOID_2);
+    let peak = hist.iter().flatten().copied().max().unwrap_or(1).max(1) as f32;
+    let bar_w = rect.width() / 64.0;
+    let colors = [
+        Color32::from_rgba_unmultiplied(255, 70, 70, 140),
+        Color32::from_rgba_unmultiplied(80, 255, 120, 140),
+        Color32::from_rgba_unmultiplied(90, 140, 255, 140),
+    ];
+    for ch in 0..3 {
+        for (bin, count) in hist[ch].iter().enumerate() {
+            if *count == 0 {
+                continue;
+            }
+            let hgt = (*count as f32 / peak).sqrt() * (rect.height() - 4.0);
+            let x = rect.left() + bin as f32 * bar_w;
+            painter.rect_filled(
+                Rect::from_min_max(
+                    egui::pos2(x, rect.bottom() - 2.0 - hgt),
+                    egui::pos2(x + bar_w.max(1.0), rect.bottom() - 2.0),
+                ),
+                0.0,
+                colors[ch],
+            );
+        }
+    }
+
+    // Luma waveform: per column, the min→max envelope plus the mean.
+    let (wrect, _) = ui.allocate_exact_size(Vec2::new(width, 56.0), Sense::hover());
+    let wp = ui.painter_at(wrect);
+    wp.rect_filled(wrect, 4.0, theme::VOID_2);
+    let col_w = wrect.width() / COLS as f32;
+    let to_y = |v: f32| wrect.bottom() - 2.0 - (v / 255.0) * (wrect.height() - 4.0);
+    for c in 0..COLS {
+        if wave_n[c] == 0 {
+            continue;
+        }
+        let x = wrect.left() + c as f32 * col_w + col_w * 0.5;
+        wp.line_segment(
+            [
+                egui::pos2(x, to_y(wave_min[c] as f32)),
+                egui::pos2(x, to_y(wave_max[c] as f32)),
+            ],
+            Stroke::new(col_w.max(1.0), Color32::from_rgba_unmultiplied(120, 220, 235, 60)),
+        );
+        let mean = wave_sum[c] as f32 / wave_n[c] as f32;
+        wp.line_segment(
+            [egui::pos2(x - col_w * 0.5, to_y(mean)), egui::pos2(x + col_w * 0.5, to_y(mean))],
+            Stroke::new(1.2, theme::CYAN),
+        );
+    }
+    ui.label(
+        RichText::new("Histogram (RGB) · waveform (luma, column by column)")
+            .small()
+            .color(egui::Color32::from_gray(120)),
+    );
 }
 
 fn checkerboard(painter: &egui::Painter, rect: Rect) {
@@ -2126,6 +2303,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         titles: &app.project.titles,
                         music: app.project.music.as_ref(),
                         overlays: &app.project.overlay_segments(),
+                        markers: &app.project.markers,
                     },
                 ) {
                     Ok(job) => app.export = Some(job),
@@ -2557,9 +2735,20 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             }
             if resp.drag_started() {
                 app.editor.push_undo(&app.project);
-                app.editor.drag = Some(match zone {
-                    1 => Drag::TrimL { id: clip.id },
-                    2 => Drag::TrimR { id: clip.id },
+                let mods = ui.ctx().input(|i| i.modifiers);
+                let at = resp
+                    .interact_pointer_pos()
+                    .map(|p| x_to_t(p.x))
+                    .unwrap_or(clip.start);
+                app.editor.drag = Some(match (zone, mods.ctrl || mods.command, mods.alt) {
+                    // Ctrl on the head edge: ROLL the cut with the left
+                    // neighbour. (Rolling the tail is the neighbour's head.)
+                    (1, true, _) => Drag::Roll { id: clip.id, last: at },
+                    (2, true, _) => Drag::Roll { id: clip.id, last: at }, // resolved below
+                    (1, false, _) => Drag::TrimL { id: clip.id },
+                    (2, false, _) => Drag::TrimR { id: clip.id },
+                    (_, true, true) => Drag::Slide { id: clip.id, last: at },
+                    (_, false, true) => Drag::Slip { id: clip.id, last: at },
                     _ => Drag::Move {
                         id: clip.id,
                         grab: resp
@@ -2568,6 +2757,17 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                             .unwrap_or(0.0),
                     },
                 });
+                // Ctrl on the TAIL edge rolls the cut with the RIGHT
+                // neighbour — which is that neighbour's head roll.
+                if zone == 2 && (mods.ctrl || mods.command) {
+                    if let Some(next) = app
+                        .project
+                        .clip_after(crate::edit::TrackKind::Video, clip.start)
+                        .map(|n| n.id)
+                    {
+                        app.editor.drag = Some(Drag::Roll { id: next, last: at });
+                    }
+                }
             }
             if resp.drag_stopped() {
                 app.editor.mark_changed(); // trims/moves land in the autosave
@@ -2605,6 +2805,24 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                             let new_end = snapped.clamp(c.start + 0.05, next_start);
                             c.duration = new_end - c.start;
                         }
+                    }
+                    Drag::Roll { id, last } => {
+                        let applied = app.project.roll(id, pt - last);
+                        app.editor.drag = Some(Drag::Roll { id, last: last + applied });
+                        app.status = "Roll: moving the cut — the total length stays.".into();
+                    }
+                    Drag::Slip { id, last } if id == clip.id => {
+                        // Dragging RIGHT shows earlier material — the
+                        // convention every NLE uses.
+                        let applied = app.project.slip(id, -(pt - last));
+                        app.editor.drag = Some(Drag::Slip { id, last: last - applied });
+                        let ip = app.project.clip(id).map(|c| c.in_point).unwrap_or(0.0);
+                        app.status = format!("Slip: source in-point {ip:.2}s");
+                    }
+                    Drag::Slide { id, last } if id == clip.id => {
+                        let applied = app.project.slide(id, pt - last);
+                        app.editor.drag = Some(Drag::Slide { id, last: last + applied });
+                        app.status = "Slide: neighbours absorb the move.".into();
                     }
                     _ => {}
                 }

@@ -105,6 +105,33 @@ Move a clip along the timeline
 | `--clip` | `ID` | Clip id |
 | `--to` | `SECONDS` | New timeline position |
 
+### `reel roll PROJECT`
+
+Roll a cut: one clip grows, the other shrinks, the timeline stays put
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | The cut between this clip and its left neighbour moves |
+| `--by` | `SECONDS` | Positive = the neighbour grows; total length never changes |
+
+### `reel slip PROJECT`
+
+Slip a clip: change WHAT plays without moving WHEN
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id |
+| `--by` | `SECONDS` | Shift the clip's window through its source |
+
+### `reel slide PROJECT`
+
+Slide a clip between its neighbours; the combined span is unchanged
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id (must touch neighbours on both sides) |
+| `--by` | `SECONDS` | Move the clip; neighbours absorb the motion |
+
 ### `reel remove PROJECT`
 
 Delete a clip
@@ -142,6 +169,10 @@ Colour, fades and reframing for one clip
 | `--zoom` | `N` | 1.0 = whole frame; used for reframing |
 | `--pan-x` | `N` | -1..1, where the zoom sits |
 | `--pan-y` | `N` | -1..1 |
+| `--key-color` | `RRGGBB` | Chroma key: knock this colour out (e.g. 00b140) |
+| `--key-similarity` | `0..1` | How far from the key colour still counts (default 0.3) |
+| `--key-softness` | `0..1` | Soft edge width beyond similarity (default 0.1) |
+| `--key-off` | — | Stop keying |
 | `--reset` | — | Back to no effects |
 
 ### `reel keyframe PROJECT`
@@ -236,6 +267,16 @@ Transcribe speech locally. TARGET is a .reel project or a media file
 | `--srt` | `FILE` | Also write the captions to this .srt |
 | `--source` | `MEDIA` | Transcribe this instead of the project's first clip |
 | `--quiet` | — | Don't print progress |
+
+### `reel frame TARGET`
+
+Export one frame as PNG. TARGET is a .reel (rendered with effects, overlays, animation) or a media file
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--at` | `SECONDS` | Which moment (default 0) |
+| `--out` | `FILE.png` | Where to write the PNG (default beside the target) |
+| `--overwrite` | — | Replace the output if it exists |
 
 ### `reel render PROJECT OUTPUT`
 

@@ -79,6 +79,16 @@ not the finished tool, but real, honest software you can build and run today.
   the picture, set size and colour. Position is stored as a fraction of the
   frame, so a title composed on the preview lands in exactly the same place
   in a 4K export.
+- **Green screen, built in.** Check "Green screen" on a clip, pick the
+  colour, and the key previews live — in the PiP inset too — and renders
+  identically: chroma-weighted matte, soft edge, automatic despill.
+- **Roll, slip and slide.** The trims professionals actually cut with:
+  Ctrl-drag an edge to move a cut without moving the timeline, Alt-drag to
+  choose what plays without moving when, Ctrl+Alt to slide between
+  neighbours. Also `reel roll/slip/slide` for scripts.
+- **Scopes, chapters, stills.** A live histogram and waveform while you
+  grade; markers become real MP4 chapters on export; and one button saves
+  the composed frame under the playhead as a PNG.
 - **You hear the whole edit.** Editor playback mixes the timeline live —
   every clip's audio with its gain and fades, and the music bed ducking
   under speech in real time — through a native PipeWire stream on Linux.

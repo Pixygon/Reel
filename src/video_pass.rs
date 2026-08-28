@@ -32,6 +32,9 @@ struct Uniforms {
     reframe: [f32; 4],
     /// exposure, contrast, saturation, unused — see effects::Effects.
     fx: [f32; 4],
+    /// Chroma key: r, g, b of the key colour; w = similarity. Softness rides
+    /// in params.z; params.w = 1 enables keying.
+    key: [f32; 4],
 }
 
 pub struct VideoPass {
@@ -159,8 +162,8 @@ impl CallbackTrait for VideoDraw {
                 params: [
                     if self.use_src_alpha { 1.0 } else { 0.0 },
                     if self.effects.is_some_and(|e| e.has_colour()) { 1.0 } else { 0.0 },
-                    0.0,
-                    0.0,
+                    self.effects.map(|e| e.key_softness).unwrap_or(0.0),
+                    if self.effects.is_some_and(|e| e.key_color.is_some()) { 1.0 } else { 0.0 },
                 ],
                 reframe: self
                     .effects
@@ -170,6 +173,10 @@ impl CallbackTrait for VideoDraw {
                     .effects
                     .map(|e| [e.exposure, e.contrast, e.saturation, 0.0])
                     .unwrap_or([1.0, 1.0, 1.0, 0.0]),
+                key: self
+                    .effects
+                    .and_then(|e| e.key_color.map(|c| [c[0], c[1], c[2], e.key_similarity]))
+                    .unwrap_or([0.0, 0.0, 0.0, 0.0]),
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

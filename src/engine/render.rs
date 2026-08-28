@@ -152,6 +152,34 @@ pub fn start_timeline(
         &format!("{output}.audio.wav"),
     );
 
+    // Markers become chapters: an ffmetadata sidecar the encoder muxes in.
+    let chapters = if overlays.markers.is_empty() {
+        None
+    } else {
+        let mut cuts: Vec<f64> = overlays
+            .markers
+            .iter()
+            .copied()
+            .filter(|m| *m >= 0.0 && *m < total)
+            .collect();
+        cuts.sort_by(|a, b| a.total_cmp(b));
+        if !cuts.first().is_some_and(|f| *f < 0.001) {
+            cuts.insert(0, 0.0); // chapters must cover from the start
+        }
+        let mut meta = String::from(";FFMETADATA1\n");
+        for (i, w) in cuts.iter().enumerate() {
+            let end = cuts.get(i + 1).copied().unwrap_or(total);
+            meta.push_str(&format!(
+                "[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle=Chapter {}\n",
+                (*w * 1000.0) as u64,
+                (end * 1000.0) as u64,
+                i + 1
+            ));
+        }
+        let path = format!("{output}.chapters.txt");
+        std::fs::write(&path, meta).ok().map(|_| path)
+    };
+
     let (job, state, cancel) = ExportJob::manual(output);
     let segments = segments.to_vec();
     let settings = settings.clone();
@@ -160,7 +188,7 @@ pub fn start_timeline(
     std::thread::spawn(move || {
         let result = run(
             comp, &segments, &output, &settings, target, total, planned_overlays, ramp_fps,
-            transfers, audio_args, burnin, &state, &cancel,
+            transfers, audio_args, chapters, burnin, &state, &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -170,6 +198,105 @@ pub fn start_timeline(
         }
     });
     Ok(job)
+}
+
+/// Render a SINGLE frame of the edit at output time `t` — the compositor
+/// path in miniature, for "export frame" and thumbnails of the cut. Returns
+/// straight RGBA at the target size.
+pub fn render_still(
+    segments: &[Segment],
+    overlays: &Overlays<'_>,
+    project: (u32, u32, f64),
+    settings: &ExportSettings,
+    t: f64,
+) -> Result<(Vec<u8>, u32, u32)> {
+    let comp = Compositor::headless()?;
+    let (tw, th, tfps) = export::render_target(project, settings);
+    let plan = plan(segments);
+    let mut layers_data: Vec<(Vec<u8>, u32, u32, super::Layer)> = Vec::new();
+
+    let grab = |source: &str,
+                    in_point: f64,
+                    pre: Option<&str>,
+                    fit: &str,
+                    (w, h): (u32, u32)|
+     -> Result<Option<Vec<u8>>> {
+        // A one-frame reader: seek straight to the moment, read one frame.
+        let mut r = SegmentReader::open(source, in_point, 0.5, 1.0, pre, fit, (w, h, tfps))?;
+        let mut buf = Vec::new();
+        Ok(r.next_into(&mut buf).then_some(buf))
+    };
+
+    for p in &plan {
+        if t < p.start || t >= p.end {
+            continue;
+        }
+        let seg = &segments[p.seg];
+        let tone_src = crate::video::decoder::probe_transfer(&seg.source);
+        let tone = super::sources::hdr_tonemap_chain(tone_src.as_deref());
+        let fit = settings.fit.chain(tw, th, "s");
+        let src_at = seg.in_point + seg.source_offset_at(t - p.start);
+        if let Some(buf) = grab(&seg.source, src_at, tone.as_deref(), &fit, (tw, th))? {
+            let (fx, key_op) = seg.animated(t - p.start);
+            layers_data.push((
+                buf,
+                tw,
+                th,
+                super::Layer {
+                    view: comp.upload(&[0, 0, 0, 0], 1, 1), // replaced below
+                    rect: [0.0, 0.0, 1.0, 1.0],
+                    opacity: base_opacity(p, seg, t) * key_op,
+                    effects: fx,
+                    use_src_alpha: false,
+                },
+            ));
+        }
+    }
+    for o in overlays.overlays {
+        if t < o.at || t >= o.at + o.duration {
+            continue;
+        }
+        let info = crate::video::decoder::probe(&o.source)?;
+        let (pip, op) = o.animated(t - o.at);
+        let bw = (((pip.scale.clamp(0.02, 1.0) as f64) * tw as f64 / 2.0).round() * 2.0) as u32;
+        let bh = (((bw as f64 * info.height as f64 / info.width.max(1) as f64) / 2.0).round()
+            * 2.0)
+            .max(2.0) as u32;
+        let tone = super::sources::hdr_tonemap_chain(
+            crate::video::decoder::probe_transfer(&o.source).as_deref(),
+        );
+        let fit = super::sources::overlay_fit_chain(bw, bh);
+        if let Some(buf) = grab(&o.source, o.in_point + (t - o.at), tone.as_deref(), &fit, (bw, bh))? {
+            let (wf, hf) = (bw as f32 / tw as f32, bh as f32 / th as f32);
+            layers_data.push((
+                buf,
+                bw,
+                bh,
+                super::Layer {
+                    view: comp.upload(&[0, 0, 0, 0], 1, 1),
+                    rect: [
+                        pip.x - wf / 2.0,
+                        pip.y - hf / 2.0,
+                        pip.x + wf / 2.0,
+                        pip.y + hf / 2.0,
+                    ],
+                    opacity: op,
+                    effects: o.effects,
+                    use_src_alpha: false,
+                },
+            ));
+        }
+    }
+    let layers: Vec<super::Layer> = layers_data
+        .into_iter()
+        .map(|(buf, w, h, mut l)| {
+            l.view = comp.upload(&buf, w, h);
+            l
+        })
+        .collect();
+    let target = comp.target(tw, th);
+    comp.render(&super::Scene { layers }, &target);
+    Ok((comp.read_back(&target), tw, th))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -184,6 +311,7 @@ fn run(
     ramp_fps: Vec<Option<f64>>,
     transfers: std::collections::HashMap<String, Option<String>>,
     audio_args: Option<Vec<String>>,
+    chapters: Option<String>,
     burnin: Vec<String>,
     state: &std::sync::Arc<std::sync::Mutex<export::ExportState>>,
     cancel: &std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -232,6 +360,14 @@ fn run(
     ];
     if have_audio {
         enc.extend(["-i".into(), wav.clone()]);
+    }
+    if let Some(ch) = &chapters {
+        enc.extend([
+            "-i".into(),
+            ch.clone(),
+            "-map_chapters".into(),
+            if have_audio { "2".into() } else { "1".into() },
+        ]);
     }
     if !burnin.is_empty() {
         enc.extend(["-vf".into(), burnin.join(",")]);
@@ -438,7 +574,9 @@ fn run(
                         pip.y + hf / 2.0,
                     ],
                     opacity: op,
-                    effects: Default::default(),
+                    // The overlay's own effects — chroma key included, which
+                    // is what makes a green-screen inset composite.
+                    effects: o.effects,
                     use_src_alpha: false,
                 });
             }
@@ -461,6 +599,9 @@ fn run(
     drop(enc_in);
     let status = encoder.wait().context("encoder did not exit")?;
     let _ = std::fs::remove_file(&wav);
+    if let Some(ch) = &chapters {
+        let _ = std::fs::remove_file(ch);
+    }
     result?;
     if !status.success() {
         let mut err = String::new();

@@ -14,9 +14,20 @@ struct Uniforms {
     params: vec4<f32>,
     // zoom, pan_x, pan_y, unused.
     reframe: vec4<f32>,
-    // exposure, contrast, saturation, unused.
+    // exposure, contrast, saturation; w = 1 enables chroma keying.
     fx: vec4<f32>,
+    // Chroma key: rgb = key colour (sRGB), w = similarity. Softness lives
+    // in params.w.
+    key: vec4<f32>,
 };
+
+fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
+    let ya = dot(a, vec3<f32>(0.299, 0.587, 0.114));
+    let yb = dot(b, vec3<f32>(0.299, 0.587, 0.114));
+    let ca = vec2<f32>(a.b - ya, a.r - ya);
+    let cb = vec2<f32>(b.b - yb, b.r - yb);
+    return length(ca - cb) * 1.6 + abs(ya - yb) * 0.4;
+}
 
 @group(0) @binding(0) var layer_tex: texture_2d<f32>;
 @group(0) @binding(1) var layer_sampler: sampler;
@@ -74,8 +85,24 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         + vec2<f32>(0.5)
         + vec2<f32>(u.reframe.y, u.reframe.z) * (1.0 - 1.0 / z) * 0.5;
     let s = textureSample(layer_tex, layer_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
-    let a_src = mix(1.0, s.a, u.params.x);
+    var a_src = mix(1.0, s.a, u.params.x);
     var rgb = s.rgb;
+    if (u.fx.w > 0.5) {
+        let enc = linear_to_srgb(rgb);
+        let d = key_distance(enc, u.key.rgb);
+        let alpha = smoothstep(u.key.w, u.key.w + max(u.params.w, 0.001), d);
+        let dominant = max(max(u.key.r, u.key.g), u.key.b);
+        var spilled = enc;
+        if (u.key.g >= dominant) {
+            spilled.g = min(enc.g, max(enc.r, enc.b) + 0.08);
+        } else if (u.key.b >= dominant) {
+            spilled.b = min(enc.b, max(enc.r, enc.g) + 0.08);
+        } else {
+            spilled.r = min(enc.r, max(enc.g, enc.b) + 0.08);
+        }
+        rgb = srgb_to_linear(mix(enc, spilled, 1.0 - alpha * alpha));
+        a_src = a_src * alpha;
+    }
     if (u.params.y > 0.5) {
         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
     }

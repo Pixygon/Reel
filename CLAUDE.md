@@ -318,6 +318,17 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   be against the preview path, never the original (or every seek bounces
   back to the heavy file). Export/waveforms/thumbnails/captions keep
   originals. Keyed by path+size+mtime.
+- CHROMA KEY lives in Effects (`key_color: Option<[f32;3]>` + similarity/
+  softness) and in BOTH shaders — video.wgsl uses params.z=softness,
+  params.w=enable; compose.wgsl uses fx.w=enable, params.w=softness (the
+  free slots differ!). Both Uniforms structs grew a 5th vec4 `key` — field
+  order, as ever, is load-bearing. The PiP inset draws through VideoDraw
+  now, so keys/colour preview in the inset; the graph fallback cannot key.
+- Roll/slip/slide: model fns on Project with invariants tested (roll/slide
+  keep totals; slip keeps position). UI: Ctrl+edge=roll (tail edge rolls
+  the RIGHT neighbour's head), Alt+body=slip (drag right shows earlier
+  material), Ctrl+Alt=slide. Incremental application: each drag frame
+  applies the delta and advances `last` by what was ACTUALLY applied.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

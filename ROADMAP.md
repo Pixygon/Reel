@@ -255,8 +255,10 @@ With engine + keyframes, these are features, not architecture. Ordered
 within the phase by editor-workflow importance:
 
 ### 3.1 Edit mechanics
-- [ ] Roll, slip and slide edits (trim both sides / move the window inside
-      a clip / move a clip between neighbours) with keyboard equivalents.
+- [x] Roll, slip and slide edits — invariant-tested (roll and slide never
+      change the total; slip never moves the clip), driven by modifier
+      drags (Ctrl+edge / Alt+body / Ctrl+Alt+body) and `reel roll/slip/
+      slide` in the CLI.
 - [ ] Multi-select (click-drag lasso, shift-click), group move/delete,
       track targeting for paste/insert.
 - [ ] Explicitly linked A/V clips (cut together, trim together, unlinkable).
@@ -281,10 +283,13 @@ within the phase by editor-workflow importance:
 - [ ] Curves (master + per-channel), levels, HSL qualifiers, white balance,
       LUT loading (.cube) — all as frame-graph effect nodes, all keyframable
       by construction.
-- [ ] Scopes panel: histogram, RGB waveform, vectorscope (taps from 1.1).
-- [ ] **Chroma key** (green screen): GPU chroma distance + spill removal +
-      matte choke/feather. A pixel test against a synthetic green-screen
-      render.
+- [x] Scopes v1: live RGB histogram + luma waveform from the preview
+      frame. Vectorscope and full RGB-parade waveform still open.
+- [x] **Chroma key**: chroma-weighted distance + despill + soft edge, one
+      shader block in BOTH pipelines (preview and frame server), with
+      reach/soften controls, CLI flags, and a pixel test compositing a
+      red-on-green overlay over a blue base. The PiP inset now draws
+      through the video pass, so a keyed inset previews keyed.
 - [ ] Masks on any effect (from 1.1) + **point tracking** to drive them
       (track a region, attach a mask/PiP/title to the track). Classic
       template matching first; optical flow upgrade later.
@@ -297,11 +302,14 @@ within the phase by editor-workflow importance:
 - [ ] Per-platform publish presets grow into a **publish panel**: filename
       templating, burn-in toggles (captions on/off per output), several
       outputs from one timeline in one pass.
-- [ ] Chapters from markers (MP4/MKV chapter atoms; YouTube chapter text on
-      the clipboard).
+- [x] Chapters from markers — an ffmetadata sidecar muxed by the frame
+      server's encoder; ffprobe-verified. (YouTube chapter text export
+      still open.)
 - [ ] Watch-folder / hot-render mode via CLI (`reel render --watch` is the
       agent-era version of Adobe Media Encoder).
-- [ ] Frame export (the current frame → PNG) from player and editor.
+- [x] Frame export: the composed edit at the playhead — effects, overlays,
+      animation — rendered to PNG through `render_still`, from the editor
+      button or `reel frame` (which also grabs frames from plain media).
 
 ### 3.5 Captions, matured
 - [ ] Word-level timestamps (whisper supports it) → karaoke/word-pop styles

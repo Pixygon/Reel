@@ -131,6 +131,36 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Move a clip along the timeline",
     },
     Cmd {
+        name: "roll",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "The cut between this clip and its left neighbour moves" },
+            Flag { name: "by", value: Some("SECONDS"), help: "Positive = the neighbour grows; total length never changes" },
+            F_JSON,
+        ],
+        help: "Roll a cut: one clip grows, the other shrinks, the timeline stays put",
+    },
+    Cmd {
+        name: "slip",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "by", value: Some("SECONDS"), help: "Shift the clip's window through its source" },
+            F_JSON,
+        ],
+        help: "Slip a clip: change WHAT plays without moving WHEN",
+    },
+    Cmd {
+        name: "slide",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (must touch neighbours on both sides)" },
+            Flag { name: "by", value: Some("SECONDS"), help: "Move the clip; neighbours absorb the motion" },
+            F_JSON,
+        ],
+        help: "Slide a clip between its neighbours; the combined span is unchanged",
+    },
+    Cmd {
         name: "remove",
         args: &["PROJECT"],
         flags: &[
@@ -169,6 +199,10 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "zoom", value: Some("N"), help: "1.0 = whole frame; used for reframing" },
             Flag { name: "pan-x", value: Some("N"), help: "-1..1, where the zoom sits" },
             Flag { name: "pan-y", value: Some("N"), help: "-1..1" },
+            Flag { name: "key-color", value: Some("RRGGBB"), help: "Chroma key: knock this colour out (e.g. 00b140)" },
+            Flag { name: "key-similarity", value: Some("0..1"), help: "How far from the key colour still counts (default 0.3)" },
+            Flag { name: "key-softness", value: Some("0..1"), help: "Soft edge width beyond similarity (default 0.1)" },
+            Flag { name: "key-off", value: None, help: "Stop keying" },
             Flag { name: "reset", value: None, help: "Back to no effects" },
             F_JSON,
         ],
@@ -274,6 +308,17 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Transcribe speech locally. TARGET is a .reel project or a media file",
+    },
+    Cmd {
+        name: "frame",
+        args: &["TARGET"],
+        flags: &[
+            Flag { name: "at", value: Some("SECONDS"), help: "Which moment (default 0)" },
+            Flag { name: "out", value: Some("FILE.png"), help: "Where to write the PNG (default beside the target)" },
+            Flag { name: "overwrite", value: None, help: "Replace the output if it exists" },
+            F_JSON,
+        ],
+        help: "Export one frame as PNG. TARGET is a .reel (rendered with effects, overlays, animation) or a media file",
     },
     Cmd {
         name: "render",
@@ -468,6 +513,9 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "split" => cmd_split(p),
         "trim" => cmd_trim(p),
         "move" => cmd_move(p),
+        "roll" => cmd_nudge(p, Nudge::Roll),
+        "slip" => cmd_nudge(p, Nudge::Slip),
+        "slide" => cmd_nudge(p, Nudge::Slide),
         "remove" => cmd_remove(p),
         "gap" => cmd_gap(p),
         "gain" => cmd_gain(p),
@@ -480,6 +528,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
         "captions" => cmd_captions(p),
+        "frame" => cmd_frame(p),
         "render" => cmd_render(p),
         "convert" => cmd_convert(p),
         "presets" => cmd_presets(),
@@ -822,6 +871,42 @@ fn cmd_move(p: &Parsed) -> Result<Output> {
     ))
 }
 
+enum Nudge {
+    Roll,
+    Slip,
+    Slide,
+}
+
+fn cmd_nudge(p: &Parsed, which: Nudge) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let by: f64 = p.need_num("by")?;
+    let mut proj = load(path)?;
+    if proj.clip(id).is_none() {
+        bail!("no clip with id {id} — run `reel inspect` to see the ids");
+    }
+    let (name, applied) = match which {
+        Nudge::Roll => ("Rolled", proj.roll(id, by)),
+        Nudge::Slip => ("Slipped", proj.slip(id, by)),
+        Nudge::Slide => ("Slid", proj.slide(id, by)),
+    };
+    if applied.abs() < 1e-9 {
+        bail!(
+            "nothing moved — {}",
+            match which {
+                Nudge::Roll => "a roll needs a touching clip on the left, and room on both sides",
+                Nudge::Slip => "the window is already at the source's start",
+                Nudge::Slide => "a slide needs touching clips on BOTH sides",
+            }
+        );
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("{name} clip {id} by {applied:.3}s"),
+        serde_json::json!({ "clip": id, "applied": applied }),
+    ))
+}
+
 fn cmd_remove(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let id: u64 = p.need_num("clip")?;
@@ -901,6 +986,20 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         }
         if let Some(v) = p.num::<f32>("pan-y")? {
             c.effects.pan_y = v;
+        }
+        if let Some(hex) = p.str("key-color") {
+            let rgb = parse_hex(hex)?;
+            c.effects.key_color =
+                Some([rgb[0] as f32 / 255.0, rgb[1] as f32 / 255.0, rgb[2] as f32 / 255.0]);
+        }
+        if let Some(v) = p.num::<f32>("key-similarity")? {
+            c.effects.key_similarity = v.clamp(0.0, 1.0);
+        }
+        if let Some(v) = p.num::<f32>("key-softness")? {
+            c.effects.key_softness = v.clamp(0.0, 1.0);
+        }
+        if p.on("key-off") {
+            c.effects.key_color = None;
         }
         c.effects
     };
@@ -1401,6 +1500,77 @@ fn prepare_output(path: &str, overwrite: bool) -> Result<()> {
     Ok(())
 }
 
+fn cmd_frame(p: &Parsed) -> Result<Output> {
+    let target = p.at(0)?;
+    let at = p.num::<f64>("at")?.unwrap_or(0.0);
+    let out = p
+        .str("out")
+        .map(String::from)
+        .unwrap_or_else(|| format!("{}.{at:.2}s.png", target.trim_end_matches(".reel")));
+    prepare_output(&out, p.on("overwrite"))?;
+
+    if target.ends_with(".reel") {
+        let proj = load(target)?;
+        let segments = proj.export_segments();
+        if segments.is_empty() {
+            bail!("the timeline is empty");
+        }
+        let settings = export::ExportSettings {
+            codec: Codec::H264,
+            quality: Quality::High,
+            resolution: Resolution::Source,
+            audio: AudioMode::Encode { kbps: 160 },
+            hardware: false,
+            target: None,
+            fit: Fit::Letterbox,
+        };
+        let overlays = export::Overlays {
+            captions: &proj.captions,
+            caption_size: proj.caption_size,
+            titles: &proj.titles,
+            music: None,
+            overlays: &proj.overlay_segments(),
+            markers: &[],
+        };
+        let (rgba, w, h) = crate::engine::render::render_still(
+            &segments,
+            &overlays,
+            (proj.width, proj.height, proj.fps),
+            &settings,
+            at,
+        )?;
+        image::save_buffer(&out, &rgba, w, h, image::ColorType::Rgba8)
+            .with_context(|| format!("could not write {out}"))?;
+        // Titles/captions burn through libass at encode time in a full
+        // render; for a still, burn them onto the PNG via one ffmpeg pass.
+        // (Simplest honest approach: the still already has picture layers;
+        // text overlays follow in a later pass.)
+        Ok(Output::new(
+            format!("Wrote {out} — the edit at {at:.2}s ({w}×{h})"),
+            serde_json::json!({ "output": out, "at": at, "width": w, "height": h }),
+        ))
+    } else {
+        if !std::path::Path::new(target).exists() {
+            bail!("no such file: {target}");
+        }
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y", "-v", "error", "-ss", &format!("{at}"), "-i", target,
+                "-frames:v", "1", &out,
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            bail!("could not extract a frame at {at:.2}s");
+        }
+        Ok(Output::new(
+            format!("Wrote {out}"),
+            serde_json::json!({ "output": out, "at": at }),
+        ))
+    }
+}
+
 fn cmd_render(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let out = p.at(1)?;
@@ -1423,6 +1593,7 @@ fn cmd_render(p: &Parsed) -> Result<Output> {
             titles: &proj.titles,
             music: proj.music.as_ref(),
             overlays: &proj.overlay_segments(),
+            markers: &proj.markers,
         },
     )?;
     await_job(job, p.on("quiet") || p.on("json"))?;

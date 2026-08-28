@@ -823,6 +823,9 @@ pub struct Overlays<'a> {
     pub music: Option<&'a crate::edit::Music>,
     /// Picture composited on top of the cut.
     pub overlays: &'a [crate::edit::OverlaySegment],
+    /// Timeline markers — written into the output as CHAPTERS, so a long
+    /// export lands on YouTube with its sections already named.
+    pub markers: &'a [f64],
 }
 
 /// Start a timeline (edit) export, burning any captions and titles into the
@@ -1277,6 +1280,7 @@ pub enum Job {
         titles: Vec<crate::titles::Title>,
         music: Option<crate::edit::Music>,
         overlays: Vec<crate::edit::OverlaySegment>,
+        markers: Vec<f64>,
     },
 }
 
@@ -1366,7 +1370,7 @@ impl Queue {
                         start(path, &next.output, &next.settings, *duration)
                     }
                     Job::Timeline {
-                        segments, project, captions, caption_size, titles, music, overlays,
+                        segments, project, captions, caption_size, titles, music, overlays, markers,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1378,6 +1382,7 @@ impl Queue {
                             titles,
                             music: music.as_ref(),
                             overlays,
+                            markers,
                         },
                     ),
                 };
@@ -2069,6 +2074,95 @@ mod tests {
         }
     }
 
+    /// Green screen, end to end: a full-frame overlay of a red box on green
+    /// is keyed over a blue base. Where the green was, blue must show; the
+    /// red box must survive. Measured in the rendered pixels — the only
+    /// definition of "the key works".
+    #[test]
+    fn a_green_screen_overlay_composites_over_the_cut() {
+        use crate::edit::{OverlaySegment, Pip};
+        let dir = std::env::temp_dir();
+        let base = dir.join(format!("reel-key-base-{}.mp4", std::process::id()));
+        let fg = dir.join(format!("reel-key-fg-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-key-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=blue:size=640x480:rate=10:duration=2",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", &base.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        // Green screen with a red box dead centre.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=0x00b140:size=640x480:rate=10:duration=2,\
+                          drawbox=x=220:y=160:w=200:h=160:color=red:t=fill",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", &fg.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let segs = vec![seg(&base.to_string_lossy(), 0.0, 2.0)];
+        let mut fx = crate::effects::Effects::default();
+        fx.key_color = Some([0.0, 0.694, 0.251]); // 0x00b140
+        let ov = vec![OverlaySegment {
+            source: fg.to_string_lossy().into(),
+            in_point: 0.0,
+            duration: 2.0,
+            at: 0.0,
+            // Full frame: the classic green-screen composite.
+            pip: Pip { x: 0.5, y: 0.5, scale: 1.0 },
+            gain_db: 0.0,
+            effects: fx,
+            keys: Vec::new(),
+        }];
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let job = match crate::engine::render::start_timeline(
+            &segs, &out.to_string_lossy(), &s, (640, 480, 10.0),
+            &Overlays { overlays: &ov, ..Default::default() },
+        ) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("no GPU — skipping chroma key test ({e})");
+                return;
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "key render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "key render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let png = dir.join(format!("reel-key-f-{}.png", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "1", "-i", &out.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let img = image::open(&png).expect("read frame").to_rgb8();
+        let px = |x: u32, y: u32| img.get_pixel(x, y).0;
+
+        // The corners were green screen — the blue base must show.
+        for (x, y) in [(30, 30), (610, 30), (30, 450), (610, 450)] {
+            let [r, g, b] = px(x, y);
+            assert!(
+                b > 120 && g < 110 && r < 90,
+                "at ({x},{y}) expected the blue base, got rgb({r},{g},{b}) — key failed"
+            );
+        }
+        // The red box survives the key.
+        let [r, g, b] = px(320, 240);
+        assert!(
+            r > 130 && g < 100 && b < 100,
+            "centre should keep the red subject, got rgb({r},{g},{b})"
+        );
+
+        for f in [&base, &fg, &out, &png] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// HDR in, correct SDR out. Two tagged PQ fixtures — 100-nit white and
     /// 5-nit near-black — rendered through the frame server. Without
     /// tone-mapping, PQ's curve reads the dim one at ~92/255 (washed) and
@@ -2355,6 +2449,7 @@ mod tests {
             at: 1.0,
             pip,
             gain_db: 0.0,
+            effects: Default::default(),
             keys: Vec::new(),
         }];
         let job = start_timeline_with_captions(
@@ -2540,7 +2635,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);
