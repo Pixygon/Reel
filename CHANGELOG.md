@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.32.0] — 2026-08-28
+
+### Added
+- Editing proxies for 4K and up: heavy sources now get an automatic background 720p editing copy that the preview scrubs through, so timelines with UHD footage feel as smooth as 1080p on a laptop. Exports, waveforms, thumbnails and captions always use the original file, so final quality is unaffected. Nothing to configure — proxies build automatically and are cached so they're instant to find again next session. _(3f12953)_
+
+### Fixed
+- HDR footage (HLG and HDR10/PQ, common from phones) no longer looks washed-out or murky. Reel now detects the source's colour transfer curve and properly tone-maps HDR to standard SDR before scaling, so clips look right straight after import. _(3f12953)_
+
+
 ## [0.31.0] — 2026-08-28
 
 ### Added
