@@ -4,6 +4,19 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.26.1] — 2026-08-28
+
+### Added
+- Reel can now be driven entirely from the command line, with no window required. New commands let you create projects, add and trim clips, apply effects, transitions, titles, captions and a music bed, and render — each with a matching --json output for scripts, CI or automation agents.
+- New `reel commands --json` prints a full machine-readable reference of every command, argument and flag, generated directly from the CLI's own parser so it always matches the actual binary.
+
+### Changed
+- Running `reel` with a mistyped or unknown argument now prints a clear error and exits instead of silently opening a blank player window — most noticeable when running Reel headlessly (e.g. in a script or CI). **(BREAKING)**
+
+### Fixed
+- Fixed a bug where locally-generated captions could collapse into a single 30-second cue instead of following the speech — captions now track the spoken audio accurately throughout the video.
+
+
 ## [0.26.0] — 2026-08-28
 
 ### Fixed
