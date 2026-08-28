@@ -31,14 +31,35 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     // between them: bottom panels first (they own the full width), then the
     // side panel (which therefore never resizes the timeline), then the
     // picture in whatever space is left.
-    if app.mode == Mode::Editor {
-        editor_bottom_panels(ctx, app);
-    }
-    media_panel_frame(ctx, app.mode == Mode::Editor, |ui| media_panel_contents(ui, app));
+    // The timeline is the only full-width element, and it slides in and out
+    // with the mode. Everything else (side panel, preview, transport) shares
+    // the space above it.
+    let editing = app.mode == Mode::Editor;
+    egui::TopBottomPanel::bottom("timeline_panel")
+        .resizable(true)
+        .default_height(240.0)
+        .show_animated(ctx, editing, |ui| {
+            timeline(ui, app);
+        });
+    media_panel_frame(ctx, editing, |ui| media_panel_contents(ui, app));
     match app.mode {
         Mode::Player => player_view(ctx, app),
         Mode::Editor => {
             egui::CentralPanel::default().show(ctx, |ui| {
+                // The transport belongs to the PREVIEW, so it lives inside
+                // the central area and matches the picture's width — not the
+                // full-width timeline below it.
+                egui::TopBottomPanel::bottom("editor_chrome")
+                    .exact_height(94.0)
+                    .show_inside(ui, |ui| {
+                        let inner = ui.max_rect().shrink2(Vec2::new(10.0, 6.0));
+                        let mut child = ui.new_child(
+                            egui::UiBuilder::new()
+                                .max_rect(inner)
+                                .layout(egui::Layout::top_down(egui::Align::Min)),
+                        );
+                        chrome(&mut child, app);
+                    });
                 viewport(ui, app);
             });
         }
@@ -463,29 +484,6 @@ pub fn media_panel_frame(
         });
 }
 
-fn editor_bottom_panels(ctx: &egui::Context, app: &mut ReelApp) {
-    // Panel order decides who owns the width. The timeline is added FIRST so
-    // it spans the whole window — the side panel slides in over the viewport
-    // above it and never resizes the timeline. Then the transport, so the
-    // scrubber sits directly above the timeline and below the picture.
-    egui::TopBottomPanel::bottom("timeline_panel")
-        .resizable(true)
-        .default_height(240.0)
-        .show(ctx, |ui| {
-            timeline(ui, app);
-        });
-    egui::TopBottomPanel::bottom("editor_chrome").exact_height(102.0).show(ctx, |ui| {
-        let inner = ui.max_rect().shrink2(Vec2::new(8.0, 4.0));
-        let mut child = ui.new_child(
-            egui::UiBuilder::new()
-                .max_rect(inner)
-                .layout(egui::Layout::top_down(egui::Align::Min)),
-        );
-        chrome(&mut child, app);
-        child.label(RichText::new(&app.status).color(theme::CYAN).small());
-    });
-}
-
 /// The media/inspector contents — drawn inside `media_panel_frame`.
 fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
     {
@@ -736,14 +734,33 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
     }
 
-    // Row 2: three clusters.
-    ui.columns(3, |cols| {
-        cols[0].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+    // Row 2: three clusters with EXPLICIT widths. Equal thirds overflowed —
+    // the right-hand tools spilled left and drew on top of the transport.
+    let row_h = 48.0;
+    let total = ui.available_width();
+    let left_w = 116.0_f32.min(total * 0.25);
+    let right_w = 430.0_f32.min((total - left_w) * 0.62);
+    let center_w = (total - left_w - right_w).max(80.0);
+    let show_time = right_w > 380.0; // drop the readout before it can collide
+    ui.horizontal(|ui| {
+        let mut cols: Vec<egui::Ui> = Vec::new();
+        for (w, layout) in [
+            (left_w, egui::Layout::left_to_right(egui::Align::Center)),
+            (center_w, egui::Layout::left_to_right(egui::Align::Center)),
+            (right_w, egui::Layout::right_to_left(egui::Align::Center)),
+        ] {
+            let rect = ui.cursor().intersect(egui::Rect::everything_right_of(ui.cursor().left()));
+            let rect = egui::Rect::from_min_size(rect.min, Vec2::new(w, row_h));
+            ui.advance_cursor_after_rect(rect);
+            cols.push(ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout)));
+        }
+        let mut cols = cols;
+        cols[0].scope(|ui| {
             reel_menu(ui, app);
         });
 
         // Center: the transport (or the image's identity).
-        cols[1].with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        cols[1].scope(|ui| {
             if let Some(img) = &app.image {
                 let name = std::path::Path::new(&img.path)
                     .file_name()
@@ -754,31 +771,34 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
                 ui.label(RichText::new(text).color(theme::STAR));
             } else if let Some(player) = app.player.as_mut() {
-                let time_text = if editing {
-                    format!("{}  /  {}", fmt_time(app.editor.playhead), fmt_time(edit_len))
-                } else {
-                    format!("{}  /  {}", fmt_time(player.position), fmt_time(player.info.duration))
+                // Big, round transport keys, centred under the picture. The
+                // time readout lives with the other numbers on the right.
+                let round = |label: &str, big: bool| {
+                    egui::Button::new(RichText::new(label).size(if big { 22.0 } else { 16.0 }))
+                        .min_size(Vec2::new(if big { 46.0 } else { 38.0 }, if big { 46.0 } else { 38.0 }))
+                        .corner_radius(if big { 23.0 } else { 19.0 })
                 };
-                let est = 4.0 * 34.0 + time_text.chars().count() as f32 * 8.0 + 24.0;
+                let gap = 8.0;
+                let est = 3.0 * 38.0 + 46.0 + 4.0 * gap;
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
-                if ui.button("⏮").on_hover_text("Back to start").clicked() {
+                ui.spacing_mut().item_spacing.x = gap;
+                if ui.add(round("⏮", false)).on_hover_text("Back to start").clicked() {
                     player.seek(0.0);
                 }
-                if ui.button("◀").on_hover_text("Frame back (,)").clicked() {
+                if ui.add(round("◀", false)).on_hover_text("Frame back (,)").clicked() {
                     player.frame_step(false);
                 }
                 let label = if player.playing { "⏸" } else { "▶" };
-                if ui.button(RichText::new(label).size(18.0)).on_hover_text("Play/pause (Space)").clicked() {
+                if ui.add(round(label, true)).on_hover_text("Play/pause (Space)").clicked() {
                     player.toggle_play();
                 }
-                if ui.button("▶").on_hover_text("Frame forward (.)").clicked() {
+                if ui.add(round("▶", false)).on_hover_text("Frame forward (.)").clicked() {
                     player.frame_step(true);
                 }
-                ui.label(RichText::new(time_text).monospace());
             }
         });
 
-        cols[2].with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        cols[2].scope(|ui| {
             if let Some(img_open) = app.image.is_some().then_some(()) {
                 let _ = img_open;
                 if ui
@@ -798,6 +818,11 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 return;
             }
             let Some(player) = app.player.as_mut() else { return };
+            let time_text = if editing {
+                format!("{} / {}", fmt_time(app.editor.playhead), fmt_time(edit_len))
+            } else {
+                format!("{} / {}", fmt_time(player.position), fmt_time(player.info.duration))
+            };
             if ui
                 .button(RichText::new("⬇ Export").color(theme::CYAN))
                 .on_hover_text("Convert this file — codec, quality, size")
@@ -869,6 +894,9 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                     player.set_visualizer(viz);
                 }
             }
+            if show_time {
+                ui.label(RichText::new(time_text).monospace().size(13.0));
+            }
         });
     });
 
@@ -906,7 +934,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
         .open(&mut keep_open)
         .collapsible(false)
         .resizable(false)
-        .default_width(420.0)
+        .default_width(460.0)
         .show(ctx, |ui| {
             ui.label(
                 RichText::new(std::path::Path::new(&source).file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or(source.clone()))
@@ -1031,35 +1059,52 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             // ── One-click destinations ───────────────────────────────────
             // Pick where it's going; Reel picks the frame, fit and codec.
             if kind != crate::media::MediaKind::Image {
-                ui.label(RichText::new("Post it to").small().color(egui::Color32::from_gray(150)));
+                ui.label(
+                    RichText::new("Where is this going?")
+                        .size(15.0)
+                        .color(theme::STAR),
+                );
+                ui.add_space(6.0);
                 let mut chosen: Option<&export::Preset> = None;
-                ui.horizontal_wrapped(|ui| {
-                    for p in export::Preset::ALL {
-                        let active = p.is_active(&app.export_settings);
-                        let text = RichText::new(p.name).color(if active { theme::VOID } else { theme::STAR });
-                        let mut btn = egui::Button::new(text);
-                        if active {
-                            btn = btn.fill(theme::CYAN);
+                // Big cards, three to a row: the name you think in, and the
+                // frame you get. Choosing one is the whole decision.
+                let card_w = (ui.available_width() - 2.0 * ui.spacing().item_spacing.x) / 3.0;
+                for row in export::Preset::ALL.chunks(3) {
+                    ui.horizontal(|ui| {
+                        for p in row {
+                            let active = p.is_active(&app.export_settings);
+                            let (fg, bg) = if active {
+                                (theme::VOID, theme::CYAN)
+                            } else {
+                                (theme::STAR, theme::VOID_3)
+                            };
+                            let label = format!("{}\n{}", p.name, p.note);
+                            let btn = egui::Button::new(RichText::new(label).color(fg).size(13.0))
+                                .fill(bg)
+                                .corner_radius(10.0)
+                                .min_size(Vec2::new(card_w, 46.0));
+                            if ui.add(btn).on_hover_text(p.fit.label()).clicked() {
+                                chosen = Some(p);
+                            }
                         }
-                        if ui.add(btn).on_hover_text(format!("{} · {}", p.note, p.fit.label())).clicked() {
-                            chosen = Some(p);
-                        }
-                    }
-                    let custom = export::Preset::ALL.iter().all(|p| !p.is_active(&app.export_settings));
-                    let text = RichText::new("Custom").color(if custom { theme::VOID } else { theme::STAR });
-                    let mut btn = egui::Button::new(text);
-                    if custom {
-                        btn = btn.fill(theme::CYAN);
-                    }
-                    if ui.add(btn).on_hover_text("Choose the settings yourself").clicked() {
-                        app.export_settings.target = None;
-                    }
-                });
+                    });
+                }
                 if let Some(p) = chosen {
                     p.apply(&mut app.export_settings);
                     app.export_out = app.preset_output(p);
                 }
-                ui.add_space(8.0);
+                ui.add_space(6.0);
+                let custom = export::Preset::ALL.iter().all(|p| !p.is_active(&app.export_settings));
+                if ui
+                    .selectable_label(custom, RichText::new("⚙ Custom settings").size(13.0))
+                    .on_hover_text("Choose format, quality and size yourself")
+                    .clicked()
+                {
+                    app.export_settings.target = None;
+                }
+                ui.add_space(10.0);
+                ui.separator();
+                ui.add_space(6.0);
             }
 
             let timeline_mode = app.export_timeline;
@@ -1211,8 +1256,11 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .find(|p| p.is_active(&app.export_settings))
                     .map(|p| p.name.to_string())
                     .unwrap_or_else(|| "Custom".to_string());
+                let btn = egui::Button::new(RichText::new(format!("＋ Queue {label}")).color(theme::CYAN))
+                    .corner_radius(8.0)
+                    .min_size(Vec2::new(0.0, 30.0));
                 if ui
-                    .button(RichText::new(format!("＋ Queue {label}")).color(theme::CYAN))
+                    .add(btn)
                     .on_hover_text("Add this to the render queue and keep choosing")
                     .clicked()
                 {
@@ -1232,9 +1280,12 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 }
             }
             ui.add_space(4.0);
+            // add_sized (not min_size): it centres the label in the button.
             let start = ui.add_sized(
-                [ui.available_width(), 28.0],
-                egui::Button::new(RichText::new("Start export").color(theme::STAR).strong()),
+                [ui.available_width(), 38.0],
+                egui::Button::new(RichText::new("Start export").color(theme::VOID).strong().size(15.0))
+                    .fill(theme::CYAN)
+                    .corner_radius(10.0),
             );
             if start.clicked() && app.export_timeline {
                 match export::start_timeline(&segments, &app.export_out, &app.export_settings, (app.project.width, app.project.height, app.project.fps)) {

@@ -4,6 +4,20 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.21.0] — 2026-08-28
+
+### Changed
+- The timeline panel now slides smoothly in and out when switching between Player and Editor modes instead of snapping into place. _(3bf31fb)_
+
+### Improved
+- Redesigned the editor's transport controls with larger, rounder play/pause and frame-step buttons, centered under the preview for easier clicking. _(3bf31fb)_
+- Redesigned the export destination picker with larger, clearer preset cards (three per row) showing the name and a short description, plus a dedicated 'Custom settings' option instead of a small button row. _(3bf31fb)_
+- The Start Export button is now bigger, filled, and rounded for better visibility, and the export window is slightly wider to fit the new preset cards. _(3bf31fb)_
+
+### Fixed
+- Fixed the editor toolbar layout so the right-hand tools no longer overflow and overlap the playback transport when the window is narrow. _(3bf31fb)_
+
+
 ## [0.20.0] — 2026-08-28
 
 ### Added
