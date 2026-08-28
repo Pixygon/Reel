@@ -69,6 +69,24 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   defaults, ~/.config/reel/settings.json. The UI flow is a one-time banner +
   ⚙ → Default apps. Arch packaging extras live in `.pixygon.json` build.arch
   (depends/desktop/icon — pearl.mjs reads them).
+- Editor layout order is load-bearing: bottom panels FIRST (timeline, then
+  the transport above it) so both span the full window, THEN the side panel
+  (so it can never resize the timeline), then the CentralPanel. The side
+  panel is drawn every frame via `media_panel_frame(ctx, open, …)` so it
+  animates between modes.
+- The editor's scrubber is the player for the WHOLE EDIT: it ranges over
+  `edit::render_duration(export_segments())` and seeks with
+  `app.seek_timeline`, never the loaded source's own position.
+- Side-panel content must be width-agnostic (ScrollArea::both, sliders sized
+  to available width). Content with a large minimum width silently clamps the
+  panel and makes a resize drag spring back — regression-tested headlessly in
+  `ui_tests.rs`. Headless egui tests must read layout INSIDE `ctx.run` —
+  `available_rect()` outside a pass is a debug-only panic (release hides it).
+- Projects SAVE THEMSELVES (`app::poll_autosave`): ~700 ms after the last
+  change, serialised on the UI thread, written on a worker via
+  `edit::write_atomic` (temp + rename). There is no Save button. Mark every
+  mutation with `editor.mark_changed()`; merely opening/playing media must
+  NOT mark dirty, or watching a video would litter .reel files.
 - There is NO player/editor tab bar and NO top bar at all: the app defaults
   to Player; ✂ Edit (or E) enters the editor, ▶ Done leaves it. Assume users
   enter Reel by double-clicking a media file, never bare.

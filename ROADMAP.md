@@ -87,6 +87,8 @@ never leaving the GPU.
 - [x] Multi-source timelines (opening a file while editing imports it).
 - [x] Per-clip effects (exposure/contrast/saturation/fades) previewed on the
       GPU pass and rendered identically — see Milestone 3.
+- [x] Close gaps (right-click a clip: close the gap before it, or every gap).
+- [x] Autosave — projects save themselves after each edit; no Save button.
 - [ ] Ripple/roll edits; cut/copy/paste.
 - [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
       then the preview shows the V1 source frame.
