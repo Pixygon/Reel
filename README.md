@@ -42,6 +42,10 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **4K edits like 720p.** Heavy sources get an automatic background editing
+  proxy the preview scrubs instead — while exports, waveforms, thumbnails
+  and captions always use the original. Nothing to configure, nothing to
+  relink.
 - **HDR footage just looks right.** Phone clips in HLG or HDR10 (PQ) are
   detected and tone-mapped to SDR through libplacebo at the industry's
   203-nit reference — no washed-out grays, no murky darks, nothing to

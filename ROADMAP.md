@@ -205,10 +205,11 @@ ffmpeg graph. Neither can express "the timeline, mixed, live":
 
 **Exit criteria for Phase 1**: ~~PiP plays live in the preview~~ ✓.
 ~~Export runs through the frame server with the parity suite green~~ ✓.
-~~A crossfade previews as a crossfade~~ ✓ (the incoming clip plays in a
-pooled decoder and blends over the outgoing picture at the ramp's opacity).
-Still open: proxies for 4K-on-a-laptop, and multitrack audio mixing live
-under the preview (1.4).
+~~A crossfade previews as a crossfade~~ ✓. ~~4K edits smoothly via
+proxies~~ ✓. ~~Multitrack audio mixes live under the preview~~ ✓ (the
+PipeWire mixer). Phase 1's exit criteria are met; the remaining line items
+(zero-copy, blend modes, masks, scopes taps, 10-bit, HDR pass-through,
+export-side mixer) continue as deepening work.
 
 ---
 

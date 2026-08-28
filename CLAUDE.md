@@ -312,6 +312,12 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   byte-by-byte at the rawvideo pipe (206 via PNG, 158 via rawvideo, same
   chain). libplacebo maps at BT.2408's 203-nit reference: 100-nit PQ white
   ≈ 185, not 255.
+- PROXIES (`proxy.rs`): 1440p+ sources get a background 720p copy; the
+  PREVIEW opens `proxies.preview_path(src)` — seek_timeline, clip advance,
+  and the overlay/transition pool ALL go through it, and comparisons must
+  be against the preview path, never the original (or every seek bounces
+  back to the heavy file). Export/waveforms/thumbnails/captions keep
+  originals. Keyed by path+size+mtime.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

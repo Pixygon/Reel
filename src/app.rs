@@ -82,6 +82,9 @@ pub struct ReelApp {
     mixer_attempted: bool,
     /// Decoded PCM per source for the mixer.
     pub samples: crate::audio::SampleCache,
+    /// Editing proxies for heavy sources — the PREVIEW plays these; export
+    /// and every analysis path keep the originals.
+    pub proxies: crate::proxy::Cache,
     /// When the current mix plan was built — rebuilt after edits.
     mix_built_at: std::time::Instant,
     /// The user's mute intent — kept apart from `player.muted`, which the
@@ -156,6 +159,7 @@ impl ReelApp {
             mixer: None,
             mixer_attempted: false,
             samples: crate::audio::SampleCache::default(),
+            proxies: crate::proxy::Cache::default(),
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             caption_model: crate::captions::Model::BaseEn,
@@ -398,7 +402,11 @@ impl ReelApp {
                     self.window_title = format!("{name} — Reel");
                     self.status = format!("Project {name} loaded.");
                     if let Some(src) = first_source {
-                        self.open_media_async(&src, true);
+                        // The editor previews through proxies: a heavy source
+                        // starts its background proxy build here, and the
+                        // preview opens whatever is best right now.
+                        let path = self.proxies.preview_path(&src);
+                        self.open_media_async(&path, true);
                     }
                 }
                 Err(e) => self.status = format!("Could not open project {path}: {e}"),
@@ -695,10 +703,11 @@ impl ReelApp {
         self.overlay_previews.retain(|k, _| keep.contains(k));
 
         for (id, source, src_t) in active {
+            let path = self.proxies.preview_path(&source);
             let entry = match self.overlay_previews.entry(id) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                 std::collections::hash_map::Entry::Vacant(v) => {
-                    let Ok(mut p) = Player::open(&source) else { continue };
+                    let Ok(mut p) = Player::open(&path) else { continue };
                     p.set_muted(true);
                     p.seek(src_t);
                     v.insert(OverlayPreview { player: p, tex: None, tex_id: None })
@@ -1177,11 +1186,15 @@ impl ReelApp {
             let (id, src, in_point, start) =
                 (clip.id, clip.source.clone(), clip.in_point, clip.start);
             let want = in_point + (self.editor.playhead - start);
+            // The preview may be playing this source's PROXY — compare and
+            // switch against the preview path, never the original, or every
+            // seek would bounce back to the heavy file.
+            let path = self.proxies.preview_path(&src);
             if let Some(player) = self.player.as_mut() {
-                if src == player.path {
+                if path == player.path {
                     player.seek(want);
                 } else {
-                    player.switch_source(&src, want);
+                    player.switch_source(&path, want);
                 }
                 self.editor.active_clip = Some(id);
             }
@@ -1200,11 +1213,14 @@ impl ReelApp {
             return;
         }
         let pos = player.position;
+        let player_path = player.path.clone();
         let active = self
             .editor
             .active_clip
             .and_then(|id| self.project.clip(id))
-            .filter(|c| c.source == player.path)
+            .filter(|c| {
+                c.source == player_path || self.proxies.is_proxy(&player_path)
+            })
             .or_else(|| self.project.clip_at(TrackKind::Video, self.editor.playhead))
             .cloned();
         let Some(clip) = active else { return };
@@ -1226,12 +1242,14 @@ impl ReelApp {
                 Some(next) => {
                     self.editor.playhead = next.start;
                     self.editor.active_clip = Some(next.id);
-                    if next.source == player.path {
+                    let path = self.proxies.preview_path(&next.source);
+                    let player = self.player.as_mut().unwrap();
+                    if path == player.path {
                         player.seek(next.in_point);
                     } else {
                         // Multi-source timeline: roll the preview onto the
                         // next clip's file without rebuilding the player.
-                        player.switch_source(&next.source, next.in_point);
+                        player.switch_source(&path, next.in_point);
                     }
                 }
                 None => {
