@@ -64,10 +64,13 @@ pub struct ReelApp {
     pub waveforms: crate::waveform::Cache,
     /// Tiled thumbnail sheets per source, for the timeline.
     pub thumbs: crate::thumbs::Cache,
-    /// Live preview players for overlay (PiP) clips, keyed by source — the
-    /// seed of the decoder pool: a second decode running under the preview
-    /// so the inset MOVES instead of showing a thumbnail.
-    pub overlay_previews: std::collections::HashMap<String, OverlayPreview>,
+    /// Live preview players for clips beyond the main one — PiP overlays and
+    /// the incoming side of a crossfade — keyed by CLIP id (two clips can
+    /// share one source file). The seed of the decoder pool.
+    pub overlay_previews: std::collections::HashMap<u64, OverlayPreview>,
+    /// The transition being previewed at the playhead, if any:
+    /// (incoming clip id, 0..1 progress).
+    pub transition_preview: Option<(u64, f32)>,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -132,6 +135,7 @@ impl ReelApp {
             waveforms: crate::waveform::Cache::default(),
             thumbs: crate::thumbs::Cache::default(),
             overlay_previews: std::collections::HashMap::new(),
+            transition_preview: None,
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -597,6 +601,7 @@ impl ReelApp {
     /// play/pause, correct drift, and land their frames on GPU textures the
     /// viewport draws. Always muted — the main player owns the audio.
     fn sync_overlay_previews(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
+        self.transition_preview = None;
         if self.mode != Mode::Editor {
             // Leaving the editor drops the pool; the player screen has no PiP.
             self.overlay_previews.clear();
@@ -604,23 +609,57 @@ impl ReelApp {
         }
         let t = self.editor.playhead;
         let want_playing = self.player.as_ref().is_some_and(|p| p.playing);
-        let active: Vec<(String, f64)> = self
+
+        // Overlay (PiP) clips under the playhead.
+        let mut active: Vec<(u64, String, f64)> = self
             .project
             .tracks
             .iter()
             .filter(|tr| tr.kind == crate::edit::TrackKind::Overlay && !tr.muted)
             .flat_map(|tr| tr.clips.iter())
             .filter(|c| t >= c.start && t < c.end())
-            .map(|c| (c.source.clone(), c.in_point + (t - c.start) * c.speed.max(0.01) as f64))
+            .map(|c| (c.id, c.source.clone(), c.in_point + (t - c.start) * c.speed.max(0.01) as f64))
             .collect();
 
-        // Drop players whose clip has ended — their decoder goes with them.
-        let keep: std::collections::HashSet<&str> =
-            active.iter().map(|(s, _)| s.as_str()).collect();
-        self.overlay_previews.retain(|k, _| keep.contains(k.as_str()));
+        // The incoming half of a crossfade: while the playhead is inside the
+        // last `d` seconds of a clip whose successor fades in, that successor
+        // plays here — so the fade previews as a fade, not a hard cut.
+        let video_clips: Vec<crate::edit::Clip> = self
+            .project
+            .tracks
+            .iter()
+            .filter(|tr| tr.kind == crate::edit::TrackKind::Video)
+            .flat_map(|tr| tr.clips.iter().cloned())
+            .collect();
+        for b in &video_clips {
+            if b.transition_in <= 0.0 {
+                continue;
+            }
+            let Some(a) = video_clips
+                .iter()
+                .filter(|c| c.end() <= b.start + 1e-6 && c.id != b.id)
+                .max_by(|x, y| x.end().total_cmp(&y.end()))
+            else {
+                continue;
+            };
+            let d = b.transition_in.min(a.duration).min(b.duration);
+            let fade_start = a.end() - d;
+            if t >= fade_start && t < a.end() {
+                let into = t - fade_start;
+                let progress = (into / d).clamp(0.0, 1.0) as f32;
+                active.push((b.id, b.source.clone(), b.in_point + into * b.speed.max(0.01) as f64));
+                self.transition_preview = Some((b.id, progress));
+                log::debug!("transition preview: clip {} at {progress:.2}", b.id);
+                break;
+            }
+        }
 
-        for (source, src_t) in active {
-            let entry = match self.overlay_previews.entry(source.clone()) {
+        // Drop players whose clip has left the playhead.
+        let keep: std::collections::HashSet<u64> = active.iter().map(|(id, _, _)| *id).collect();
+        self.overlay_previews.retain(|k, _| keep.contains(k));
+
+        for (id, source, src_t) in active {
+            let entry = match self.overlay_previews.entry(id) {
                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                 std::collections::hash_map::Entry::Vacant(v) => {
                     let Ok(mut p) = Player::open(&source) else { continue };
@@ -651,17 +690,16 @@ impl ReelApp {
                         }
                         let tex = entry.tex.as_ref().unwrap();
                         // mpv writes a padding byte where alpha lives. The
-                        // main picture fixes that in its shader; this inset
-                        // is drawn by egui's own pipeline, which honours
-                        // alpha — so force it here. The inset is small, so
-                        // the CPU pass is a rounding error.
+                        // main picture fixes that in its shader; these frames
+                        // are also drawn by egui's own pipeline for the PiP
+                        // inset, which honours alpha — so force it here.
                         let mut rgba = frame.data.clone();
                         for px in rgba.chunks_exact_mut(4) {
                             px[3] = 255;
                         }
                         tex.write(&gpu.queue, &rgba);
                         match entry.tex_id {
-                            Some(id) => egui.update_registered(id, &gpu.device, &tex.view),
+                            Some(id2) => egui.update_registered(id2, &gpu.device, &tex.view),
                             None => entry.tex_id = Some(egui.register_texture(&gpu.device, &tex.view)),
                         }
                     }

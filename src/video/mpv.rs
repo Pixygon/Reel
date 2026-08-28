@@ -44,6 +44,19 @@ struct MpvEvent {
     data: *mut c_void,
 }
 
+/// mpv_event_end_file — verified against /usr/include/mpv/client.h.
+#[repr(C)]
+struct MpvEventEndFile {
+    reason: c_int,
+    error: c_int,
+    playlist_entry_id: i64,
+    playlist_insert_id: i64,
+    playlist_insert_num_entries: c_int,
+}
+
+/// MPV_END_FILE_REASON_ERROR — the only end-file that means failure.
+const MPV_END_FILE_REASON_ERROR: c_int = 4;
+
 #[repr(C)]
 struct RenderParam {
     kind: c_int,
@@ -276,7 +289,19 @@ impl MpvPlayer {
             let ev = unsafe { &*(self.lib.mpv_wait_event)(self.handle, 0.05) };
             match ev.event_id {
                 MPV_EVENT_FILE_LOADED => break,
-                MPV_EVENT_END_FILE | MPV_EVENT_SHUTDOWN => bail!("mpv could not open {path}"),
+                // END_FILE is only a failure when its reason says ERROR. The
+                // OLD file's EOF/STOP routinely lands in the queue right when
+                // we load the next one — a clip playing to its exact end at
+                // a cut used to make this bail and the switch "fail".
+                MPV_EVENT_END_FILE => {
+                    let reason = unsafe { ev.data.cast::<MpvEventEndFile>().as_ref() }
+                        .map(|e| e.reason)
+                        .unwrap_or(MPV_END_FILE_REASON_ERROR);
+                    if reason == MPV_END_FILE_REASON_ERROR {
+                        bail!("mpv could not open {path}");
+                    }
+                }
+                MPV_EVENT_SHUTDOWN => bail!("mpv could not open {path}"),
                 _ => {}
             }
             if Instant::now() > deadline {

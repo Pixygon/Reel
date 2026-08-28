@@ -771,9 +771,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                     if xf > 0.0 {
                         ui.label(
-                            RichText::new("Crossfades render into the export; the preview still shows the cut.")
-                                .small()
-                                .color(egui::Color32::from_gray(140)),
+                            RichText::new(
+                                "The preview fades through the incoming clip; the render \
+                                 overlaps the two and the edit shortens by the fade.",
+                            )
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
                         );
                     }
                 }
@@ -1023,6 +1026,31 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     effects,
                 },
             ));
+            // The incoming half of a crossfade, blended over the outgoing
+            // picture at the ramp's opacity — drawn through the same video
+            // pass so its colour effects apply. This is what makes a fade
+            // preview as a fade instead of a hard cut.
+            if let Some((clip_id, progress)) = app.transition_preview {
+                if let Some(ov) = app.overlay_previews.get(&clip_id) {
+                    if let Some(tex) = &ov.tex {
+                        let fx = app
+                            .project
+                            .clip(clip_id)
+                            .map(|c| c.animated((app.editor.playhead - c.start).max(0.0)).0);
+                        painter.add(egui_wgpu::Callback::new_paint_callback(
+                            img_rect,
+                            crate::video_pass::VideoDraw {
+                                view: tex
+                                    .texture
+                                    .create_view(&wgpu::TextureViewDescriptor::default()),
+                                tint: [1.0, 1.0, 1.0, progress],
+                                use_src_alpha: false,
+                                effects: fx,
+                            },
+                        ));
+                    }
+                }
+            }
             // Captions sit on top of the picture, so they must be painted
             // AFTER the video callback — and inside this branch, which
             // returns early for every real frame.
@@ -1120,7 +1148,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         return;
     }
     let t = app.editor.playhead;
-    let shots: Vec<(crate::edit::Pip, String, f64, bool)> = app
+    let shots: Vec<(u64, crate::edit::Pip, String, f64, bool)> = app
         .project
         .tracks
         .iter()
@@ -1130,6 +1158,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         .map(|c| {
             let (_, pip, _) = c.animated(t - c.start);
             (
+                c.id,
                 pip,
                 c.source.clone(),
                 c.in_point + (t - c.start),
@@ -1138,7 +1167,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         })
         .collect();
 
-    for (pip, source, src_t, selected) in shots {
+    for (clip_id, pip, source, src_t, selected) in shots {
         let w = pip.scale.clamp(0.02, 1.0) * pic.width();
         // Height follows the source's own aspect, as the render does.
         let aspect = app
@@ -1153,7 +1182,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         let mut drew = false;
         // Live frames from the preview pool play in the inset; the thumbnail
         // sheet is only the fallback for the instant before a player opens.
-        if let Some(ov) = app.overlay_previews.get(&source) {
+        if let Some(ov) = app.overlay_previews.get(&clip_id) {
             if let Some(id) = ov.tex_id {
                 painter.add(egui::Shape::image(
                     id,

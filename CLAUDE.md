@@ -274,9 +274,20 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   server, PiP and CLI all go through them, which is what keeps animation
   honest. `eval_keys` clamps at both ends (no extrapolation).
 - Live PiP preview: `app.overlay_previews` — muted secondary Players chasing
-  the main clock (nudge only when drift > 0.3 s; chase, don't fight).
-  Frames drawn by egui's pipeline need alpha FORCED on upload (mpv's
-  padding byte again); the pool clears outside the editor.
+  the main clock (nudge only when drift > 0.3 s; chase, don't fight), keyed
+  by CLIP id (two clips can share one source). Frames drawn by egui's
+  pipeline need alpha FORCED on upload (mpv's padding byte again); the pool
+  clears outside the editor. Crossfades preview through the same pool: the
+  incoming clip draws full-frame via a second `VideoDraw` at the ramp's
+  opacity.
+- `video_pass` prepared state is a QUEUE, not a slot: egui's
+  CallbackResources is TYPE-keyed, so two VideoDraws in one frame (picture +
+  crossfade) overwrote each other's bind group and both painted the same
+  layer. egui prepares in paint order; the FIFO pairs them back up.
+- mpv `load_file` must only fail on END_FILE with reason=ERROR (4). The OLD
+  file's EOF lands in the event queue right when the next clip loads — a
+  clip playing to its exact end at a cut made every switch "fail" until the
+  reason was checked (struct verified against /usr/include/mpv/client.h).
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

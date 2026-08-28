@@ -131,9 +131,15 @@ pub struct VideoDraw {
     pub effects: Option<crate::effects::Effects>,
 }
 
-/// Bind group + uniform buffer built during `prepare`, consumed in `paint`.
+/// Bind groups built during `prepare`, consumed in `paint` — a QUEUE, not a
+/// slot: egui's CallbackResources is a type-keyed map, so with two video
+/// draws in one frame (the picture plus a crossfade's incoming layer) a
+/// single slot gets overwritten by whichever prepared last, and both paints
+/// draw the same layer. egui prepares callbacks in paint order, so a FIFO
+/// pairs them back up.
+#[derive(Default)]
 struct Prepared {
-    bind_group: wgpu::BindGroup,
+    queue: std::sync::Mutex<std::collections::VecDeque<wgpu::BindGroup>>,
 }
 
 impl CallbackTrait for VideoDraw {
@@ -176,7 +182,11 @@ impl CallbackTrait for VideoDraw {
                 wgpu::BindGroupEntry { binding: 2, resource: ubo.as_entire_binding() },
             ],
         });
-        resources.insert(Prepared { bind_group });
+        if resources.get::<Prepared>().is_none() {
+            resources.insert(Prepared::default());
+        }
+        let prepared = resources.get::<Prepared>().unwrap();
+        prepared.queue.lock().unwrap().push_back(bind_group);
         Vec::new()
     }
 
@@ -191,8 +201,11 @@ impl CallbackTrait for VideoDraw {
         else {
             return;
         };
+        let Some(bind_group) = prepared.queue.lock().unwrap().pop_front() else {
+            return;
+        };
         render_pass.set_pipeline(&pass.pipeline);
-        render_pass.set_bind_group(0, &prepared.bind_group, &[]);
+        render_pass.set_bind_group(0, &bind_group, &[]);
         // Three vertices, no buffers: the vertex shader builds the triangle
         // that covers the callback's viewport.
         render_pass.draw(0..3, 0..1);
