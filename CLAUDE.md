@@ -69,11 +69,15 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   defaults, ~/.config/reel/settings.json. The UI flow is a one-time banner +
   ⚙ → Default apps. Arch packaging extras live in `.pixygon.json` build.arch
   (depends/desktop/icon — pearl.mjs reads them).
-- Editor layout order is load-bearing: bottom panels FIRST (timeline, then
-  the transport above it) so both span the full window, THEN the side panel
-  (so it can never resize the timeline), then the CentralPanel. The side
-  panel is drawn every frame via `media_panel_frame(ctx, open, …)` so it
-  animates between modes.
+- Editor layout order is load-bearing: the TIMELINE panel first (full width,
+  `show_animated` so it slides with the mode), then the side panel (so it can
+  never resize the timeline), then the CentralPanel — which holds the
+  transport as an inner bottom panel, so the scrubber matches the PREVIEW's
+  width, not the window's. The side panel is drawn every frame via
+  `media_panel_frame(ctx, open, …)` so it animates between modes.
+- The transport row uses EXPLICIT column widths, not `ui.columns(3, …)`:
+  equal thirds overflowed and the right-hand tools drew on top of the
+  transport buttons. The time readout hides itself when the row gets narrow.
 - The editor's scrubber is the player for the WHOLE EDIT: it ranges over
   `edit::render_duration(export_segments())` and seeks with
   `app.seek_timeline`, never the loaded source's own position.
