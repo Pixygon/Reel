@@ -4,6 +4,22 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.20.0] — 2026-08-28
+
+### Added
+- Projects now save themselves automatically shortly after you stop editing — no more remembering to hit Save, and no risk of losing work. The timeline status now shows "saving…" / "saved" instead of a manual Save button. **(BREAKING)** _(11a61ba)_
+- Right-click a clip (or empty timeline space) to close gaps instantly — close the gap before one clip, or sweep every gap on every track closed in one go. _(11a61ba)_
+- Right-click a clip for a quick menu to delete it, in addition to trimming and dragging. _(11a61ba)_
+
+### Changed
+- In the editor, the seek bar and time display now scrub and show the position across your whole edited timeline (not just the currently loaded source clip), giving a true preview of the final cut as you work. _(11a61ba)_
+- Saved project files are now written atomically (via a temp file plus rename), so a crash or power loss mid-save can no longer corrupt your project file. _(11a61ba)_
+
+### Improved
+- The media/inspector side panel now resizes smoothly and stays at the width you drag it to, and its contents scroll instead of forcing the panel wider than you want. _(11a61ba)_
+- The editor layout was reorganized so the timeline always spans the full window width and the side panel no longer resizes it when opening or closing. _(11a61ba)_
+
+
 ## [0.19.0] — 2026-08-28
 
 ### Added

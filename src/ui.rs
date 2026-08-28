@@ -13,6 +13,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_opening();
     app.poll_captures();
     app.poll_queue();
+    app.poll_autosave();
     app.update_editor_playback();
     app.track_status();
     dropped_files(ctx, app);
@@ -26,9 +27,21 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
 
     defaults_banner(ctx, app);
 
+    // Panel order is shared by both modes so the side panel can animate
+    // between them: bottom panels first (they own the full width), then the
+    // side panel (which therefore never resizes the timeline), then the
+    // picture in whatever space is left.
+    if app.mode == Mode::Editor {
+        editor_bottom_panels(ctx, app);
+    }
+    media_panel_frame(ctx, app.mode == Mode::Editor, |ui| media_panel_contents(ui, app));
     match app.mode {
         Mode::Player => player_view(ctx, app),
-        Mode::Editor => editor_view(ctx, app),
+        Mode::Editor => {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                viewport(ui, app);
+            });
+        }
     }
 
     export_window(ctx, app);
@@ -422,11 +435,45 @@ fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
     });
 }
 
-fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
-    // The controls live at the very bottom (added first → outermost), always
-    // visible in the editor — this is a workspace, nothing fades here.
-    // exact_height + a bounded child: chrome's greedy slider/columns layout
-    // must never see unbounded space (same trap as the player overlay).
+/// The media/inspector panel's chrome: resizable, animated in and out, and
+/// scrollable so its contents can never impose a minimum width that fights
+/// the user's drag (that was the "resize snaps back" bug).
+pub fn media_panel_frame(
+    ctx: &egui::Context,
+    open: bool,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) {
+    egui::SidePanel::left("media")
+        .resizable(true)
+        .default_width(240.0)
+        .width_range(150.0..=560.0)
+        .show_animated(ctx, open, |ui| {
+            // `both` (not `vertical`): with only vertical scrolling, content
+            // that is wider than the panel pushes the panel's minimum width
+            // out, and the user's drag springs back. Here it just scrolls.
+            egui::ScrollArea::both()
+                .auto_shrink([false, false])
+                .show(ui, |ui| {
+                    ui.set_width(ui.available_width());
+                    // Sliders default to a fixed width plus their label; size
+                    // them to the panel instead so a narrow panel stays narrow.
+                    ui.spacing_mut().slider_width = (ui.available_width() - 96.0).clamp(48.0, 220.0);
+                    add_contents(ui);
+                });
+        });
+}
+
+fn editor_bottom_panels(ctx: &egui::Context, app: &mut ReelApp) {
+    // Panel order decides who owns the width. The timeline is added FIRST so
+    // it spans the whole window — the side panel slides in over the viewport
+    // above it and never resizes the timeline. Then the transport, so the
+    // scrubber sits directly above the timeline and below the picture.
+    egui::TopBottomPanel::bottom("timeline_panel")
+        .resizable(true)
+        .default_height(240.0)
+        .show(ctx, |ui| {
+            timeline(ui, app);
+        });
     egui::TopBottomPanel::bottom("editor_chrome").exact_height(102.0).show(ctx, |ui| {
         let inner = ui.max_rect().shrink2(Vec2::new(8.0, 4.0));
         let mut child = ui.new_child(
@@ -437,7 +484,11 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
         chrome(&mut child, app);
         child.label(RichText::new(&app.status).color(theme::CYAN).small());
     });
-    egui::SidePanel::left("media").resizable(true).default_width(220.0).show(ctx, |ui| {
+}
+
+/// The media/inspector contents — drawn inside `media_panel_frame`.
+fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+    {
         ui.heading("Project");
         ui.label(format!("{} — {}×{} @ {:.0}fps", app.project.name, app.project.width, app.project.height, app.project.fps));
         ui.separator();
@@ -494,7 +545,7 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
                         if let Some(c) = app.project.clip_mut(id) {
                             c.transition_in = xf;
                         }
-                        app.editor.dirty = true;
+                        app.editor.mark_changed();
                     }
                     if xf > 0.0 {
                         ui.label(
@@ -521,7 +572,7 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
                     if let Some(c) = app.project.clip_mut(id) {
                         c.effects = fx;
                     }
-                    app.editor.dirty = true;
+                    app.editor.mark_changed();
                 }
                 if !ui.ctx().input(|i| i.pointer.any_down()) {
                     app.editor.fx_gesture = None;
@@ -529,14 +580,8 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
             }
         }
         ui.separator();
-        ui.label(RichText::new("S split · Del delete · drag edges to trim\nCtrl+scroll zoom · Ctrl+S save").small().color(egui::Color32::from_gray(120)));
-    });
-    egui::TopBottomPanel::bottom("timeline_panel").resizable(true).default_height(220.0).show(ctx, |ui| {
-        timeline(ui, app);
-    });
-    egui::CentralPanel::default().show(ctx, |ui| {
-        viewport(ui, app);
-    });
+        ui.label(RichText::new("S split · Del delete · drag edges to trim\nright-click a clip to close gaps · Ctrl+scroll zoom").small().color(egui::Color32::from_gray(120)));
+    }
 }
 
 /// The media viewport — aspect-fit the current frame / image / cover art,
@@ -649,8 +694,30 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
     let mut open_export = false;
     let mut toggle_fullscreen = false;
 
-    // Row 1: the seek bar, edge to edge (media with a duration only).
-    if let Some(player) = app.player.as_mut() {
+    // Row 1: the seek bar, edge to edge. In the editor it scrubs the WHOLE
+    // EDIT (timeline time), not the source clip that happens to be loaded —
+    // this is the player for the cut you are making.
+    let editing = mode == Mode::Editor;
+    let edit_len = if editing {
+        crate::edit::render_duration(&app.project.export_segments()).max(0.001)
+    } else {
+        0.0
+    };
+    if editing {
+        let mut pos = app.editor.playhead.min(edit_len);
+        let normal_slider = ui.spacing().slider_width;
+        ui.spacing_mut().slider_width = ui.available_width();
+        let resp = ui.add(
+            egui::Slider::new(&mut pos, 0.0..=edit_len).show_value(false).trailing_fill(true),
+        );
+        ui.spacing_mut().slider_width = normal_slider;
+        if resp.dragged() || resp.drag_stopped() {
+            app.seek_timeline(pos);
+        }
+        if resp.drag_stopped() {
+            resp.surrender_focus();
+        }
+    } else if let Some(player) = app.player.as_mut() {
         let dur = player.info.duration.max(0.001);
         let mut pos = player.position;
         // Scoped: slider_width is inherited by child uis — leaking the
@@ -687,8 +754,11 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
                 ui.label(RichText::new(text).color(theme::STAR));
             } else if let Some(player) = app.player.as_mut() {
-                let time_text =
-                    format!("{}  /  {}", fmt_time(player.position), fmt_time(player.info.duration));
+                let time_text = if editing {
+                    format!("{}  /  {}", fmt_time(app.editor.playhead), fmt_time(edit_len))
+                } else {
+                    format!("{}  /  {}", fmt_time(player.position), fmt_time(player.info.duration))
+                };
                 let est = 4.0 * 34.0 + time_text.chars().count() as f32 * 8.0 + 24.0;
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
                 if ui.button("⏮").on_hover_text("Back to start").clicked() {
@@ -1246,12 +1316,9 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             app.editor.range_out = None;
         }
         ui.separator();
-        if ui.button("💾 Save").on_hover_text("Save .reel project (Ctrl+S)").clicked() {
-            app.editor_save();
-        }
-        if app.editor.dirty {
-            ui.label(RichText::new("●").color(theme::EMBER).small());
-        }
+        // No Save button: edits save themselves (see app::poll_autosave).
+        let saved_label = if app.editor.dirty { "saving…" } else { "saved" };
+        ui.label(RichText::new(saved_label).small().color(egui::Color32::from_gray(130)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
                 RichText::new(format!("{}  ·  {:.1}s", app.project.name, app.project.duration()))
@@ -1353,6 +1420,18 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     if bg.drag_stopped() {
         app.editor.drag = None;
     }
+    let mut close_all_bg = false;
+    bg.context_menu(|ui| {
+        if ui.button("Close every gap").clicked() {
+            close_all_bg = true;
+            ui.close_menu();
+        }
+    });
+    if close_all_bg {
+        app.editor.push_undo(&app.project);
+        let moved = app.project.close_all_gaps();
+        app.status = format!("Closed {moved:.2}s of gaps.");
+    }
 
     // Lanes + clips (drawn from a snapshot; edits go through clip_mut).
     let mut snap_line: Option<f64> = None;
@@ -1443,6 +1522,46 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             if resp.clicked() || resp.drag_started() {
                 app.editor.selected = Some(clip.id);
             }
+            let mut close_this = false;
+            let mut close_all = false;
+            let mut delete_this = false;
+            resp.context_menu(|ui| {
+                ui.label(RichText::new(&clip.name).small().color(theme::CYAN));
+                if ui.button("Close gap before this clip").clicked() {
+                    close_this = true;
+                    ui.close_menu();
+                }
+                if ui.button("Close every gap").clicked() {
+                    close_all = true;
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("Delete clip").clicked() {
+                    delete_this = true;
+                    ui.close_menu();
+                }
+            });
+            if close_this || close_all || delete_this {
+                app.editor.selected = Some(clip.id);
+                app.editor.push_undo(&app.project);
+            }
+            if close_this {
+                let moved = app.project.close_gap_before(clip.id);
+                app.status = if moved > 0.0 {
+                    format!("Closed a {moved:.2}s gap.")
+                } else {
+                    "No gap before that clip.".into()
+                };
+            }
+            if close_all {
+                let moved = app.project.close_all_gaps();
+                app.status = format!("Closed {moved:.2}s of gaps.");
+            }
+            if delete_this {
+                app.project.delete_clip(clip.id);
+                app.editor.selected = None;
+                app.status = "Clip deleted.".into();
+            }
             if resp.drag_started() {
                 app.editor.push_undo(&app.project);
                 app.editor.drag = Some(match zone {
@@ -1456,6 +1575,9 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                             .unwrap_or(0.0),
                     },
                 });
+            }
+            if resp.drag_stopped() {
+                app.editor.mark_changed(); // trims/moves land in the autosave
             }
             if let (Some(drag), true, Some(p)) = (app.editor.drag, resp.dragged(), resp.interact_pointer_pos()) {
                 let pt = x_to_t(p.x);

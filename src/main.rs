@@ -33,7 +33,8 @@ pub enum UserEvent {
     Quit,
 }
 mod theme;
-mod ui;
+pub mod ui;
+mod ui_tests;
 mod video;
 mod video_pass;
 

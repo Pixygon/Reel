@@ -39,6 +39,17 @@ impl Clip {
     }
 }
 
+/// Write a document without ever leaving a half-written file behind: write a
+/// sibling temp file, then rename over the target (rename is atomic on the
+/// same filesystem). Autosave runs constantly, so a crash mid-write must not
+/// be able to destroy someone's project.
+pub fn write_atomic(path: &str, contents: &str) -> anyhow::Result<()> {
+    let tmp = format!("{path}.tmp");
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// How long the flattened edit actually renders to: crossfades overlap their
 /// two clips, so each one shortens the result by its own length. The export
 /// dialog and the progress bar both use this, so the duration a user sees is
@@ -206,6 +217,56 @@ impl Project {
         split
     }
 
+    /// Slide `id` left until it touches the clip before it, closing the gap.
+    /// Returns the seconds removed. Clips after it are NOT moved — use
+    /// `close_all_gaps` for a ripple.
+    pub fn close_gap_before(&mut self, id: u64) -> f64 {
+        let Some(clip) = self.clip(id) else { return 0.0 };
+        let (kind, start) = (
+            self.tracks
+                .iter()
+                .find(|t| t.clips.iter().any(|c| c.id == id))
+                .map(|t| t.kind.clone())
+                .unwrap_or(TrackKind::Video),
+            clip.start,
+        );
+        let prev_end = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == kind)
+            .flat_map(|t| t.clips.iter())
+            .filter(|c| c.id != id && c.end() <= start + 1e-6)
+            .map(|c| c.end())
+            .fold(0.0f64, f64::max);
+        let gap = start - prev_end;
+        if gap <= 1e-6 {
+            return 0.0;
+        }
+        if let Some(c) = self.clip_mut(id) {
+            c.start -= gap;
+        }
+        gap
+    }
+
+    /// Butt every clip on every track up against its predecessor: no gaps
+    /// anywhere, order preserved. Returns the total seconds removed.
+    pub fn close_all_gaps(&mut self) -> f64 {
+        let mut removed = 0.0;
+        for track in &mut self.tracks {
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+            let mut cursor = 0.0f64;
+            for clip in &mut track.clips {
+                let gap = clip.start - cursor;
+                if gap > 1e-6 {
+                    clip.start -= gap;
+                    removed += gap;
+                }
+                cursor = clip.end();
+            }
+        }
+        removed
+    }
+
     pub fn delete_clip(&mut self, id: u64) -> bool {
         for track in &mut self.tracks {
             let before = track.clips.len();
@@ -315,8 +376,7 @@ impl Project {
     }
 
     pub fn save(&self, path: &str) -> anyhow::Result<()> {
-        std::fs::write(path, serde_json::to_string_pretty(self)?)?;
-        Ok(())
+        write_atomic(path, &serde_json::to_string_pretty(self)?)
     }
 
     pub fn load(path: &str) -> anyhow::Result<Self> {
@@ -354,6 +414,10 @@ pub struct EditorState {
     pub project_path: Option<String>,
     /// The clip whose effect sliders are mid-drag — one undo step per gesture.
     pub fx_gesture: Option<u64>,
+    /// When the project last changed — autosave waits for a quiet moment.
+    pub changed_at: std::time::Instant,
+    /// Have we told the user where the project is being saved? (Once only.)
+    pub announced_path: bool,
     undo: Vec<Project>,
     redo: Vec<Project>,
 }
@@ -380,6 +444,8 @@ impl Default for EditorState {
             dirty: false,
             project_path: None,
             fx_gesture: None,
+            changed_at: std::time::Instant::now(),
+            announced_path: false,
             undo: Vec::new(),
             redo: Vec::new(),
         }
@@ -394,14 +460,20 @@ impl EditorState {
             self.undo.remove(0);
         }
         self.redo.clear();
+        self.mark_changed();
+    }
+
+    /// Something about the project changed — autosave will pick it up.
+    pub fn mark_changed(&mut self) {
         self.dirty = true;
+        self.changed_at = std::time::Instant::now();
     }
 
     pub fn undo(&mut self, project: &mut Project) -> bool {
         if let Some(prev) = self.undo.pop() {
             self.redo.push(std::mem::replace(project, prev));
             self.selected = None;
-            self.dirty = true;
+            self.mark_changed();
             true
         } else {
             false
@@ -412,7 +484,7 @@ impl EditorState {
         if let Some(next) = self.redo.pop() {
             self.undo.push(std::mem::replace(project, next));
             self.selected = None;
-            self.dirty = true;
+            self.mark_changed();
             true
         } else {
             false
@@ -495,6 +567,41 @@ mod tests {
         assert_eq!(p.tracks[0].clips.len(), 1);
         assert!(ed.redo(&mut p));
         assert_eq!(p.tracks[0].clips.len(), 2);
+    }
+
+    #[test]
+    fn atomic_write_replaces_cleanly_and_leaves_no_temp() {
+        let path = std::env::temp_dir().join(format!("reel-atomic-{}.reel", std::process::id()));
+        let p = path.to_string_lossy().into_owned();
+        write_atomic(&p, "first").expect("write");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "first");
+        // Overwriting an existing document must succeed and replace it whole.
+        write_atomic(&p, "second, longer contents").expect("overwrite");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "second, longer contents");
+        assert!(!std::path::Path::new(&format!("{p}.tmp")).exists(), "temp file left behind");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn gaps_close_before_a_clip_and_across_the_timeline() {
+        let mut p = one_clip_project(); // 10s clip at 0 on V1 and A1
+        p.split_at(4.0);
+        let right = p.tracks[0].clips[1].id;
+        p.clip_mut(right).unwrap().start = 7.0; // leave a 3s hole
+
+        // Closing the gap before that clip moves only it.
+        assert!((p.close_gap_before(right) - 3.0).abs() < 1e-9);
+        assert!((p.clip(right).unwrap().start - 4.0).abs() < 1e-9);
+        assert_eq!(p.close_gap_before(right), 0.0, "already butted up");
+
+        // A hole on each track, closed in one sweep.
+        p.clip_mut(right).unwrap().start = 9.0;
+        let a_id = p.tracks[1].clips[0].id;
+        p.clip_mut(a_id).unwrap().start = 2.0;
+        let removed = p.close_all_gaps();
+        assert!(removed > 6.0, "should have removed both holes, got {removed}");
+        assert_eq!(p.clip(a_id).unwrap().start, 0.0);
+        assert!((p.clip(right).unwrap().start - 4.0).abs() < 1e-9);
     }
 
     #[test]

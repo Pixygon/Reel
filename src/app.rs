@@ -603,6 +603,57 @@ impl ReelApp {
         self.status = format!("Queued {label} ({} waiting).", self.queue.len_pending());
     }
 
+    /// Save the project automatically, shortly after edits stop. Serialising
+    /// happens here (it's a small JSON document) but the write goes to a
+    /// worker thread, so a slow disk can never stall a frame.
+    pub fn poll_autosave(&mut self) {
+        // Nothing to save, or nothing changed.
+        if !self.editor.dirty || self.project.export_segments().is_empty() {
+            return;
+        }
+        // Debounce: wait for a quiet moment so a slider drag writes once.
+        if self.editor.changed_at.elapsed() < std::time::Duration::from_millis(700) {
+            return;
+        }
+        // Somewhere to put it: next to the first source, once.
+        let path = match self.editor.project_path.clone() {
+            Some(p) => p,
+            None => {
+                let Some(src) = self
+                    .project
+                    .tracks
+                    .iter()
+                    .flat_map(|t| t.clips.iter())
+                    .map(|c| c.source.clone())
+                    .next()
+                else {
+                    return;
+                };
+                let p = std::path::Path::new(&src).with_extension("reel").to_string_lossy().into_owned();
+                self.editor.project_path = Some(p.clone());
+                p
+            }
+        };
+        let json = match serde_json::to_string_pretty(&self.project) {
+            Ok(j) => j,
+            Err(e) => {
+                self.status = format!("Could not save project: {e}");
+                self.editor.dirty = false; // don't spin on a broken document
+                return;
+            }
+        };
+        self.editor.dirty = false;
+        if !self.editor.announced_path {
+            self.editor.announced_path = true;
+            self.status = format!("Saving automatically to {path}");
+        }
+        std::thread::spawn(move || {
+            if let Err(e) = crate::edit::write_atomic(&path, &json) {
+                log::warn!("autosave failed for {path}: {e}");
+            }
+        });
+    }
+
     /// Advance the render queue; keeps the UI repainting while it works.
     pub fn poll_queue(&mut self) {
         self.queue.poll();
