@@ -4,6 +4,21 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.23.0] — 2026-08-28
+
+### Added
+- Added one-button local auto-captions. Click ✦ Generate captions and Reel transcribes your speech entirely on your machine — no upload, no account, no per-minute billing. The speech engine and model are fetched automatically the first time (about 85MB, once), then captioning works fully offline. _(fe249ea)_
+- Captions now appear on the timeline and preview exactly where they'll burn into your final export, so what you see is what you get. Cues follow your edits — a line spanning a cut appears in both halves, and speech you trimmed away won't show a caption at all. _(fe249ea)_
+- You can choose between three caption engine sizes (Fast, Balanced, Accurate) to trade off speed versus transcription accuracy, and adjust caption text size directly from the media panel. _(fe249ea)_
+- Added Redo captions and Remove buttons so you can easily regenerate or clear captions from an edit. _(fe249ea)_
+
+### Improved
+- Ripple delete (Shift+Delete) and ripple trim to playhead (Q/W) now work linked across tracks, and J-K-L shuttle supports true reverse playback. _(fe249ea)_
+
+### Fixed
+- Fixed a bug where captions rendered far too large on high-resolution exports (e.g. ~3.7× too big on 4K), causing the exported captions to not match the preview. _(fe249ea)_
+
+
 ## [0.22.0] — 2026-08-28
 
 ### Added
