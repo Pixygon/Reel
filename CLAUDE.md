@@ -288,6 +288,13 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   file's EOF lands in the event queue right when the next clip loads — a
   clip playing to its exact end at a cut made every switch "fail" until the
   reason was checked (struct verified against /usr/include/mpv/client.h).
+- SPEED RAMPS: `Param::Speed` keyframes remap time. `speed_integral` is
+  piecewise ANALYTIC (mean of a linear ramp is (a+b)/2 — and of an eased
+  one too; hold holds), and is the single contract: video walks it per
+  frame (`NativeReader::frame_at`, never rewinds), audio chunks per
+  keyframe interval at the interval's true average tempo, and
+  source↔timeline mapping inverts it by bisection. `geq` writes LIMITED
+  range luma — the ramp test encodes time in RGB so it round-trips.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

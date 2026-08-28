@@ -1060,19 +1060,64 @@ pub(crate) fn build_timeline_audio_wav_args(
     let mut audio_out: Option<String> = None;
     if with_audio {
         for (k, seg) in segments.iter().enumerate() {
-            let rate = seg.speed.clamp(0.05, 20.0) as f64;
-            let src_len = seg.duration * rate;
             let i = sources.iter().position(|s| *s == seg.source).unwrap();
             let gain = if seg.gain_db.abs() > 0.01 {
                 format!(",volume={:.2}dB", seg.gain_db)
             } else {
                 String::new()
             };
-            graph.push_str(&format!(
-                "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}[a{k}];",
-                seg.in_point,
-                atempo_chain(rate)
-            ));
+            if seg.has_ramp() {
+                // A speed RAMP: the audio approximates the curve piecewise —
+                // one atempo per keyframe interval at that interval's TRUE
+                // average rate, read straight off the same integral the
+                // video walks. Each chunk therefore consumes exactly the
+                // source the picture consumed, and the total length matches
+                // the clip's slot to the sample.
+                let mut cuts: Vec<f64> = vec![0.0, seg.duration];
+                if let Some((_, keys)) = seg
+                    .keys
+                    .iter()
+                    .find(|(p, _)| *p == crate::edit::Param::Speed)
+                {
+                    for kf in keys {
+                        if kf.t > 1e-6 && kf.t < seg.duration - 1e-6 {
+                            cuts.push(kf.t);
+                        }
+                    }
+                }
+                cuts.sort_by(|a, b| a.total_cmp(b));
+                cuts.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+                let mut labels = Vec::new();
+                for (j, w) in cuts.windows(2).enumerate() {
+                    let (t0, t1) = (w[0], w[1]);
+                    let s0 = seg.source_offset_at(t0);
+                    let s1 = seg.source_offset_at(t1);
+                    let avg = ((s1 - s0) / (t1 - t0).max(1e-9)).clamp(0.05, 20.0);
+                    let label = format!("ar{k}_{j}");
+                    graph.push_str(&format!(
+                        "[{i}:a]atrim=start={:.4}:duration={:.4},asetpts=PTS-STARTPTS,{anorm}{}[{label}];",
+                        seg.in_point + s0,
+                        s1 - s0,
+                        atempo_chain(avg)
+                    ));
+                    labels.push(label);
+                }
+                for l in &labels {
+                    graph.push_str(&format!("[{l}]"));
+                }
+                graph.push_str(&format!(
+                    "concat=n={}:v=0:a=1{gain}[a{k}];",
+                    labels.len()
+                ));
+            } else {
+                let rate = seg.speed.clamp(0.05, 20.0) as f64;
+                let src_len = seg.duration * rate;
+                graph.push_str(&format!(
+                    "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}[a{k}];",
+                    seg.in_point,
+                    atempo_chain(rate)
+                ));
+            }
         }
         if segments.iter().any(|seg| seg.transition_in > 0.0) {
             let mut aprev = "a0".to_string();
@@ -2018,6 +2063,103 @@ mod tests {
         assert!((mid - 160.0).abs() < 8.0, "ramp midpoint should be ~160, got {mid:.1}");
         assert!((end - 192.0).abs() < 10.0, "ramp end should be ~192, got {end:.1}");
         assert!(start < mid && mid < end, "brightness must rise monotonically");
+
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// The decisive ramp test: the source's LUMINANCE encodes its own time
+    /// (brightness = source seconds), so each output frame tells us exactly
+    /// which source moment it shows. A 1→3 ramp over 4 s must consume 8 s of
+    /// source, accelerating along the integral — and the audio must still be
+    /// exactly 4 s long.
+    #[test]
+    fn a_speed_ramp_accelerates_through_the_source_exactly() {
+        use crate::edit::{Interp, Keyframe, Param};
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-ramp-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-ramp-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // Luma rises 25.5/s: source second N is gray level 25.5·N.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i",
+                   // The ramp lives in RGB so the YUV encode/decode round-trips;
+                   // writing luma directly lands in limited range and skews it.
+                   "color=c=black:size=320x240:rate=25:duration=10,format=rgb24,\
+                    geq=r='clip(25.5*T,0,255)':g='clip(25.5*T,0,255)':b='clip(25.5*T,0,255)'",
+                   "-f", "lavfi", "-i", "sine=frequency=440:duration=10",
+                   "-c:v", "libx264", "-qp", "0", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let mut s0 = seg(&src.to_string_lossy(), 0.0, 4.0);
+        s0.keys = vec![(
+            Param::Speed,
+            vec![
+                Keyframe { t: 0.0, value: 1.0, interp: Interp::Linear },
+                Keyframe { t: 4.0, value: 3.0, interp: Interp::Linear },
+            ],
+        )];
+        assert!((s0.source_len() - 8.0).abs() < 1e-9, "1→3 over 4s must eat 8s of source");
+        let segs = vec![s0];
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let job = match crate::engine::render::start_timeline(
+            &segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &Overlays::default(),
+        ) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("no GPU — skipping ramp render test ({e})");
+                return;
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(180);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "ramp render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "ramp render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // Which source second is on screen at output time t?
+        let src_time_at = |t: f64| -> f64 {
+            let png = dir.join(format!("reel-ramp-f-{}.png", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-ss", &format!("{t}"), "-i", &out.to_string_lossy(),
+                       "-frames:v", "1", &png.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            let img = image::open(&png).expect("read frame").to_luma8();
+            let _ = std::fs::remove_file(&png);
+            let sum: u64 = img.pixels().map(|p| p.0[0] as u64).sum();
+            (sum as f64 / (img.width() * img.height()) as f64) / 25.5
+        };
+        // integral(t) = t + t²/4 for a 1→3 linear ramp over 4 s.
+        for (t, want) in [(0.4, 0.44), (2.0, 3.0), (3.8, 7.41)] {
+            let got = src_time_at(t);
+            assert!(
+                (got - want).abs() < 0.35,
+                "at output {t}s the picture shows source {got:.2}s, the curve says {want:.2}s"
+            );
+        }
+
+        // The output (and its AUDIO) still fill exactly the 4 s slot.
+        let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe");
+        assert!((info.duration - 4.0).abs() < 0.3, "output ran {:.2}s", info.duration);
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "a:0",
+                   "-show_entries", "stream=duration", "-of", "csv=p=0",
+                   &out.to_string_lossy()])
+            .output()
+            .expect("ffprobe audio");
+        let adur: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse().unwrap_or(0.0);
+        assert!(
+            (adur - 4.0).abs() < 0.4,
+            "ramped audio ran {adur:.2}s against a 4s slot — the piecewise tempo is off"
+        );
 
         for f in [&src, &out] {
             let _ = std::fs::remove_file(f);

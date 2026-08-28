@@ -15,7 +15,7 @@
 //! GPU or decoder involved. The render loop just executes the plan.
 
 use super::compositor::Compositor;
-use super::sources::SegmentReader;
+use super::sources::{NativeReader, SegmentReader};
 use crate::edit::{OverlaySegment, Segment};
 use crate::export::{self, ExportJob, ExportSettings, Overlays};
 use anyhow::{anyhow, Context, Result};
@@ -113,6 +113,25 @@ pub fn start_timeline(
         })
         .collect::<Result<_>>()?;
 
+    // Ramped segments decode at the source's own rate; probe it up front.
+    let ramp_fps: Vec<Option<f64>> = segments
+        .iter()
+        .map(|seg| {
+            if seg.has_ramp() {
+                Some(
+                    crate::video::decoder::probe(&seg.source)
+                        .map(|i| i.fps)
+                        .with_context(|| format!("could not probe ramped source {}", seg.source))?
+                        .max(1.0),
+                )
+                .map(Ok)
+                .transpose()
+            } else {
+                Ok(None)
+            }
+        })
+        .collect::<Result<_>>()?;
+
     let audio_args = export::build_timeline_audio_wav_args(
         segments,
         with_audio,
@@ -127,8 +146,8 @@ pub fn start_timeline(
 
     std::thread::spawn(move || {
         let result = run(
-            comp, &segments, &output, &settings, target, total, planned_overlays, audio_args,
-            burnin, &state, &cancel,
+            comp, &segments, &output, &settings, target, total, planned_overlays, ramp_fps,
+            audio_args, burnin, &state, &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -149,6 +168,7 @@ fn run(
     target: (u32, u32, f64),
     total: f64,
     planned_overlays: Vec<(OverlaySegment, u32, u32)>,
+    ramp_fps: Vec<Option<f64>>,
     audio_args: Option<Vec<String>>,
     burnin: Vec<String>,
     state: &std::sync::Arc<std::sync::Mutex<export::ExportState>>,
@@ -231,8 +251,14 @@ fn run(
     let mut enc_err = encoder.stderr.take();
 
     // ── The frame loop ──────────────────────────────────────────────────
+    enum Feed {
+        /// Constant speed: ffmpeg conforms the rate; one read per frame.
+        Conformed(SegmentReader),
+        /// A speed ramp: native-rate decode advanced along the curve.
+        Ramped(NativeReader),
+    }
     struct Active {
-        reader: SegmentReader,
+        feed: Feed,
         tex: wgpu::Texture,
         view: wgpu::TextureView,
         buf: Vec<u8>,
@@ -295,19 +321,35 @@ fn run(
                 let slot = &mut base_active[p.seg];
                 if slot.is_none() {
                     let fit = settings.fit.chain(tw, th, &p.seg.to_string());
-                    let reader = SegmentReader::open(
-                        &seg.source,
-                        seg.in_point,
-                        seg.duration,
-                        seg.speed.clamp(0.05, 20.0) as f64,
-                        &fit,
-                        (tw, th, tfps),
-                    )?;
+                    let feed = match ramp_fps[p.seg] {
+                        Some(src_fps) => Feed::Ramped(NativeReader::open(
+                            &seg.source,
+                            seg.in_point,
+                            seg.source_len(),
+                            &fit,
+                            (tw, th),
+                            src_fps,
+                        )?),
+                        None => Feed::Conformed(SegmentReader::open(
+                            &seg.source,
+                            seg.in_point,
+                            seg.duration,
+                            seg.speed.clamp(0.05, 20.0) as f64,
+                            &fit,
+                            (tw, th, tfps),
+                        )?),
+                    };
                     let (tex, view) = mk_tex(tw, th);
-                    *slot = Some(Active { reader, tex, view, buf: Vec::new() });
+                    *slot = Some(Active { feed, tex, view, buf: Vec::new() });
                 }
                 let a = slot.as_mut().unwrap();
-                if !a.reader.next_into(&mut a.buf) {
+                let got = match &mut a.feed {
+                    Feed::Conformed(r) => r.next_into(&mut a.buf),
+                    // The ramp: which source moment belongs at this output
+                    // frame is the curve's integral, evaluated exactly.
+                    Feed::Ramped(r) => r.frame_at(seg.source_offset_at(t - p.start), &mut a.buf),
+                };
+                if !got {
                     return Err(anyhow!("no frames decoded from {}", seg.source));
                 }
                 write_tex(&a.tex, tw, th, &a.buf);
@@ -334,19 +376,23 @@ fn run(
                 let slot = &mut ov_active[i];
                 if slot.is_none() {
                     let fit = super::sources::overlay_fit_chain(*bw, *bh);
-                    let reader = SegmentReader::open(
+                    let feed = Feed::Conformed(SegmentReader::open(
                         &o.source,
                         o.in_point,
                         o.duration,
                         1.0,
                         &fit,
                         (*bw, *bh, tfps),
-                    )?;
+                    )?);
                     let (tex, view) = mk_tex(*bw, *bh);
-                    *slot = Some(Active { reader, tex, view, buf: Vec::new() });
+                    *slot = Some(Active { feed, tex, view, buf: Vec::new() });
                 }
                 let a = slot.as_mut().unwrap();
-                if !a.reader.next_into(&mut a.buf) {
+                let got = match &mut a.feed {
+                    Feed::Conformed(r) => r.next_into(&mut a.buf),
+                    Feed::Ramped(r) => r.frame_at(t - o.at, &mut a.buf),
+                };
+                if !got {
                     return Err(anyhow!("no frames decoded from overlay {}", o.source));
                 }
                 write_tex(&a.tex, *bw, *bh, &a.buf);

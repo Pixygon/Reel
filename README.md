@@ -46,10 +46,12 @@ not the finished tool, but real, honest software you can build and run today.
   compositor frame by frame — ffmpeg only encodes — so what the preview
   shows is what renders, by construction. The old filter-graph renderer
   remains as the automatic no-GPU fallback.
-- **Keyframe animation.** Animate exposure, contrast, saturation, zoom/pan
-  and PiP position/size/opacity: set keys at the playhead (or with
-  `reel keyframe`), scrub the preview to watch the curve play, and the
-  render evaluates it per frame. Linear, hold and eased interpolation.
+- **Keyframe animation, with a curve editor.** Animate exposure, contrast,
+  saturation, zoom/pan, PiP placement — and **speed itself** (ramps: the
+  clip's slot stays put while playback accelerates through the footage,
+  audio tempo following). Set keys at the playhead or with `reel keyframe`,
+  drag them on the curve, scrub to watch it play; the render evaluates the
+  same curves per frame. Linear, hold and eased interpolation.
 - **A second video track — picture-in-picture.** Drop a clip on the overlay
   track; the inset **plays live in the preview**, and you drag it where you
   want it. Position and size are fractions of the frame, so what you place

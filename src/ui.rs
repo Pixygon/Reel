@@ -678,12 +678,32 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 crate::edit::Param::PipX => pip2.x,
                                 crate::edit::Param::PipY => pip2.y,
                                 crate::edit::Param::PipScale => pip2.scale,
+                                crate::edit::Param::Speed => c.speed,
                             };
                             c.set_key(param, local, v, crate::edit::Interp::Linear);
                         }
                         app.editor.mark_changed();
                     }
                 });
+                // ── The curve editor ────────────────────────────────────
+                // The selected parameter's curve over the clip, live: drag a
+                // diamond to move it in time and value, double-click to add
+                // a key under the cursor, right-click a diamond to remove
+                // it. The playhead line ties it to what the preview shows.
+                // Follow the keys: when the picked parameter has none but
+                // the clip is animated, show the first animated curve rather
+                // than an empty strip.
+                if app
+                    .project
+                    .clip(id)
+                    .is_some_and(|c| c.key_track(app.editor.key_param).is_none() && !c.keys.is_empty())
+                {
+                    if let Some(q) = app.project.clip(id).and_then(|c| c.keys.first().map(|(q, _)| *q)) {
+                        app.editor.key_param = q;
+                    }
+                }
+                curve_editor(ui, app, id, duration);
+
                 let key_rows: Vec<(crate::edit::Param, f64, f32)> = app
                     .project
                     .clip(id)
@@ -1311,6 +1331,150 @@ fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
     if response.drag_stopped() {
         app.editor.mark_changed();
     }
+}
+
+/// The keyframe curve editor for one clip + the panel's selected parameter.
+fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
+    use crate::edit::{Interp, Keyframe, Param};
+    let param = app.editor.key_param;
+    let (lo, hi) = param.range();
+    let track: Vec<Keyframe> = app
+        .project
+        .clip(id)
+        .and_then(|c| c.key_track(param).map(|t| t.to_vec()))
+        .unwrap_or_default();
+    if track.is_empty() {
+        return; // nothing to edit — the + Key button is the way in
+    }
+
+    let width = ui.available_width().max(60.0);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width, 96.0), Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6.0, theme::VOID_2);
+
+    let to_x = |t: f64| rect.left() + (t / duration.max(1e-9)) as f32 * rect.width();
+    let to_y = |v: f32| {
+        rect.bottom() - ((v - lo) / (hi - lo)).clamp(0.0, 1.0) * rect.height()
+    };
+    let from_pos = |p: egui::Pos2| {
+        let t = ((p.x - rect.left()) / rect.width()) as f64 * duration;
+        let v = lo + (1.0 - (p.y - rect.top()) / rect.height()).clamp(0.0, 1.0) * (hi - lo);
+        (t.clamp(0.0, duration), v)
+    };
+
+    // Grid: quarters, plus the parameter's neutral line where it has one.
+    for q in 1..4 {
+        let y = rect.top() + rect.height() * q as f32 / 4.0;
+        painter.line_segment(
+            [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
+            Stroke::new(0.5, egui::Color32::from_gray(45)),
+        );
+    }
+    // The curve itself, sampled densely.
+    let n = (rect.width() as usize).clamp(16, 400);
+    let pts: Vec<egui::Pos2> = (0..=n)
+        .map(|i| {
+            let t = duration * i as f64 / n as f64;
+            let v = crate::edit::eval_keys(&track, t).unwrap_or(lo);
+            egui::pos2(to_x(t), to_y(v))
+        })
+        .collect();
+    painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+
+    // The playhead, in clip-local time.
+    let head = app.editor.playhead - app.project.clip(id).map(|c| c.start).unwrap_or(0.0);
+    if head >= 0.0 && head <= duration {
+        let x = to_x(head);
+        painter.line_segment(
+            [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+            Stroke::new(1.0, theme::EMBER),
+        );
+    }
+
+    // Diamonds, hit-tested against the pointer.
+    let pointer = response.hover_pos().or_else(|| response.interact_pointer_pos());
+    let mut hover: Option<usize> = None;
+    for (i, k) in track.iter().enumerate() {
+        let p = egui::pos2(to_x(k.t), to_y(k.value));
+        if let Some(m) = pointer {
+            if (m - p).length() < 9.0 && hover.is_none() {
+                hover = Some(i);
+            }
+        }
+        let big = hover == Some(i) || app.editor.curve_drag == Some(i);
+        let r = if big { 5.5 } else { 4.0 };
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(p.x, p.y - r),
+                egui::pos2(p.x + r, p.y),
+                egui::pos2(p.x, p.y + r),
+                egui::pos2(p.x - r, p.y),
+            ],
+            if big { theme::STAR } else { theme::CYAN },
+            Stroke::new(1.0, theme::VOID),
+        ));
+    }
+
+    // Interactions. One undo step per gesture.
+    if response.drag_started() {
+        if let Some(i) = hover {
+            app.editor.push_undo(&app.project);
+            app.editor.curve_drag = Some(i);
+        }
+    }
+    if response.dragged() {
+        if let (Some(i), Some(m)) = (app.editor.curve_drag, response.interact_pointer_pos()) {
+            let (t, v) = from_pos(m);
+            if let Some(c) = app.project.clip_mut(id) {
+                if let Some((_, keys)) =
+                    c.keys.iter_mut().find(|(q, _)| *q == param)
+                {
+                    if let Some(k) = keys.get_mut(i) {
+                        k.t = t;
+                        k.value = v;
+                    }
+                    // Keep time order without losing which key we hold.
+                    let held = keys.get(i).cloned();
+                    keys.sort_by(|a, b| a.t.total_cmp(&b.t));
+                    if let Some(h) = held {
+                        app.editor.curve_drag =
+                            keys.iter().position(|k| (k.t - h.t).abs() < 1e-9);
+                    }
+                }
+            }
+            app.editor.mark_changed();
+        }
+    }
+    if response.drag_stopped() {
+        app.editor.curve_drag = None;
+    }
+    if response.double_clicked() {
+        if let Some(m) = response.interact_pointer_pos() {
+            let (t, v) = from_pos(m);
+            app.editor.push_undo(&app.project);
+            if let Some(c) = app.project.clip_mut(id) {
+                c.set_key(param, t, v, Interp::Linear);
+            }
+            app.editor.mark_changed();
+        }
+    }
+    if response.secondary_clicked() {
+        if let Some(i) = hover {
+            let t = track[i].t;
+            app.editor.push_undo(&app.project);
+            if let Some(c) = app.project.clip_mut(id) {
+                c.clear_key(param, t);
+            }
+            app.editor.mark_changed();
+        }
+    }
+    ui.label(
+        RichText::new("drag a key · double-click to add · right-click to remove")
+            .small()
+            .color(egui::Color32::from_gray(120)),
+    );
+    let _ = Param::ALL; // (silence an unused-import trap if params shrink)
 }
 
 fn checkerboard(painter: &egui::Painter, rect: Rect) {

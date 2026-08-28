@@ -436,6 +436,20 @@ impl ReelApp {
                 p.toggle_play();
             }
         }
+        // REEL_DEBUG_SELECT=1 — select the first clip, so headless checks can
+        // photograph the clip panel (there is no pointer under Xvfb).
+        if std::env::var("REEL_DEBUG_SELECT").as_deref() == Ok("1")
+            && self.editor.selected.is_none()
+        {
+            let first = self
+                .project
+                .tracks
+                .iter()
+                .flat_map(|t| t.clips.iter())
+                .map(|c| c.id)
+                .next();
+            self.editor.selected = first;
+        }
         let Some(rx) = &self.opening else { return };
         match rx.try_recv() {
             Ok(Ok(p)) => {

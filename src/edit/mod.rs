@@ -72,10 +72,28 @@ pub enum Param {
     PipX,
     PipY,
     PipScale,
+    /// Playback rate over CLIP-LOCAL OUTPUT time — a speed RAMP. The clip's
+    /// slot on the timeline stays fixed; how much source it eats becomes the
+    /// integral of this curve.
+    Speed,
 }
 
 impl Param {
-    pub const ALL: [Param; 10] = [
+    /// The value range the curve editor displays for this parameter.
+    pub fn range(self) -> (f32, f32) {
+        match self {
+            Param::Exposure | Param::Contrast => (0.2, 2.5),
+            Param::Saturation => (0.0, 2.5),
+            Param::Zoom => (1.0, 3.0),
+            Param::PanX | Param::PanY => (-1.0, 1.0),
+            Param::Opacity => (0.0, 1.0),
+            Param::PipX | Param::PipY => (0.0, 1.0),
+            Param::PipScale => (0.05, 1.0),
+            Param::Speed => (0.25, 4.0),
+        }
+    }
+
+    pub const ALL: [Param; 11] = [
         Param::Exposure,
         Param::Contrast,
         Param::Saturation,
@@ -86,6 +104,7 @@ impl Param {
         Param::PipX,
         Param::PipY,
         Param::PipScale,
+        Param::Speed,
     ];
 
     pub fn name(self) -> &'static str {
@@ -100,6 +119,7 @@ impl Param {
             Param::PipX => "pip-x",
             Param::PipY => "pip-y",
             Param::PipScale => "pip-scale",
+            Param::Speed => "speed",
         }
     }
 
@@ -151,6 +171,81 @@ pub fn eval_keys(keys: &[Keyframe], t: f64) -> Option<f32> {
     Some(a.value + (b.value - a.value) * p)
 }
 
+/// Seconds of SOURCE consumed by a speed curve over output time `0..t`.
+///
+/// Piecewise analytic: within one interval the mean of a linear ramp is
+/// (a+b)/2 — and the mean of a smoothstep ease is ALSO (a+b)/2 (its integral
+/// over 0..1 is exactly ½) — while a hold contributes its own value. The
+/// audio path leans on the same identity, which is what keeps a ramped
+/// clip's sound the same length as its picture.
+pub fn speed_integral(keys: &[Keyframe], base: f32, t: f64) -> f64 {
+    if t <= 0.0 {
+        return 0.0;
+    }
+    if keys.is_empty() {
+        return base.max(0.01) as f64 * t;
+    }
+    let mut acc = 0.0f64;
+    let mut cursor = 0.0f64;
+    // Before the first key: held at the first key's value.
+    let first = &keys[0];
+    if cursor < first.t {
+        let span = first.t.min(t) - cursor;
+        acc += first.value.max(0.01) as f64 * span;
+        cursor += span;
+        if cursor >= t {
+            return acc;
+        }
+    }
+    for w in keys.windows(2) {
+        let (a, b) = (&w[0], &w[1]);
+        if cursor >= t {
+            break;
+        }
+        let seg_end = b.t.min(t);
+        if seg_end <= cursor {
+            continue;
+        }
+        let span_full = (b.t - a.t).max(1e-9);
+        let (va, vb) = (a.value.max(0.01) as f64, b.value.max(0.01) as f64);
+        // Integrate from `cursor` to `seg_end` inside this interval.
+        let p0 = ((cursor - a.t) / span_full).clamp(0.0, 1.0);
+        let p1 = ((seg_end - a.t) / span_full).clamp(0.0, 1.0);
+        let anti = |p: f64| -> f64 {
+            // Antiderivative of speed(p) in interval-normalised time.
+            match a.interp {
+                Interp::Hold => va * p,
+                Interp::Linear => va * p + (vb - va) * p * p / 2.0,
+                // smoothstep: ∫(va + (vb-va)(3p²-2p³))dp
+                Interp::Ease => va * p + (vb - va) * (p.powi(3) - p.powi(4) / 2.0),
+            }
+        };
+        acc += (anti(p1) - anti(p0)) * span_full;
+        cursor = seg_end;
+    }
+    // After the last key: held at the last key's value.
+    if cursor < t {
+        acc += keys.last().unwrap().value.max(0.01) as f64 * (t - cursor);
+    }
+    acc
+}
+
+/// Output time at which a speed curve has consumed `src` seconds of source —
+/// the inverse of `speed_integral`, found by bisection (the integral is
+/// strictly increasing, so this is safe and exact enough for mapping).
+pub fn speed_integral_invert(keys: &[Keyframe], base: f32, src: f64, max_t: f64) -> f64 {
+    let (mut lo, mut hi) = (0.0f64, max_t.max(0.0));
+    for _ in 0..48 {
+        let mid = (lo + hi) / 2.0;
+        if speed_integral(keys, base, mid) < src {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
 /// Placement of an overlay clip within the frame, in fractions.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Pip {
@@ -195,6 +290,9 @@ impl Clip {
                 Param::PipX => pip.x = v,
                 Param::PipY => pip.y = v,
                 Param::PipScale => pip.scale = v.clamp(0.02, 1.0),
+                // Speed is a time-warp, not a per-instant look — the mapping
+                // functions (source_offset_at) own it.
+                Param::Speed => {}
             }
         }
         (fx, pip, opacity)
@@ -240,7 +338,27 @@ impl Clip {
     /// must use this rather than `duration`, or the picture and the sound
     /// drift apart the moment a clip is sped up.
     pub fn source_len(&self) -> f64 {
-        self.duration * self.speed.max(0.01) as f64
+        match self.key_track(Param::Speed) {
+            Some(keys) => speed_integral(keys, self.speed, self.duration),
+            None => self.duration * self.speed.max(0.01) as f64,
+        }
+    }
+
+    /// Source-time offset consumed after `t` seconds of output — linear for
+    /// a constant speed, the curve's integral for a ramp.
+    pub fn source_offset_at(&self, t: f64) -> f64 {
+        match self.key_track(Param::Speed) {
+            Some(keys) => speed_integral(keys, self.speed, t),
+            None => t * self.speed.max(0.01) as f64,
+        }
+    }
+
+    /// Output time at which this clip has consumed `src` seconds of source.
+    pub fn output_time_for_source(&self, src: f64) -> f64 {
+        match self.key_track(Param::Speed) {
+            Some(keys) => speed_integral_invert(keys, self.speed, src, self.duration),
+            None => src / self.speed.max(0.01) as f64,
+        }
     }
 
     pub fn end(&self) -> f64 {
@@ -293,6 +411,26 @@ pub struct Segment {
 }
 
 impl Segment {
+    /// Does this segment's playback rate change over time?
+    pub fn has_ramp(&self) -> bool {
+        self.keys
+            .iter()
+            .any(|(p, k)| *p == Param::Speed && !k.is_empty())
+    }
+
+    /// Seconds of source consumed after `t` seconds of output.
+    pub fn source_offset_at(&self, t: f64) -> f64 {
+        match self.keys.iter().find(|(p, _)| *p == Param::Speed) {
+            Some((_, keys)) if !keys.is_empty() => speed_integral(keys, self.speed, t),
+            _ => t * self.speed.max(0.01) as f64,
+        }
+    }
+
+    /// Total source this segment consumes over its whole duration.
+    pub fn source_len(&self) -> f64 {
+        self.source_offset_at(self.duration)
+    }
+
     /// Effects and opacity at segment-local time `t`, keyframes applied.
     pub fn animated(&self, t: f64) -> (Effects, f32) {
         let mut fx = self.effects;
@@ -868,7 +1006,7 @@ impl Project {
             .flat_map(|t| t.clips.iter())
             .filter(|c| c.source == source)
             .find(|c| c.in_point <= pos && pos <= c.in_point + c.source_len())
-            .map(|c| c.start + (pos - c.in_point) / c.speed.max(0.01) as f64)
+            .map(|c| c.start + c.output_time_for_source(pos - c.in_point))
     }
 
     /// Map a window of SOURCE time onto every place it appears on the
@@ -890,8 +1028,10 @@ impl Project {
                 if hi <= lo {
                     continue;
                 }
-                let rate = c.speed.max(0.01) as f64;
-                out.push((c.start + (lo - cs) / rate, c.start + (hi - cs) / rate));
+                out.push((
+                    c.start + c.output_time_for_source(lo - cs),
+                    c.start + c.output_time_for_source(hi - cs),
+                ));
             }
         }
         out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -993,6 +1133,9 @@ pub struct EditorState {
     pub clipboard: Option<(Clip, TrackKind)>,
     /// The parameter the keyframe controls in the side panel operate on.
     pub key_param: Param,
+    /// The keyframe being dragged in the curve editor (index into the
+    /// selected clip's track for `key_param`).
+    pub curve_drag: Option<usize>,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -1026,6 +1169,7 @@ impl Default for EditorState {
             selected_title: None,
             clipboard: None,
             key_param: Param::Exposure,
+            curve_drag: None,
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),
@@ -1336,6 +1480,47 @@ mod tests {
         assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
         assert!(c.clear_key(Param::Exposure, 2.0));
         assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
+    }
+
+    /// The ramp integral is the contract between picture and sound: both
+    /// read source consumption off this one function.
+    #[test]
+    fn the_speed_integral_is_exact_for_every_curve_shape() {
+        let lin = vec![
+            Keyframe { t: 0.0, value: 1.0, interp: Interp::Linear },
+            Keyframe { t: 4.0, value: 2.0, interp: Interp::Linear },
+        ];
+        // Mean of 1→2 is 1.5 → 6 s of source over 4 s of output.
+        assert!((speed_integral(&lin, 1.0, 4.0) - 6.0).abs() < 1e-9);
+        assert!((speed_integral(&lin, 1.0, 2.0) - 2.5).abs() < 1e-9, "quadratic mid: 1·2 + ½·¼·2²");
+
+        // Ease integrates to the same mean over a full interval.
+        let ease = vec![
+            Keyframe { t: 0.0, value: 1.0, interp: Interp::Ease },
+            Keyframe { t: 4.0, value: 2.0, interp: Interp::Linear },
+        ];
+        assert!((speed_integral(&ease, 1.0, 4.0) - 6.0).abs() < 1e-9);
+
+        // Hold consumes at the held value until the next key.
+        let hold = vec![
+            Keyframe { t: 0.0, value: 3.0, interp: Interp::Hold },
+            Keyframe { t: 2.0, value: 1.0, interp: Interp::Linear },
+        ];
+        assert!((speed_integral(&hold, 1.0, 2.0) - 6.0).abs() < 1e-9);
+
+        // Before the first key and after the last: held flat.
+        let mid = vec![
+            Keyframe { t: 1.0, value: 2.0, interp: Interp::Linear },
+            Keyframe { t: 2.0, value: 2.0, interp: Interp::Linear },
+        ];
+        assert!((speed_integral(&mid, 1.0, 3.0) - 6.0).abs() < 1e-9);
+
+        // The inverse gets back to where it started.
+        for probe in [0.5, 1.7, 3.2] {
+            let src = speed_integral(&lin, 1.0, probe);
+            let back = speed_integral_invert(&lin, 1.0, src, 4.0);
+            assert!((back - probe).abs() < 1e-6, "invert({src}) = {back}, wanted {probe}");
+        }
     }
 
     /// Pasting inserts: it makes room instead of overwriting whatever was

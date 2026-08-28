@@ -99,6 +99,90 @@ impl Drop for SegmentReader {
     }
 }
 
+/// Frames at the SOURCE's own rate, advanced to arbitrary source times —
+/// what a speed RAMP needs: the output clock walks its curve and this reader
+/// drops or holds source frames to keep up. No fps conformance, no setpts;
+/// time is tracked by frame count over the probed rate.
+pub struct NativeReader {
+    child: Child,
+    out: ChildStdout,
+    frame_len: usize,
+    /// Source seconds per decoded frame.
+    frame_dt: f64,
+    /// Source time of the frame currently in `last` (start-relative).
+    at: f64,
+    last: Vec<u8>,
+    any: bool,
+    eof: bool,
+}
+
+impl NativeReader {
+    pub fn open(
+        source: &str,
+        in_point: f64,
+        src_len: f64,
+        fit_chain: &str,
+        (w, h): (u32, u32),
+        src_fps: f64,
+    ) -> Result<Self> {
+        let vf = format!("trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{fit_chain}");
+        let mut child = Command::new("ffmpeg")
+            .args([
+                "-v", "error",
+                "-ss", &format!("{in_point:.4}"),
+                "-i", source,
+                "-vf", &vf,
+                "-f", "rawvideo", "-pix_fmt", "rgba", "-",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .stdin(Stdio::null())
+            .spawn()
+            .with_context(|| format!("could not start a native decoder for {source}"))?;
+        let out = child.stdout.take().ok_or_else(|| anyhow!("decoder has no stdout"))?;
+        let frame_len = (w * h * 4) as usize;
+        Ok(Self {
+            child,
+            out,
+            frame_len,
+            frame_dt: 1.0 / src_fps.max(1.0),
+            at: -1.0,
+            last: vec![0; frame_len],
+            any: false,
+            eof: false,
+        })
+    }
+
+    /// Land the frame nearest source time `want` (start-relative) in `buf`.
+    /// Never rewinds — the ramp integral is monotonic, so neither do we.
+    /// Holds the last frame at EOF. False only if nothing ever decoded.
+    pub fn frame_at(&mut self, want: f64, buf: &mut Vec<u8>) -> bool {
+        buf.resize(self.frame_len, 0);
+        // Pull frames until the NEXT one would overshoot the ask.
+        while !self.eof && self.at + self.frame_dt <= want + self.frame_dt * 0.5 {
+            match self.out.read_exact(&mut self.last) {
+                Ok(()) => {
+                    self.any = true;
+                    self.at = if self.at < 0.0 { 0.0 } else { self.at + self.frame_dt };
+                }
+                Err(_) => self.eof = true,
+            }
+        }
+        if !self.any {
+            return false;
+        }
+        buf.copy_from_slice(&self.last);
+        true
+    }
+}
+
+impl Drop for NativeReader {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
 /// The scale/pad chain for overlay clips: fit the overlay's own frame into
 /// its on-screen box while keeping aspect. The box height comes from the
 /// scene rect, so the decode is only as large as the picture on screen.

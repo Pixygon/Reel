@@ -213,13 +213,20 @@ The engine gives us addressable parameters; this phase makes them move.
       frame by preview AND render through one call site, proven by a
       rendered-ramp pixel test. Still to extend: gain/pan and title
       parameters, and bezier handles beyond the ease curve.
-- [~] Keyframe UI v1: an Animate panel (param picker, key-at-playhead,
-      per-key list with remove) and painted diamonds on timeline clips.
-      The full curve-editor lane with draggable handles is still open.
-- [ ] **Speed ramps**: clip time remapped by a curve (the keyframe system
-      applied to time itself). Frame-blend first; optical-flow interpolation
-      later as a quality tier. Audio follows with chained tempo, or detaches
-      above the threshold where tempo mangles it.
+- [x] Curve editor v1: the animated curve drawn live in the clip panel —
+      drag keys in time and value, double-click to add, right-click to
+      remove, playhead line synced to the preview — plus the Animate panel
+      and painted diamonds on timeline clips. Still open: the full-width
+      timeline lane variant and bezier handle editing.
+- [x] **Speed ramps**: a `speed` keyframe track remaps clip time — the
+      clip's slot stays fixed, the source consumed becomes the curve's
+      integral (piecewise analytic, one function shared by picture, sound
+      and the caption/waveform mappings). Video walks the integral exactly
+      per frame through a native-rate reader; audio approximates per
+      keyframe-interval at the interval's true average tempo, so it fills
+      the slot to the sample. Proven by a render whose source encodes its
+      own time in luminance. Nearest-frame for now — frame-blend and
+      optical flow remain as quality tiers.
 - [ ] **Animated titles**: position/opacity/size keyframes + a starter set
       of motion presets (fade, slide, pop, typewriter). Presets are just
       keyframe templates — no second system.
