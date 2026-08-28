@@ -1,0 +1,249 @@
+//! Audio waveforms for timeline clips.
+//!
+//! Cutting without seeing the audio is guesswork — you end up scrubbing back
+//! and forth hunting for the start of a word. Every serious editor draws the
+//! waveform on the clip, and it is one of the first things people notice is
+//! missing.
+//!
+//! Peaks are computed by decoding the source to low-rate mono PCM through
+//! ffmpeg (which is already a dependency) on a worker thread, then reduced to
+//! one value per bucket. They are cached per source path, so a clip that gets
+//! split, trimmed, moved or duplicated never pays for it twice — the drawing
+//! code just reads a different window of the same array.
+
+use std::collections::HashMap;
+use std::io::Read;
+use std::process::{Command, Stdio};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
+
+/// Buckets per second of source audio. 40 is enough to see syllables at
+/// normal zoom without making the arrays large: an hour of audio is 144k
+/// floats, about half a megabyte.
+pub const BUCKETS_PER_SEC: f64 = 40.0;
+
+/// Normalised peak amplitudes, one per bucket, in source order.
+#[derive(Debug, Default)]
+pub struct Peaks {
+    pub data: Vec<f32>,
+}
+
+impl Peaks {
+    /// The loudest peak in the source window `[from, to)`, sampled into
+    /// `slots` buckets — exactly what the timeline needs to draw a clip of a
+    /// given pixel width.
+    pub fn window(&self, from: f64, to: f64, slots: usize) -> Vec<f32> {
+        if self.data.is_empty() || slots == 0 || to <= from {
+            return Vec::new();
+        }
+        let a = (from * BUCKETS_PER_SEC).max(0.0);
+        let b = (to * BUCKETS_PER_SEC).min(self.data.len() as f64);
+        if b <= a {
+            return Vec::new();
+        }
+        let step = (b - a) / slots as f64;
+        (0..slots)
+            .map(|i| {
+                let lo = (a + i as f64 * step) as usize;
+                let hi = ((a + (i as f64 + 1.0) * step) as usize).max(lo + 1);
+                self.data[lo.min(self.data.len() - 1)..hi.min(self.data.len())]
+                    .iter()
+                    .copied()
+                    .fold(0.0f32, f32::max)
+            })
+            .collect()
+    }
+}
+
+/// Decode `source` to peaks. Blocking — callers use `Cache`, which runs this
+/// on a worker.
+pub fn compute(source: &str) -> Option<Peaks> {
+    // 8 kHz mono 16-bit is far more than enough to draw an envelope, and
+    // keeps the pipe small: ~16 KB per second of audio.
+    const RATE: u32 = 8000;
+    let mut child = Command::new("ffmpeg")
+        .args([
+            "-v", "error", "-i", source, "-vn", "-ac", "1", "-ar", &RATE.to_string(),
+            "-f", "s16le", "-",
+        ])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+
+    let per_bucket = (RATE as f64 / BUCKETS_PER_SEC) as usize;
+    let mut out = Peaks::default();
+    let mut stdout = child.stdout.take()?;
+    let mut buf = vec![0u8; per_bucket * 2 * 16];
+    let mut bucket: Vec<i16> = Vec::with_capacity(per_bucket);
+    // A pipe read can end mid-sample. The leftover byte has to survive into
+    // the next read: dropping it would shift every following sample by one
+    // byte and turn the rest of the waveform into noise.
+    let mut odd: Option<u8> = None;
+    loop {
+        let n = match stdout.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        let mut i = 0;
+        if let Some(lo) = odd.take() {
+            if n >= 1 {
+                bucket.push(i16::from_le_bytes([lo, buf[0]]));
+                i = 1;
+            } else {
+                odd = Some(lo);
+            }
+        }
+        while i + 1 < n {
+            bucket.push(i16::from_le_bytes([buf[i], buf[i + 1]]));
+            i += 2;
+        }
+        if i < n {
+            odd = Some(buf[n - 1]);
+        }
+        while bucket.len() >= per_bucket {
+            let peak = bucket[..per_bucket]
+                .iter()
+                .map(|v| v.unsigned_abs() as f32)
+                .fold(0.0, f32::max);
+            out.data.push(peak / i16::MAX as f32);
+            bucket.drain(..per_bucket);
+        }
+    }
+    // Whatever is left is a partial final bucket — keep it, or every clip
+    // loses up to 25 ms off its tail.
+    if !bucket.is_empty() {
+        let peak = bucket.iter().map(|v| v.unsigned_abs() as f32).fold(0.0, f32::max);
+        out.data.push(peak / i16::MAX as f32);
+    }
+    let _ = child.wait();
+    if out.data.is_empty() {
+        return None;
+    }
+    // Normalise to the loudest point so a quiet recording is still legible.
+    let max = out.data.iter().copied().fold(0.0f32, f32::max);
+    if max > 0.0001 {
+        for v in &mut out.data {
+            *v /= max;
+        }
+    }
+    Some(out)
+}
+
+/// Per-source peak cache with a background worker.
+pub struct Cache {
+    ready: HashMap<String, Arc<Peaks>>,
+    /// Sources with no audio (or that failed) — remembered so we don't spawn
+    /// a decode for them on every frame.
+    barren: HashMap<String, ()>,
+    pending: HashMap<String, ()>,
+    tx: Sender<(String, Option<Peaks>)>,
+    rx: Receiver<(String, Option<Peaks>)>,
+}
+
+impl Default for Cache {
+    fn default() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            ready: HashMap::new(),
+            barren: HashMap::new(),
+            pending: HashMap::new(),
+            tx,
+            rx,
+        }
+    }
+}
+
+impl Cache {
+    /// Peaks for `source`, starting a decode in the background if this is the
+    /// first time we've been asked. Returns None until they're ready — the
+    /// timeline simply draws the clip without a waveform until then.
+    pub fn get(&mut self, source: &str) -> Option<Arc<Peaks>> {
+        self.drain();
+        if let Some(p) = self.ready.get(source) {
+            return Some(p.clone());
+        }
+        if self.barren.contains_key(source) || self.pending.contains_key(source) {
+            return None;
+        }
+        self.pending.insert(source.to_string(), ());
+        let (tx, src) = (self.tx.clone(), source.to_string());
+        std::thread::spawn(move || {
+            let peaks = compute(&src);
+            let _ = tx.send((src, peaks));
+        });
+        None
+    }
+
+    /// Is a decode still running? The UI keeps repainting while so.
+    pub fn is_busy(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    fn drain(&mut self) {
+        while let Ok((src, peaks)) = self.rx.try_recv() {
+            self.pending.remove(&src);
+            match peaks {
+                Some(p) => {
+                    self.ready.insert(src, Arc::new(p));
+                }
+                None => {
+                    self.barren.insert(src, ());
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The envelope has to actually follow the sound, or it is decoration.
+    /// This builds audio that is silent, then loud, then silent, and checks
+    /// the peaks say so.
+    #[test]
+    fn peaks_follow_the_sound() {
+        let wav = std::env::temp_dir().join(format!("reel-wave-{}.wav", std::process::id()));
+        let ok = Command::new("ffmpeg")
+            .args([
+                "-y", "-v", "error", "-f", "lavfi",
+                "-i", "sine=frequency=440:sample_rate=8000:duration=3",
+                // Loud only in the middle second.
+                "-af", "volume=volume='between(t,1,2)':eval=frame",
+                &wav.to_string_lossy(),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "could not build the waveform fixture");
+
+        let peaks = compute(&wav.to_string_lossy()).expect("peaks");
+        let _ = std::fs::remove_file(&wav);
+
+        // ~40 buckets per second over 3 seconds.
+        assert!(peaks.data.len() > 100, "too few buckets: {}", peaks.data.len());
+        let quiet = peaks.window(0.2, 0.8, 8);
+        let loud = peaks.window(1.2, 1.8, 8);
+        let quiet_max = quiet.iter().copied().fold(0.0f32, f32::max);
+        let loud_min = loud.iter().copied().fold(1.0f32, f32::min);
+        assert!(
+            loud_min > 0.5 && quiet_max < 0.2,
+            "envelope does not follow the audio: quiet max {quiet_max:.2}, loud min {loud_min:.2}"
+        );
+    }
+
+    #[test]
+    fn a_window_always_fills_exactly_the_slots_asked_for() {
+        let p = Peaks { data: (0..400).map(|i| (i % 100) as f32 / 100.0).collect() };
+        assert_eq!(p.window(0.0, 10.0, 64).len(), 64);
+        assert_eq!(p.window(1.0, 2.0, 7).len(), 7);
+        // Degenerate asks must not panic or index out of range.
+        assert!(p.window(0.0, 0.0, 10).is_empty());
+        assert!(p.window(5.0, 1.0, 10).is_empty());
+        assert!(p.window(0.0, 10.0, 0).is_empty());
+        assert!(Peaks::default().window(0.0, 5.0, 10).is_empty());
+        // A window past the end clamps instead of reading off the array.
+        assert_eq!(p.window(0.0, 9999.0, 16).len(), 16);
+    }
+}

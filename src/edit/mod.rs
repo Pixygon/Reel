@@ -6,7 +6,7 @@
 use crate::effects::Effects;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrackKind {
     Video,
     Audio,
@@ -403,6 +403,54 @@ impl Project {
         removed
     }
 
+    /// Paste `clip` onto the track it came from at timeline position `at`,
+    /// making room by pushing everything from that point along.
+    ///
+    /// Insert rather than overwrite: pasting should never silently eat
+    /// footage you already placed. Rippling keeps the rest of the cut
+    /// intact — the same behaviour as pasting a word into a sentence.
+    pub fn paste_clip(&mut self, clip: &Clip, at: f64, kind: TrackKind) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        let at = at.max(0.0);
+        let mut placed = clip.clone();
+        placed.id = id;
+        placed.start = at;
+
+        // Anything starting at or after the insertion point slides along by
+        // the pasted length — on the matching track only, so an audio clip
+        // pasted on A1 doesn't shove the video around.
+        if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
+            for c in &mut track.clips {
+                if c.start >= at - 1e-9 {
+                    c.start += placed.duration;
+                } else if c.end() > at {
+                    // The insertion lands mid-clip: push that clip too rather
+                    // than leaving it overlapping the pasted one.
+                    c.start += placed.duration;
+                }
+            }
+            track.clips.push(placed);
+            track.clips.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+        }
+        id
+    }
+
+    /// Copy a clip and drop the copy straight after the original.
+    pub fn duplicate_clip(&mut self, id: u64) -> Option<u64> {
+        let (clip, kind) = self.tracks.iter().find_map(|t| {
+            t.clips.iter().find(|c| c.id == id).map(|c| (c.clone(), t.kind))
+        })?;
+        Some(self.paste_clip(&clip, clip.end(), kind))
+    }
+
+    /// The clip with this id, and which kind of track it lives on.
+    pub fn clip_with_kind(&self, id: u64) -> Option<(Clip, TrackKind)> {
+        self.tracks.iter().find_map(|t| {
+            t.clips.iter().find(|c| c.id == id).map(|c| (c.clone(), t.kind))
+        })
+    }
+
     pub fn delete_clip(&mut self, id: u64) -> bool {
         for track in &mut self.tracks {
             let before = track.clips.len();
@@ -580,6 +628,10 @@ pub struct EditorState {
     /// Index of the title being edited, if any — it shows a box in the
     /// preview and is the one you can drag around.
     pub selected_title: Option<usize>,
+    /// The copied clip, and which kind of track it came from.
+    pub clipboard: Option<(Clip, TrackKind)>,
+    /// Timeline positions the user has flagged, for jumping between.
+    pub markers: Vec<f64>,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -611,6 +663,8 @@ impl Default for EditorState {
             project_path: None,
             fx_gesture: None,
             selected_title: None,
+            clipboard: None,
+            markers: Vec::new(),
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),
@@ -868,6 +922,50 @@ mod tests {
         p.delete_clip(left_id);
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 5.0), Some(5.0));
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 2.0), None); // trimmed away
+    }
+
+    /// Pasting inserts: it makes room instead of overwriting whatever was
+    /// already there. Losing footage to a stray Ctrl+V is the kind of thing
+    /// people never forgive an editor for.
+    #[test]
+    fn pasting_makes_room_instead_of_overwriting() {
+        let mut p = one_clip_project();
+        p.split_at(4.0); // 0..4 and 4..10
+        let first = p.tracks[0].clips[0].clone();
+
+        let id = p.paste_clip(&first, 4.0, TrackKind::Video);
+        let clips = &p.tracks[0].clips;
+        assert_eq!(clips.len(), 3, "paste should add a clip, not replace one");
+
+        // Nothing overlaps, and the total length grew by exactly the paste.
+        for w in clips.windows(2) {
+            assert!(
+                w[1].start >= w[0].end() - 1e-6,
+                "paste left clips overlapping: {:?} then {:?}",
+                (w[0].start, w[0].end()),
+                (w[1].start, w[1].end())
+            );
+        }
+        let end = clips.iter().map(|c| c.end()).fold(0.0, f64::max);
+        assert!((end - 14.0).abs() < 1e-6, "expected 10s + a 4s paste, got {end}");
+
+        // The pasted clip is a real copy with its own id, at the playhead.
+        let pasted = clips.iter().find(|c| c.id == id).unwrap();
+        assert_ne!(pasted.id, first.id);
+        assert!((pasted.start - 4.0).abs() < 1e-6);
+        assert_eq!(pasted.source, first.source);
+        assert!((pasted.in_point - first.in_point).abs() < 1e-6);
+    }
+
+    #[test]
+    fn duplicate_lands_immediately_after_the_original() {
+        let mut p = one_clip_project();
+        let id = p.tracks[0].clips[0].id;
+        let end = p.tracks[0].clips[0].end();
+        let copy = p.duplicate_clip(id).expect("duplicate");
+        let c = p.tracks[0].clips.iter().find(|c| c.id == copy).unwrap();
+        assert!((c.start - end).abs() < 1e-6, "copy should butt against the original");
+        assert_eq!(p.tracks[0].clips.len(), 2);
     }
 
     /// Captions are written against the original recording, so mapping them

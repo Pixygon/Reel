@@ -42,6 +42,13 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **Waveforms on every clip.** The audio is drawn right on the timeline, so
+  you cut on a word instead of hunting for it. Peaks are decoded in the
+  background and cached per source, so splitting, trimming, moving or
+  duplicating a clip never recomputes them.
+- **The edits you make constantly.** Copy, paste and duplicate (Ctrl+C/V/D —
+  pasting *inserts*, so it can never silently eat footage you already
+  placed), plus markers (Ctrl+M) you can jump between with Ctrl+←/→.
 - **Titles you place by dragging.** Add text, drag it where you want it on
   the picture, set size and colour. Position is stored as a fraction of the
   frame, so a title composed on the preview lands in exactly the same place

@@ -52,6 +52,8 @@ pub struct ReelApp {
     pub queue: export::Queue,
     /// A captioning run in progress (local, on a worker thread).
     pub captions_job: Option<crate::captions::Job>,
+    /// Audio peaks per source, for the timeline. Decoded in the background.
+    pub waveforms: crate::waveform::Cache,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -112,6 +114,7 @@ impl ReelApp {
             export_timeline: false,
             queue: export::Queue::default(),
             captions_job: None,
+            waveforms: crate::waveform::Cache::default(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -762,6 +765,70 @@ impl ReelApp {
         }
     }
 
+    pub fn editor_copy(&mut self) {
+        let Some(id) = self.editor.selected else { return };
+        if let Some((clip, kind)) = self.project.clip_with_kind(id) {
+            let name = clip.name.clone();
+            self.editor.clipboard = Some((clip, kind));
+            self.status = format!("Copied {name} — Ctrl+V pastes at the playhead.");
+        }
+    }
+
+    pub fn editor_paste(&mut self) {
+        let Some((clip, kind)) = self.editor.clipboard.clone() else {
+            self.status = "Nothing copied yet (select a clip, then Ctrl+C).".into();
+            return;
+        };
+        self.editor.push_undo(&self.project);
+        let at = self.editor.playhead;
+        let id = self.project.paste_clip(&clip, at, kind);
+        self.editor.selected = Some(id);
+        self.editor.mark_changed();
+        self.status = format!("Pasted at {at:.2}s — everything after it moved along.");
+    }
+
+    pub fn editor_duplicate(&mut self) {
+        let Some(id) = self.editor.selected else { return };
+        self.editor.push_undo(&self.project);
+        if let Some(new_id) = self.project.duplicate_clip(id) {
+            self.editor.selected = Some(new_id);
+            self.editor.mark_changed();
+            self.status = "Duplicated.".into();
+        }
+    }
+
+    /// Drop a marker at the playhead, or lift the one already there.
+    pub fn editor_toggle_marker(&mut self) {
+        let t = self.editor.playhead;
+        // "Already there" has to mean visibly there, not bit-identical.
+        let near = self.editor.markers.iter().position(|m| (m - t).abs() < 0.05);
+        match near {
+            Some(i) => {
+                self.editor.markers.remove(i);
+                self.status = "Marker removed.".into();
+            }
+            None => {
+                self.editor.markers.push(t);
+                self.editor
+                    .markers
+                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                self.status = format!("Marker at {t:.2}s (Ctrl+←/→ to jump).");
+            }
+        }
+    }
+
+    pub fn editor_jump_marker(&mut self, forward: bool) {
+        let t = self.editor.playhead;
+        let target = if forward {
+            self.editor.markers.iter().copied().find(|m| *m > t + 0.01)
+        } else {
+            self.editor.markers.iter().copied().rev().find(|m| *m < t - 0.01)
+        };
+        if let Some(m) = target {
+            self.seek_timeline(m);
+        }
+    }
+
     /// Advance the render queue; keeps the UI repainting while it works.
     pub fn poll_queue(&mut self) {
         self.queue.poll();
@@ -1049,6 +1116,7 @@ impl ReelApp {
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
             || self.queue.is_busy()
             || self.captions_job.is_some()
+            || self.waveforms.is_busy()
             || self.picker.is_some()
             || self.opening.is_some()
             || self.shot_rx.is_some()

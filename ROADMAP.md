@@ -101,7 +101,10 @@ never leaving the GPU.
       frame fractions so the preview and any export resolution agree.
 - [x] **Audio that behaves** — per-clip gain, a music bed, and automatic
       ducking under speech (sidechain, no curves to draw).
-- [ ] Cut/copy/paste, duplicate, markers; roll edits.
+- [x] **Waveforms on clips** — decoded off-thread, cached per source.
+- [x] Copy/paste/duplicate (paste inserts and ripples, never overwrites) and
+      markers with jump-to-next/previous.
+- [ ] Thumbnails on clips; roll edits.
 - [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
       then the preview shows the V1 source frame.
 

@@ -205,6 +205,18 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   leaves audio untouched outside the window. To gate audio, make the gain
   itself the expression (`volume=volume='between(t,a,b)':eval=frame`).
 
+- Waveforms (`waveform.rs`) decode to 8 kHz mono s16 through an ffmpeg pipe
+  and reduce to `BUCKETS_PER_SEC` peaks, cached per SOURCE path — a split or
+  duplicated clip reads a different window of the same array rather than
+  decoding again. The pipe read must carry an odd trailing byte into the
+  next read; dropping it shifts every later sample and turns the envelope
+  into noise.
+- Shortcut conflicts are real and easy to miss: `M` was already mute, and
+  `.`/`,` are frame-step, so markers live on Ctrl+M and Ctrl+←/→ with the
+  colliding keys explicitly excluding ctrl. `shortcuts()` returns early on
+  `ctx.wants_keyboard_input()`, which is what keeps typing a title from
+  splitting clips — keep that guard first.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

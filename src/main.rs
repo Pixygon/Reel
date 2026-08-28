@@ -38,6 +38,7 @@ mod titles;
 pub mod ui;
 mod ui_tests;
 mod video;
+mod waveform;
 mod video_pass;
 
 use app::ReelApp;

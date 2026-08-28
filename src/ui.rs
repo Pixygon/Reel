@@ -193,14 +193,17 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
     }
     let k = ctx.input(|i| Keys {
         space: i.key_pressed(Key::Space),
-        right: i.key_pressed(Key::ArrowRight),
-        left: i.key_pressed(Key::ArrowLeft),
+        // Ctrl+arrow jumps between markers in the editor, so plain seek has
+        // to stay out of its way.
+        right: i.key_pressed(Key::ArrowRight) && !i.modifiers.ctrl && !i.modifiers.command,
+        left: i.key_pressed(Key::ArrowLeft) && !i.modifiers.ctrl && !i.modifiers.command,
         shift: i.modifiers.shift,
         step_fwd: i.key_pressed(Key::Period),
         step_back: i.key_pressed(Key::Comma),
         vol_up: i.key_pressed(Key::ArrowUp),
         vol_down: i.key_pressed(Key::ArrowDown),
-        mute: i.key_pressed(Key::M),
+        // Ctrl+M drops a marker; it must not also mute.
+        mute: i.key_pressed(Key::M) && !i.modifiers.ctrl && !i.modifiers.command,
         looping: i.key_pressed(Key::L) && i.modifiers.shift,
         shuttle_fwd: i.key_pressed(Key::L) && !i.modifiers.shift,
         shuttle_back: i.key_pressed(Key::J),
@@ -298,6 +301,12 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             undo: bool,
             redo: bool,
             save: bool,
+            copy: bool,
+            paste: bool,
+            duplicate: bool,
+            marker: bool,
+            next_marker: bool,
+            prev_marker: bool,
         }
         let ek = ctx.input(|i| EdKeys {
             split: (i.key_pressed(Key::S) && !i.modifiers.ctrl && !i.modifiers.command)
@@ -310,6 +319,14 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             redo: (i.modifiers.ctrl || i.modifiers.command)
                 && (i.key_pressed(Key::Y) || (i.modifiers.shift && i.key_pressed(Key::Z))),
             save: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::S),
+            copy: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::C),
+            paste: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::V),
+            duplicate: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::D),
+            marker: (i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::M),
+            next_marker: (i.modifiers.ctrl || i.modifiers.command)
+                && i.key_pressed(Key::ArrowRight),
+            prev_marker: (i.modifiers.ctrl || i.modifiers.command)
+                && i.key_pressed(Key::ArrowLeft),
         });
         if ek.split {
             app.editor_split();
@@ -334,6 +351,24 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         }
         if ek.save {
             app.editor_save();
+        }
+        if ek.copy {
+            app.editor_copy();
+        }
+        if ek.paste {
+            app.editor_paste();
+        }
+        if ek.duplicate {
+            app.editor_duplicate();
+        }
+        if ek.marker {
+            app.editor_toggle_marker();
+        }
+        if ek.next_marker {
+            app.editor_jump_marker(true);
+        }
+        if ek.prev_marker {
+            app.editor_jump_marker(false);
         }
         // In / out range markers.
         let (set_in, set_out, clear) = ctx.input(|i| {
@@ -805,7 +840,11 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
 
         ui.separator();
-        ui.label(RichText::new("J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\nDel delete · Shift+Del ripple delete · right-click to close gaps").small().color(egui::Color32::from_gray(120)));
+        ui.label(RichText::new(
+            "J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\n\
+             Del delete · Shift+Del ripple delete · right-click to close gaps\n\
+             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+←/→ jump",
+        ).small().color(egui::Color32::from_gray(120)));
     }
 }
 
@@ -1895,14 +1934,45 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { base }),
                 egui::StrokeKind::Inside,
             );
+            // The waveform, so you can cut on a word instead of hunting for
+            // it. Peaks are cached per source and computed off-thread; until
+            // they land the clip just draws plain.
+            if cr.width() > 8.0 {
+                if let Some(peaks) = app.waveforms.get(&clip.source) {
+                    let slots = (cr.width() as usize).clamp(1, 4000);
+                    let vals = peaks.window(clip.in_point, clip.in_point + clip.duration, slots);
+                    if !vals.is_empty() {
+                        let mid = cr.center().y;
+                        let half = (cr.height() * 0.5) - 3.0;
+                        let colour = base.linear_multiply(if selected { 0.95 } else { 0.6 });
+                        let step = cr.width() / vals.len() as f32;
+                        for (i, v) in vals.iter().enumerate() {
+                            let x = cr.left() + i as f32 * step + step * 0.5;
+                            let h = (v * half).max(0.5);
+                            painter.line_segment(
+                                [egui::pos2(x, mid - h), egui::pos2(x, mid + h)],
+                                Stroke::new(step.min(1.5).max(0.8), colour),
+                            );
+                        }
+                    }
+                }
+            }
+
             if cr.width() > 40.0 {
-                painter.text(
-                    egui::pos2(cr.left() + 6.0, cr.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    format!("{}  {:.1}s", clip.name, clip.duration),
+                // A slab behind the label so it stays readable over the wave.
+                let text = format!("{}  {:.1}s", clip.name, clip.duration);
+                let galley = painter.layout_no_wrap(
+                    text,
                     egui::FontId::proportional(11.0),
                     theme::STAR,
                 );
+                let at = egui::pos2(cr.left() + 6.0, cr.center().y - galley.size().y * 0.5);
+                painter.rect_filled(
+                    Rect::from_min_size(at, galley.size()).expand2(Vec2::new(3.0, 1.0)),
+                    3.0,
+                    theme::VOID.linear_multiply(0.65),
+                );
+                painter.galley(at, galley, theme::STAR);
             }
 
             // A crossfade marker at the clip's head: the wedge shows where
@@ -2082,6 +2152,27 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
             Stroke::new(1.0, theme::STAR),
         );
+    }
+
+    // Markers: places you flagged to come back to (M).
+    for m in &app.editor.markers {
+        let x = t_to_x(*m);
+        if x < full.left() - 8.0 || x > full.right() + 8.0 {
+            continue;
+        }
+        painter.line_segment(
+            [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
+            Stroke::new(1.0, theme::STAR.linear_multiply(0.5)),
+        );
+        painter.add(egui::Shape::convex_polygon(
+            vec![
+                egui::pos2(x - 5.0, full.top()),
+                egui::pos2(x + 5.0, full.top()),
+                egui::pos2(x, full.top() + 8.0),
+            ],
+            theme::STAR,
+            Stroke::NONE,
+        ));
     }
 
     // Playhead: ember line + grab triangle in the ruler.
