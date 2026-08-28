@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.29.0] — 2026-08-28
+
+### Added
+- Crossfade transitions now preview as an actual fade in the editor, instead of showing a hard cut. The incoming clip plays live and blends over the outgoing picture at the transition's ramp, with colour effects applied, so what you see while editing matches the final render. _(0d3d9f4)_
+
+### Fixed
+- Fixed an issue where playback could intermittently fail to switch to the next clip when a clip ended exactly at a cut point. _(0d3d9f4)_
+
+
 ## [0.28.0] — 2026-08-28
 
 ### Added
