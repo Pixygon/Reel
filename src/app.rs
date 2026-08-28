@@ -1405,12 +1405,27 @@ impl ReelApp {
 
     /// Delete the selected clip (Del).
     pub fn editor_delete(&mut self) {
+        let mut doomed: Vec<u64> = self.editor.multi.iter().copied().collect();
         if let Some(id) = self.editor.selected {
-            self.editor.push_undo(&self.project);
-            self.project.delete_clip(id);
-            self.editor.selected = None;
-            self.status = "Clip deleted.".into();
+            if !doomed.contains(&id) {
+                doomed.push(id);
+            }
         }
+        if doomed.is_empty() {
+            return;
+        }
+        self.editor.push_undo(&self.project);
+        let n = doomed.len();
+        for id in doomed {
+            self.project.delete_clip(id);
+        }
+        self.editor.selected = None;
+        self.editor.multi.clear();
+        self.status = if n == 1 {
+            "Clip deleted.".into()
+        } else {
+            format!("{n} clips deleted.")
+        };
     }
 
     /// Save the project as a .reel document (Ctrl+S). Defaults to sitting

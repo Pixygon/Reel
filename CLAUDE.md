@@ -329,6 +329,11 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   the RIGHT neighbour's head), Alt+body=slip (drag right shows earlier
   material), Ctrl+Alt=slide. Incremental application: each drag frame
   applies the delta and advances `last` by what was ACTUALLY applied.
+- `Project::tighten` takes a peaks SUPPLIER closure (waveform buckets are
+  normalised to each source's own peak — thresholds are relative), collects
+  every hole FIRST, then cuts from the END backwards so earlier positions
+  stay valid. Multi-select: `editor.multi` + `selected` as primary; group
+  move applies the primary's delta to the rest.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

@@ -259,8 +259,8 @@ within the phase by editor-workflow importance:
       change the total; slip never moves the clip), driven by modifier
       drags (Ctrl+edge / Alt+body / Ctrl+Alt+body) and `reel roll/slip/
       slide` in the CLI.
-- [ ] Multi-select (click-drag lasso, shift-click), group move/delete,
-      track targeting for paste/insert.
+- [x] Multi-select via shift-click, with group move (a selection moves as
+      one object) and group delete. Lasso and track targeting still open.
 - [ ] Explicitly linked A/V clips (cut together, trim together, unlinkable).
 - [ ] Unlimited tracks of every kind; track headers (name, lock, mute/solo,
       target); track resize.
@@ -343,8 +343,10 @@ The engine (1.4) makes these tractable; captions make some of them unique.
       A render test asserts the delivered integrated loudness.
 - [ ] Clip fade handles with curve choice (linear/equal-power/exp) directly
       on the timeline; crossfade by overlap, as video does.
-- [ ] **Silence removal**: detect gaps, tighten to a rhythm (podcast jump-cut
-      editing in one command; `reel tighten` in the CLI).
+- [x] **Silence removal**: `reel tighten` / the ✂ Tighten button — quiet
+      spans below a fraction of each source's own peak are cut with
+      breathing-room pads and the timeline closes up, invariant-tested and
+      verified on real audio (a 12 s take with a 4 s hole came back 8.33 s).
 - [ ] **Filler-word removal**: captions know where every "um" is —
       one-click remove-with-ripple, review list before applying.
 - [ ] Beat detection on the music bed → beat snap for cuts and markers.

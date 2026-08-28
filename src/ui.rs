@@ -870,6 +870,36 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
         }
+        // ── Tighten ─────────────────────────────────────────────────────
+        if ui
+            .button("✂ Tighten silence")
+            .on_hover_text(
+                "Cut the quiet air out of the whole edit and close up — \
+                 keeps 0.15s of breathing room around every cut. Undoable.",
+            )
+            .clicked()
+        {
+            app.editor.push_undo(&app.project);
+            let mut cache: std::collections::HashMap<String, Option<(Vec<f32>, f64)>> =
+                Default::default();
+            let mut supplier = |src: &str| -> Option<(Vec<f32>, f64)> {
+                cache
+                    .entry(src.to_string())
+                    .or_insert_with(|| {
+                        crate::waveform::compute(src)
+                            .map(|p| (p.data, crate::waveform::BUCKETS_PER_SEC))
+                    })
+                    .clone()
+            };
+            let (cuts, removed) = app.project.tighten(&mut supplier, 0.06, 0.6, 0.15);
+            app.status = if cuts == 0 {
+                "Nothing to tighten — no silences found.".into()
+            } else {
+                app.editor.mark_changed();
+                format!("Tightened: {cuts} cut(s), {removed:.1}s of silence removed.")
+            };
+        }
+
         // ── Frame export ────────────────────────────────────────────────
         if ui
             .button("📷 Export this frame")
@@ -2538,7 +2568,8 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 egui::pos2(x0, top + 2.0),
                 egui::pos2(x1.max(x0 + 2.0), top + lane_h - 2.0),
             );
-            let selected = app.editor.selected == Some(clip.id);
+            let selected =
+                app.editor.selected == Some(clip.id) || app.editor.multi.contains(&clip.id);
             let fill = if selected { base.linear_multiply(0.55) } else { base.linear_multiply(0.30) };
             painter.rect_filled(cr, 5.0, fill);
             painter.rect_stroke(
@@ -2691,7 +2722,23 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 });
             }
             if resp.clicked() || resp.drag_started() {
-                app.editor.selected = Some(clip.id);
+                let shift = ui.ctx().input(|i| i.modifiers.shift);
+                if shift {
+                    // Shift-click grows (or shrinks) the selection set; the
+                    // clicked clip becomes the primary the panel edits.
+                    if let Some(primary) = app.editor.selected {
+                        app.editor.multi.insert(primary);
+                    }
+                    if !app.editor.multi.insert(clip.id) {
+                        app.editor.multi.remove(&clip.id);
+                    }
+                    app.editor.selected = Some(clip.id);
+                } else if !app.editor.multi.contains(&clip.id) {
+                    app.editor.multi.clear();
+                    app.editor.selected = Some(clip.id);
+                } else {
+                    app.editor.selected = Some(clip.id);
+                }
             }
             let mut close_this = false;
             let mut close_all = false;
@@ -2781,8 +2828,29 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                     Drag::Move { id, grab } if id == clip.id => {
                         let (snapped, hit) = EditorState::snap(pt - grab, &targets, snap_tol);
                         snap_line = hit;
+                        let clamped = snapped.clamp(lo, hi.max(lo));
+                        let delta = app
+                            .project
+                            .clip(id)
+                            .map(|c| clamped - c.start)
+                            .unwrap_or(0.0);
                         if let Some(c) = app.project.clip_mut(id) {
-                            c.start = snapped.clamp(lo, hi.max(lo));
+                            c.start = clamped;
+                        }
+                        // A selection moves as one object.
+                        if delta.abs() > 1e-9 {
+                            let others: Vec<u64> = app
+                                .editor
+                                .multi
+                                .iter()
+                                .copied()
+                                .filter(|o| *o != id)
+                                .collect();
+                            for o in others {
+                                if let Some(c) = app.project.clip_mut(o) {
+                                    c.start = (c.start + delta).max(0.0);
+                                }
+                            }
                         }
                     }
                     Drag::TrimL { id } if id == clip.id => {

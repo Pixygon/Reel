@@ -751,6 +751,102 @@ impl Project {
         by
     }
 
+    /// Remove the quiet air from the edit: every span where the source's
+    /// audio envelope stays below `threshold` (a fraction of that source's
+    /// own peak) for at least `min_gap` seconds is cut out — keeping `pad`
+    /// seconds on each side so words never clip — and the timeline closes
+    /// up behind it. The podcast jump-cut, in one call.
+    ///
+    /// `peaks_for` supplies each source's envelope (waveform buckets/sec is
+    /// the caller's contract); returns (cuts made, seconds removed).
+    pub fn tighten(
+        &mut self,
+        peaks_for: &mut dyn FnMut(&str) -> Option<(Vec<f32>, f64)>,
+        threshold: f32,
+        min_gap: f64,
+        pad: f64,
+    ) -> (usize, f64) {
+        // Collect the TIMELINE windows to remove, clip by clip, before
+        // touching anything — cutting while scanning would shift the map.
+        let mut holes: Vec<(f64, f64)> = Vec::new();
+        let clips: Vec<Clip> = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .flat_map(|t| t.clips.iter().cloned())
+            .collect();
+        for c in &clips {
+            let Some((peaks, per_sec)) = peaks_for(&c.source) else { continue };
+            if peaks.is_empty() {
+                continue;
+            }
+            let bucket = 1.0 / per_sec;
+            let mut run_start: Option<f64> = None;
+            let src_from = c.in_point;
+            let src_to = c.in_point + c.source_len();
+            let i0 = (src_from * per_sec) as usize;
+            let i1 = ((src_to * per_sec) as usize).min(peaks.len());
+            for i in i0..=i1 {
+                let quiet = i < i1 && peaks.get(i).map(|p| *p < threshold).unwrap_or(false);
+                match (quiet, run_start) {
+                    (true, None) => run_start = Some(i as f64 * bucket),
+                    (false, Some(s0)) => {
+                        let s1 = i as f64 * bucket;
+                        if s1 - s0 >= min_gap + 2.0 * pad {
+                            // Trim the pad off each side, map to timeline.
+                            let (a, b) = (s0 + pad, s1 - pad);
+                            let t0 = c.start + c.output_time_for_source((a - c.in_point).max(0.0));
+                            let t1 = c.start + c.output_time_for_source((b - c.in_point).max(0.0));
+                            if t1 - t0 > 0.05 {
+                                holes.push((t0, t1));
+                            }
+                        }
+                        run_start = None;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if holes.is_empty() {
+            return (0, 0.0);
+        }
+        holes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Cut from the END backwards so earlier hole positions stay valid.
+        let mut removed = 0.0;
+        let mut cuts = 0;
+        for (t0, t1) in holes.iter().rev() {
+            self.split_at(*t0);
+            self.split_at(*t1);
+            // Everything fully inside [t0, t1] goes; the ripple closes up.
+            let doomed: Vec<u64> = self
+                .tracks
+                .iter()
+                .flat_map(|t| t.clips.iter())
+                .filter(|c| c.start >= t0 - 0.01 && c.end() <= t1 + 0.01)
+                .map(|c| c.id)
+                .collect();
+            let mut span = 0.0f64;
+            for id in doomed {
+                span = span.max(self.clip(id).map(|c| c.duration).unwrap_or(0.0));
+                self.delete_clip(id);
+            }
+            // Close the hole on every track.
+            let gap = t1 - t0;
+            for track in &mut self.tracks {
+                for c in &mut track.clips {
+                    if c.start >= t1 - 0.01 {
+                        c.start -= gap;
+                    }
+                }
+                track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+            }
+            removed += gap;
+            cuts += 1;
+            let _ = span;
+        }
+        (cuts, removed)
+    }
+
     /// Make sure a track of this kind exists, creating it if not. Overlay
     /// tracks are made on demand so a project that never uses one never shows
     /// an empty lane.
@@ -1238,6 +1334,9 @@ pub struct EditorState {
     /// The keyframe being dragged in the curve editor (index into the
     /// selected clip's track for `key_param`).
     pub curve_drag: Option<usize>,
+    /// Additional selected clips (shift-click). `selected` stays the
+    /// primary — the one the side panel edits.
+    pub multi: std::collections::HashSet<u64>,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -1278,6 +1377,7 @@ impl Default for EditorState {
             clipboard: None,
             key_param: Param::Exposure,
             curve_drag: None,
+            multi: std::collections::HashSet::new(),
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),
@@ -1588,6 +1688,36 @@ mod tests {
         assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
         assert!(c.clear_key(Param::Exposure, 2.0));
         assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
+    }
+
+    /// Tighten finds the quiet spans and closes them: the definition of the
+    /// podcast jump-cut. Envelope in, shorter timeline out — with the pads
+    /// protecting word edges and everything after each hole sliding up.
+    #[test]
+    fn tighten_removes_the_quiet_air_and_closes_up() {
+        let mut p = one_clip_project(); // 0..10s
+        // Envelope at 10 buckets/sec: loud 0..3s, SILENT 3..6s, loud 6..10s.
+        let mut peaks = vec![1.0f32; 100];
+        for b in peaks.iter_mut().take(60).skip(30) {
+            *b = 0.01;
+        }
+        let mut supplier = |_src: &str| Some((peaks.clone(), 10.0));
+        let (cuts, removed) = p.tighten(&mut supplier, 0.05, 0.5, 0.25);
+        assert_eq!(cuts, 1);
+        // 3s of silence minus 0.25s pad each side = 2.5s removed.
+        assert!((removed - 2.5).abs() < 0.15, "removed {removed:.2}s, wanted ~2.5");
+        assert!((p.duration() - 7.5).abs() < 0.15, "timeline is {:.2}s", p.duration());
+        // No overlaps, no gaps — the cut closed up.
+        let clips = &p.tracks[0].clips;
+        assert!(clips.len() >= 2);
+        for w in clips.windows(2) {
+            let gap = w[1].start - w[0].end();
+            assert!(gap.abs() < 0.02, "tighten left a {gap:.3}s seam");
+        }
+        // Nothing to cut → nothing happens.
+        let mut loud = |_s: &str| Some((vec![1.0f32; 100], 10.0));
+        let (c2, r2) = p.tighten(&mut loud, 0.05, 0.5, 0.25);
+        assert_eq!((c2, r2), (0, 0.0));
     }
 
     /// Roll moves a cut without moving the timeline's total length; slip

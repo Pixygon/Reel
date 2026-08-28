@@ -256,6 +256,16 @@ Flag a position in the timeline
 | `--remove` | — | Take it away instead |
 | `--list` | — | Show the markers |
 
+### `reel tighten PROJECT`
+
+Cut the silent air out of the edit and close up — the podcast jump-cut
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--threshold` | `0..1` | Quiet = below this fraction of the source's own peak (default 0.06) |
+| `--min-gap` | `SECONDS` | Only cut silences at least this long (default 0.6) |
+| `--pad` | `SECONDS` | Breathing room kept on each side of a cut (default 0.15) |
+
 ### `reel captions TARGET`
 
 Transcribe speech locally. TARGET is a .reel project or a media file

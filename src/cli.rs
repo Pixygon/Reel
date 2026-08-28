@@ -297,6 +297,17 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Flag a position in the timeline",
     },
     Cmd {
+        name: "tighten",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "threshold", value: Some("0..1"), help: "Quiet = below this fraction of the source's own peak (default 0.06)" },
+            Flag { name: "min-gap", value: Some("SECONDS"), help: "Only cut silences at least this long (default 0.6)" },
+            Flag { name: "pad", value: Some("SECONDS"), help: "Breathing room kept on each side of a cut (default 0.15)" },
+            F_JSON,
+        ],
+        help: "Cut the silent air out of the edit and close up — the podcast jump-cut",
+    },
+    Cmd {
         name: "captions",
         args: &["TARGET"],
         flags: &[
@@ -527,6 +538,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "title" => cmd_title(p),
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
+        "tighten" => cmd_tighten(p),
         "captions" => cmd_captions(p),
         "frame" => cmd_frame(p),
         "render" => cmd_render(p),
@@ -1302,6 +1314,40 @@ fn cmd_marker(p: &Parsed) -> Result<Output> {
     Ok(Output::new(
         format!("{} marker at {at:.2}s", if p.on("remove") { "Removed" } else { "Added" }),
         serde_json::json!({ "markers": proj.markers }),
+    ))
+}
+
+fn cmd_tighten(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let threshold = p.num::<f32>("threshold")?.unwrap_or(0.06).clamp(0.001, 0.9);
+    let min_gap = p.num::<f64>("min-gap")?.unwrap_or(0.6).max(0.1);
+    let pad = p.num::<f64>("pad")?.unwrap_or(0.15).max(0.0);
+    let mut proj = load(path)?;
+    let before = proj.duration();
+    let mut cache: HashMap<String, Option<(Vec<f32>, f64)>> = HashMap::new();
+    let mut supplier = |src: &str| -> Option<(Vec<f32>, f64)> {
+        cache
+            .entry(src.to_string())
+            .or_insert_with(|| {
+                crate::waveform::compute(src)
+                    .map(|p| (p.data, crate::waveform::BUCKETS_PER_SEC))
+            })
+            .clone()
+    };
+    let (cuts, removed) = proj.tighten(&mut supplier, threshold, min_gap, pad);
+    if cuts == 0 {
+        return Ok(Output::new(
+            "Nothing to tighten — no silences matched.",
+            serde_json::json!({ "cuts": 0, "removed": 0.0 }),
+        ));
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!(
+            "Tightened: {cuts} silence(s), {removed:.2}s removed ({before:.2}s → {:.2}s)",
+            proj.duration()
+        ),
+        serde_json::json!({ "cuts": cuts, "removed": removed, "duration": proj.duration() }),
     ))
 }
 
