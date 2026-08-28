@@ -4,6 +4,20 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.27.0] — 2026-08-28
+
+### Added
+- You can now add a second video track for picture-in-picture: drop a clip on the overlay track and drag it into place on the preview (a reaction cam, a logo, a screen inset). Position and size are stored as fractions of the frame, so what you place is exactly what renders, at any resolution.
+- Clips can now play at a different speed, from 0.25× to 4×, with the audio pitch/tempo adjusted to match. By default the clip's slot on the timeline resizes to fit the new speed, keeping the rest of the cut in place; a --keep-length option holds the slot and pulls more or less source instead.
+- New `reel pip` command to set an overlay clip's position (x/y) and size on the frame, and a new `reel speed` command to change how fast a clip plays.
+
+### Changed
+- The `reel add --track` flag now accepts `overlay` in addition to `video` and `audio`, for placing clips on the picture-in-picture track.
+
+### Improved
+- Timeline clips now show thumbnail previews of the footage along with the waveform, making it much easier to spot the shot you're looking for without scrubbing. Timeline lanes are also taller to fit both.
+
+
 ## [0.26.1] — 2026-08-28
 
 ### Added
