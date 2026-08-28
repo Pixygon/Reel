@@ -4,6 +4,19 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.28.0] — 2026-08-28
+
+### Added
+- Timeline exports now render through Reel's own GPU compositor, frame by frame, with ffmpeg only encoding the result — so what you see in the preview is exactly what you get in the exported file. The old filter-graph renderer is kept as an automatic fallback on machines without a usable GPU. _(808188d)_
+- You can now animate parameters over time with keyframes — exposure, contrast, saturation, zoom/pan, and picture-in-picture position/size/opacity. Set keyframes at the playhead or via the new `reel keyframe` CLI command (set/list/remove, with linear, hold or ease interpolation), then scrub the preview to see the curve play out exactly as it will render. _(808188d)_
+
+### Improved
+- Picture-in-picture overlays now play live in the preview instead of showing a static thumbnail, so you can see the inset clip actually moving while you position it. _(808188d)_
+
+### Fixed
+- Media and music files added via the CLI are now stored with their absolute path, so a project opened from a different working directory still finds its media instead of failing to locate it. _(808188d)_
+
+
 ## [0.27.0] — 2026-08-28
 
 ### Added
