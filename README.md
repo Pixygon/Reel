@@ -11,7 +11,7 @@ not the finished tool, but real, honest software you can build and run today.
 
 - **Plays video — through libmpv when present.** Open a file (Open… dialog,
   drag-and-drop, or `reel <path>`) and it plays immediately, aspect-fit.
-  With libmpv (the Milestone 1 hot path, auto-detected at runtime): hardware
+  With libmpv (the hot path, auto-detected at runtime): hardware
   decode, correct colour conversion, **audio with real A/V sync**, subtitles,
   and **frame-exact seek + live scrubbing**. Without it, the v0.1
   ffmpeg-subprocess decoder still works everywhere (keyframe seek, video only).
@@ -178,11 +178,14 @@ on the GPU end-to-end (render API GL/Vulkan interop, libplacebo-class output).
 
 ## Status
 
-A capable daily driver for playing, converting, capturing — and now cutting:
-trim/split/move, in-out ranges, multi-source timelines and GPU-accelerated
-renders of the edit all work. The frontier is compositing (effects,
-transitions, multi-track blending on the GPU) and the zero-copy playback
-surface. See [ROADMAP.md](ROADMAP.md) for the path to the stated bar.
+A capable daily driver for playing, converting, capturing — and editing:
+multi-track cutting with ripple tools, effects, crossfades, captions,
+titles, music with ducking, PiP, per-clip speed, waveforms and thumbnails,
+plus a complete headless CLI. The frontier is the engine rework — a GPU
+compositor with live multi-stream preview and frame-server rendering — that
+unlocks keyframes, ramps and everything beyond. [ROADMAP.md](ROADMAP.md) is
+the full, ordered map to the stated bar: replace Premiere, make a DAW
+unnecessary for video work, rival Photoshop for what creators actually do.
 
 **Download & docs: [reel.pixygon.io](https://reel.pixygon.io)** — one-line
 Linux install, Arch repo, Windows zip.

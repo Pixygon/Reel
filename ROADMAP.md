@@ -1,174 +1,464 @@
-# Reel — road to the bar
+# Reel — the road to best
 
-Two targets, stated plainly: **playback better than VLC**, **editing at the
-level of Premiere**. Neither is a v0.1 claim; this is the sequence that gets
-there. Linux is the reference platform; Windows/macOS follow each milestone.
+The bar, stated plainly: **the editor that replaces Premiere. The audio
+editor that makes a DAW unnecessary for video work. Image editing that
+rivals Photoshop for what creators actually do.** One door for all media,
+Linux first, local-first forever.
 
-Scope, widened deliberately: Reel is **one door for all media** — video,
-audio and images play/display in the same window, convert through the same
-export seam, and the screen itself is a source (screenshots + recording open
-straight into Reel). No separate viewer, converter and capture tools.
+This document is ordered by **dependency, not by date**. There are no time
+estimates anywhere in it, deliberately: the order is what matters, because
+almost everything in phases 3–5 is cheap once the engine work in phases 1–2
+exists, and almost everything is impossible-or-hacky without it.
 
-## Media unification (landed)
+## How to read this
 
-- [x] Audio playback through the same `Player`/transport (mpv; cover art
-      shown when embedded). Audio → MP3/M4A/Opus/FLAC/WAV conversion; audio
-      extraction from video.
-- [x] Image viewing through the same GPU path (instant open; GPU-limit-aware
-      downscale for display). PNG/JPEG/WebP conversion with resize.
-- [x] Screenshots (full/region/window) and screen recording, opening directly
-      in Reel. Recording is **built in**: xdg-desktop-portal ScreenCast +
-      PipeWire in-process → ffmpeg encode, with the system picker choosing
-      screen/window/region, best-effort system audio, and a persisted restore
-      token. External tools remain as opportunistic fallbacks.
-- [x] Audio visualizers (spectrum bars/spectrogram/vectorscope/waveform)
-      rendered through the playback engine's lavfi graph.
-- [x] SVG rasterization (resvg) into the image path, exportable to PNG/JPEG/WebP.
-- [x] ffmpeg auto-download on first launch when missing (mainly Windows).
-- [x] Desktop citizenship: self-installed "Open with" entry, first-run
-      default-apps prompt (Video/Music/Images checkboxes, ⚙ dialog),
-      Arch package with mpv+ffmpeg deps + system desktop entry, installer
-      that offers the codecs on any distro.
-- [ ] Waveform on the timeline, image crop/rotate, mic/camera overlay for
-      recordings, per-monitor shot pick, portal audio via PipeWire stream
-      (instead of the pulse monitor bridge).
-- [ ] Drag-and-drop on Wayland — blocked upstream (winit has no Wayland
-      file-drop); works on X11/Windows today. Revisit when winit lands it.
-- [ ] Windows file associations (registry) + installer polish.
+Reel today renders exports by *compiling the edit into an ffmpeg
+filter-graph string*. That approach carried us remarkably far — cuts,
+crossfades, effects, captions, titles, PiP, speed, music ducking are all
+live and pixel-tested — but it has a ceiling: every feature must be
+expressible as a static ffmpeg filter chain, and the preview must then
+*imitate* that chain and be tested against it. The parity tests exist
+because preview and render are two implementations of one idea.
 
-## Where v0.1 stands
+The single most important decision in this roadmap is to **remove that
+ceiling**: make Reel's own GPU compositor the renderer, and demote ffmpeg
+to decode and encode. Then the preview *is* the render — parity stops being
+a test and becomes a property — and keyframes, ramps, masks, tracking,
+layered images and live PiP all become one code path. Nearly everything
+else sequences behind that.
 
-Plays and scrubs video (ffmpeg-subprocess decode → wgpu texture → egui), and
-renders the NLE timeline from a real Project/Track/Clip model. Honest
-foundation, narrow feature set.
+## Principles that hold at every phase
 
-## Milestone 1 — playback that earns "better than VLC"
+These are not features; they are the constitution. A feature that violates
+one of these is wrong even if it works.
 
-The subprocess decoder is the v0.1 crutch; the performance bar needs the frame
-never leaving the GPU.
+- **Local-first, forever.** No accounts, no cloud calls, no telemetry. AI
+  features (captions today; more below) fetch open models to
+  `~/.cache/reel` and run on this machine. Working on a plane is a test
+  case, not an edge case.
+- **The preview never lies.** Whatever is on screen is what exports. Until
+  the frame-server lands this is enforced by pixel-comparison tests; after
+  it, by construction.
+- **Never lose work.** Autosave is already the only save. That extends to:
+  crash recovery, versioned project history, and no destructive operation
+  without undo — in the UI *and* the CLI.
+- **Measured, not guessed.** Every performance claim comes from `REEL_PERF`
+  or the `timing!` macro. Budgets (below) are tested, not aspired to.
+- **Everything the GUI can do, the CLI can do.** One `COMMANDS` table is
+  parser + help + machine spec. A feature without a CLI verb is unfinished.
+  Agents are first-class users.
+- **Every promise has a test that exercises the real thing** — real ffmpeg,
+  real whisper, real pixels measured in real renders, layout probed under
+  Xvfb. A feature whose test mocks the interesting part is untested.
+- **Honest docs.** README and this file describe reality. A checked box
+  means shipped and verified.
 
-- [x] Replace subprocess decode with **libmpv** (render API) as the hot path —
-      behind the existing `video::Player` API, UI untouched. libmpv is dlopen'd
-      at runtime; the subprocess decoder stays as the universal fallback
-      (`REEL_BACKEND=ffmpeg` forces it).
-- [x] **Hardware decode** (`hwdec=auto-copy-safe`: VA-API on Linux, D3D11VA
-      elsewhere) — copy-back for now; the zero-CPU-copy step is below.
-- [x] **Render at display size, not source size.** mpv renders (and we copy and
-      upload) only the pixels that reach the screen. Measured on a 4K60 clip in
-      a 1280px window: **15.1 ms → 4.0 ms per frame**, bus traffic 632 → 70 MB/s.
-- [x] **Reel's own GPU video pass** (`video_pass.rs` + `video.wgsl`): the
-      picture is drawn by our wgpu pipeline instead of egui's generic image
-      draw. Alpha is forced in the shader (a full CPU pass over every pixel of
-      every frame, deleted), stills keep real transparency, and this is the
-      seam colour management and compositing plug into.
-- [ ] **Zero-copy GPU surface** — the remaining step, and now a *smaller* win
-      than it looked: the copy path costs ~0.6 ms/frame at display size; the
-      remaining ~3 ms is mpv's software conversion. mpv's render API offers
-      OpenGL (not Vulkan), so this needs either wgpu-on-GL (a downgrade for
-      everything else) or dmabuf/external-memory import into our Vulkan
-      device. Worth doing for HDR/high-bit-depth output, not for frame rate.
-- [ ] libplacebo-class output: HDR tone-mapping, high-bit-depth, debanding
-      (rides on the interop above, or on libplacebo directly).
-- [x] Frame-accurate seek (`seek absolute+exact`) and A/V sync on mpv's own clock.
-- [x] Audio out + subtitle rendering (via mpv). — [ ] track selection UI,
-      audio passthrough.
+### Performance budgets (standing, tested)
 
-## Milestone 2 — an editor you'd actually cut in
+- Cold open: window < 400 ms, first frame < 1 s (today: ~300 ms / ~860 ms).
+- Scrub latency (click → frame on screen): < 50 ms on mpv path.
+- Timeline interaction at 60 fps with 1,000+ clips (today: 1,800 clips open
+  in ~1 s; keep it).
+- Idle = zero CPU: `ControlFlow::Wait` discipline, no busy loops, ever.
+- Export ≥ realtime on hardware encoders for 1080p H.264 cuts.
 
-- [x] Trim handles on clips (edge-drag adjusts in-point/duration); drag to
-      move with edge/playhead snapping; split at playhead (S); delete;
-      selection; zoomable/pannable timeline with an adaptive ruler.
-- [x] Undo/redo (whole-model snapshots over the serde model).
-- [x] Save/open `.reel` project documents — double-clicking a .reel opens
-      straight into the editor with the source loaded at the playhead.
-- [x] Editor playback **sequences the cut**: the timeline playhead is
-      timeline-time (not source-time), previews the frame under it while
-      scrubbing, and playback jumps clip→clip across trims and gaps.
-- [x] Multi-source timelines (opening a file while editing imports it).
-- [x] Per-clip effects (exposure/contrast/saturation/fades) previewed on the
-      GPU pass and rendered identically — see Milestone 3.
-- [x] Close gaps (right-click a clip: close the gap before it, or every gap).
-- [x] Autosave — projects save themselves after each edit; no Save button.
-- [x] Ripple delete (Shift+Delete) and ripple trim to playhead (Q/W), linked
-      across tracks; J-K-L shuttle with true reverse playback.
-- [x] **Local auto-captions** — one button, transcribed on this machine, with
-      the engine and model fetched automatically. Cues map through the edit
-      (clipped per clip), preview exactly where they burn in, and burn into
-      the render. The competitive point: CapCut's captions go to a cloud,
-      and the open-source route "takes scripts and setup" — this takes
-      neither.
-- [x] **Titles** — text placed by dragging it on the preview, stored as
-      frame fractions so the preview and any export resolution agree.
-- [x] **Audio that behaves** — per-clip gain, a music bed, and automatic
-      ducking under speech (sidechain, no curves to draw).
-- [x] **Waveforms on clips** — decoded off-thread, cached per source.
-- [x] Copy/paste/duplicate (paste inserts and ripples, never overwrites) and
-      markers with jump-to-next/previous.
-- [x] **Thumbnails on clips** — one ffmpeg call bakes a tiled contact sheet
-      per source, so a whole timeline costs one texture per file.
-- [x] **A second video track (overlay / PiP)** with drag-to-place composition,
-      rendered through ffmpeg `overlay` from the same frame fractions the
-      preview draws. The inset previews as a still, not live video.
-- [x] **Per-clip speed** (0.25×–4×), audio tempo included.
-- [ ] Speed RAMPS (accelerating through a shot) and keyframed effects.
-- [ ] Roll edits; live compositing of the overlay in the preview.
-- [x] A second video track composited at render time (see Milestone 2 above).
-- [ ] Multi-track compositing on the GPU so the overlay plays live in the
-      preview — today its position and size are exact but the inset is a still.
+---
 
-## Milestone 3 — finish & polish
+## Phase 0 — Landed (the foundation this stands on)
 
-- [x] **Convert/export of the source file** (the HandBrake seam, straight from
-      the player): H.264/H.265/AV1/VP9 + lossless remux, quality presets/CRF,
-      downscale, audio modes, live progress + cancel.
-- [x] **Timeline export** — the cut renders to a new file (ffmpeg
-      trim+concat filter graph over the V1 segments, audio in lockstep,
-      optional downscale). The dialog offers "Source file" vs "✂ The edit"
-      and defaults to the edit when you're in the editor.
-- [x] **Hardware encoding** — NVENC / VideoToolbox, probed at runtime with a
-      real trial encode, quality-targeted (cq mirrors the CRF ladder), with a
-      dialog toggle and automatic software fallback (VP9, no GPU, or
-      `REEL_NO_HWENC=1`). VAAPI/QSV need hwupload plumbing — later.
-- [x] **In/out range export** — I/O set markers, Shift+I/O clears; the
-      timeline shades outside the range and playback stops at the out point;
-      the dialog offers "✂ Range" and renders exactly what's enclosed.
-- [x] **Multi-source timelines** — opening a file while editing imports it
-      onto the timeline; the preview switches source files as the playhead
-      crosses clips (one mpv instance, `loadfile`); renders normalise every
-      segment (fit+letterbox, square pixels, one fps, one audio format) so
-      mixed resolutions/codecs/rates concatenate correctly.
-- [x] **One-click social presets** — YouTube (1080p/4K), TikTok, Reels/Shorts,
-      Instagram feed (4:5), Square, Facebook, X. Each carries the frame, the
-      fit (letterbox / crop / blurred sides) and the codec, and names the
-      output per platform so the TikTok and YouTube cuts sit side by side.
-- [x] **Per-clip effects with preview/render parity** — exposure, contrast,
-      saturation, fade in/out. One formula (`effects.rs`) drives BOTH the
-      preview shader and the ffmpeg render, and a test drives real ffmpeg and
-      compares its pixels against that formula, so the editor cannot lie.
-- [x] **Render queue** — line up every platform (＋ Queue), jobs run one at a
-      time with live progress, per-job results and cancel-all.
-- [x] **Crossfade transitions** — per-clip "crossfade in", rendered with
-      xfade/acrossfade (clips overlap, so the export gets shorter by exactly
-      the fade); the timeline draws the overlap wedge and the export dialog
-      reports the true rendered duration. The preview still shows the cut —
-      compositing two clips live needs a second decoder (next step).
-- [x] **Reframe (zoom/pan)** — put a landscape shot inside a vertical frame
-      without blurred sides. Preview UV maths and the ffmpeg scale+crop share
-      one geometry, checked by a test.
-- [ ] ProRes; transition types beyond crossfade; preview compositing of
-      transitions (second decoder).
-- [ ] Audio levels/mixer.
-- [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
-- [ ] Proxy workflow for heavy media; background conform.
+Compressed inventory; details in git history and CLAUDE.md.
 
-## Milestone 4 — the Pixygon seam
+- [x] **Playback**: libmpv (dlopen'd, never linked) behind the `video::Player`
+      seam; ffmpeg-subprocess universal fallback; hardware decode upgrade
+      after first second; render-at-display-size (4K60: 15.1 → 4.0 ms/frame);
+      Reel's own wgpu draw pass; J-K-L shuttle with true reverse; frame step;
+      A-B loop; fullscreen; fading overlay chrome; audio visualizers.
+- [x] **One door**: video, audio (cover art), images (SVG included,
+      GPU-limit-aware), screenshots and built-in portal/PipeWire screen
+      recording all open through `app.open()`.
+- [x] **Editor**: multi-track timeline (V1/A1 + on-demand overlay track),
+      trim/move/split/ripple/close-gaps, snapping, undo/redo, autosave
+      (no Save button), markers, copy/paste/duplicate (paste = insert),
+      in/out range, per-clip effects (exposure/contrast/saturation/fades/
+      zoom-pan reframe) with preview=render parity tests, crossfades,
+      per-clip gain + speed (0.25–4×, audio tempo matched), PiP overlay
+      (drag-to-place, fraction-exact), waveforms and thumbnails on clips.
+- [x] **Captions**: whisper.cpp subprocess, engine+model auto-fetched, cues
+      mapped through the edit, styled burn-in, preview matches render
+      (PlayResY=288 lesson), SRT export. Nothing uploaded, ever.
+- [x] **Titles**: drag-placed, frame-fraction geometry, ASS-rendered,
+      resolution-independent by test.
+- [x] **Audio**: music bed with sidechain ducking (verified by band-level
+      measurement in real renders), per-clip gain.
+- [x] **Export**: H.264/265/AV1/VP9/remux + audio/image outputs, CRF tiers,
+      social presets (fit modes incl. blurred-fill), trial-probed hardware
+      encoders (NVENC/VideoToolbox), render queue, timeline export through
+      one filter graph with normalization for mixed sources.
+- [x] **CLI**: 22 headless verbs, one-table design, `--json` everywhere,
+      `reel commands --json` machine spec, AGENTS.md + docs/CLI.md + /cli.
+- [x] **FOSS**: public repo, MIT, no telemetry. Site, installer, Arch repo,
+      CDN releases, latest.json flow.
 
-- [ ] Publish exports straight to Bunny CDN / a pearl's media pipeline.
-- [ ] Optional PixygonAPI sign-in; project sync.
-- [ ] `pearl build` release cadence (Linux + Windows now, macOS once the SDK is seeded).
+Known debts carried forward: PiP previews as a still; transitions preview as
+a cut; no Wayland file-drop (upstream); Sponsors not yet enabled; macOS
+build does not exist yet.
 
-## Non-negotiables
+---
 
-- The frame stays on the GPU. Every architecture choice defers to that.
-- One binary per platform, built here → CDN. No web runtime in the hot path.
-- The `Player` API stays stable as the decode backend is swapped underneath it.
+## Phase 1 — The Engine: own the frame, own the sound
+
+Everything after this phase composes on top of it. This is the deepest work
+in the roadmap and the least visible — and it is what separates "a neat tool"
+from "replaces Premiere".
+
+### 1.1 The GPU compositor (the frame graph)
+
+The current `video_pass` draws *one* textured quad with an effect uniform.
+It becomes a real compositor:
+
+- [ ] A render graph: N layers → transform (position/scale/rotate/crop) →
+      effect stack per layer → blend (normal/add/multiply/screen/overlay,
+      opacity) → output frame. All wgpu; layers are textures whatever their
+      origin (video frame, image, title raster, generated).
+- [ ] Every parameter of every node addressable by (track, clip, param) —
+      this exact addressing is what keyframes (Phase 2) animate and what the
+      CLI reads/writes.
+- [ ] Masks as first-class layer inputs: rectangle/ellipse/bezier, feather,
+      invert. (Drawn masks; tracked masks come with tracking in Phase 3.)
+- [ ] Scopes taps: the compositor can cheaply hand back histogram /
+      waveform / vectorscope data for any node's output. UI in Phase 3;
+      the tap belongs to the engine.
+- [ ] 10-bit and float16 pipeline end-to-end: textures, blends, effects in
+      linear light where correct (effects already know the sRGB dance);
+      dither only at output.
+
+### 1.2 Multi-stream decode
+
+One mpv instance decodes one source. The editor needs frames from several
+sources at once (PiP live, transitions previewing both sides, multicam):
+
+- [ ] A decoder pool behind a `FrameSource` trait: give me source S at time
+      T → GPU texture. mpv instances and/or direct libav decode; pooled,
+      LRU-evicted, prefetching around each playhead consumer.
+- [ ] Zero-copy where the platform allows (VA-API/dmabuf → Vulkan import;
+      D3D11 shared textures on Windows), CPU upload as the universal
+      fallback. The seam is the trait; the copies are an implementation
+      detail to be eliminated per-platform.
+- [ ] A frame cache keyed (source, time, size) so scrubbing back over
+      recently shown footage is instant.
+- [ ] Proxy generation: background-transcode heavy sources (H.265 4K, long
+      GOP) to cheap editing proxies; automatic, invisible, and always
+      re-linked to full-res at export. This is how a laptop edits 4K.
+
+### 1.3 The frame-server renderer
+
+- [ ] Export = the compositor rendering the timeline frame-by-frame at
+      render resolution, piping raw frames into ffmpeg **only to encode**
+      (`rawvideo → -c:v …`). Audio likewise (1.4).
+- [ ] The filter-graph compiler stays for `convert` (single-file transcode,
+      where it is the right tool) and as a compatibility fallback, then
+      retires from timeline duty.
+- [ ] The parity test suite flips its role: instead of proving preview ≈
+      ffmpeg-graph, it proves frame-server output ≈ the old graphs for
+      every existing feature (cuts, fades, effects, captions, titles, PiP,
+      speed) before the switch is thrown. No regression, then no ceiling.
+- [ ] Render stays cancellable, progress-reported, queueable — the existing
+      job plumbing survives; only the frame source changes.
+
+### 1.4 The audio engine
+
+mpv currently plays whichever single source is loaded; export audio is an
+ffmpeg graph. Neither can express "the timeline, mixed, live":
+
+- [ ] Reel's own mixer: sample-accurate pull graph — clip readers (with
+      resample + tempo) → per-clip gain/fade → per-track strip
+      (gain/pan/mute/solo) → per-track insert effects → master bus →
+      output device (cpal) *and* export sink. `f32` throughout.
+- [ ] Editor playback switches to it: video chases the audio clock (the
+      standard discipline), mpv remains the *player-mode* engine where it
+      is excellent.
+- [ ] Waveform/loudness taps for meters (UI in Phase 4; taps live here).
+- [ ] Latency-compensated so inserted effects don't skew sync.
+
+### 1.5 Color management
+
+- [ ] Tag every source with its transfer/primaries (probe: BT.709, BT.2020
+      PQ/HLG, sRGB); convert into the working space on decode; convert out
+      on export. Wrong-looking HDR→SDR footage is a Premiere complaint we
+      can simply not have.
+- [ ] Tone-mapped HDR→SDR (and pass-through HDR→HDR export for the codecs
+      that carry it).
+- [ ] Display: detect/assume sRGB display initially; wide-gamut display
+      support later — the seam (working space → display transform) exists
+      from day one.
+
+**Exit criteria for Phase 1**: PiP plays live in the preview. A crossfade
+previews as a crossfade. A 4K HEVC file edits smoothly on modest hardware
+via proxies. Export runs through the frame server with the parity suite
+green. Multitrack audio mixes live under the preview.
+
+---
+
+## Phase 2 — Time: keyframes, ramps, and animation
+
+The engine gives us addressable parameters; this phase makes them move.
+
+- [ ] **Keyframes on every numeric parameter** — effects, transform, PiP
+      geometry, gain, pan, title position/size/opacity — one system, not
+      per-feature hacks. Linear / hold / bezier interpolation with editable
+      handles.
+- [ ] Curve editor in the timeline (a lane that unfolds under a clip), plus
+      "diamond" affordances on sliders: add/step/clear keyframe at playhead.
+- [ ] **Speed ramps**: clip time remapped by a curve (the keyframe system
+      applied to time itself). Frame-blend first; optical-flow interpolation
+      later as a quality tier. Audio follows with chained tempo, or detaches
+      above the threshold where tempo mangles it.
+- [ ] **Animated titles**: position/opacity/size keyframes + a starter set
+      of motion presets (fade, slide, pop, typewriter). Presets are just
+      keyframe templates — no second system.
+- [ ] Ken Burns for stills (a transform preset over a still's duration).
+- [ ] CLI: `reel keyframe` verbs (set/list/clear, param addressed by the
+      Phase-1 naming); ramps and animations fully scriptable.
+- [ ] Tests: rendered-pixel checks that a keyframed parameter actually
+      changes mid-render and lands its bezier midpoints where the curve
+      says; ramp test proves duration and audio sync stay honest.
+
+---
+
+## Phase 3 — The full NLE (Premiere parity, then past it)
+
+With engine + keyframes, these are features, not architecture. Ordered
+within the phase by editor-workflow importance:
+
+### 3.1 Edit mechanics
+- [ ] Roll, slip and slide edits (trim both sides / move the window inside
+      a clip / move a clip between neighbours) with keyboard equivalents.
+- [ ] Multi-select (click-drag lasso, shift-click), group move/delete,
+      track targeting for paste/insert.
+- [ ] Explicitly linked A/V clips (cut together, trim together, unlinkable).
+- [ ] Unlimited tracks of every kind; track headers (name, lock, mute/solo,
+      target); track resize.
+- [ ] Compound clips (nest a sequence as a clip; open-in-place to edit).
+- [ ] Adjustment layers: an effect stack over a time range, applied to
+      everything below — trivially expressible in the frame graph.
+- [ ] Insert/overwrite edit modes from the source side; three-point editing.
+
+### 3.2 Media management
+- [ ] Media pool: bins/folders, thumbnails, metadata (resolution, codec,
+      fps, duration, date), search-as-you-type.
+- [ ] Relink flow for moved/missing media (the .reel stores paths; offer
+      per-folder relink); "offline" placeholder rendering, never a crash.
+- [ ] Source monitor: preview any pool item with in/out before it touches
+      the timeline.
+- [ ] **Multicam**: sync by audio waveform correlation (we already decode
+      peaks), cut between angles live with number keys.
+
+### 3.3 The look
+- [ ] Curves (master + per-channel), levels, HSL qualifiers, white balance,
+      LUT loading (.cube) — all as frame-graph effect nodes, all keyframable
+      by construction.
+- [ ] Scopes panel: histogram, RGB waveform, vectorscope (taps from 1.1).
+- [ ] **Chroma key** (green screen): GPU chroma distance + spill removal +
+      matte choke/feather. A pixel test against a synthetic green-screen
+      render.
+- [ ] Masks on any effect (from 1.1) + **point tracking** to drive them
+      (track a region, attach a mask/PiP/title to the track). Classic
+      template matching first; optical flow upgrade later.
+- [ ] Stabilization (vidstab two-pass or own path through the tracker).
+- [ ] Blur/sharpen/glow/vignette/grain — the bread-and-butter stack.
+- [ ] Transition library beyond crossfade: dip-to-color, wipe, slide, zoom,
+      blur-through — each a two-input frame-graph node, previewed live.
+
+### 3.4 Delivery
+- [ ] Per-platform publish presets grow into a **publish panel**: filename
+      templating, burn-in toggles (captions on/off per output), several
+      outputs from one timeline in one pass.
+- [ ] Chapters from markers (MP4/MKV chapter atoms; YouTube chapter text on
+      the clipboard).
+- [ ] Watch-folder / hot-render mode via CLI (`reel render --watch` is the
+      agent-era version of Adobe Media Encoder).
+- [ ] Frame export (the current frame → PNG) from player and editor.
+
+### 3.5 Captions, matured
+- [ ] Word-level timestamps (whisper supports it) → karaoke/word-pop styles
+      and exact text-based editing (Phase 4.4).
+- [ ] Caption editor: click a cue to fix wording/timing; styles (font,
+      color, background pill, position presets); per-cue overrides.
+- [ ] Import/export SRT/VTT/ASS; translation-ready structure (cue text is
+      data, styles are separate).
+
+**Exit criteria for Phase 3**: an editor who cuts talking-head + b-roll +
+music videos for a living can move from Premiere and lose nothing they
+touch weekly — and gains local captions, honest performance, and a CLI.
+
+---
+
+## Phase 4 — Audio: the best audio editor a video editor ever shipped
+
+The engine (1.4) makes these tractable; captions make some of them unique.
+
+- [ ] **Mixer panel**: per-track strips (fader, pan, mute/solo, meters),
+      master strip with true-peak + LUFS meters.
+- [ ] Insert effects per track/clip: parametric EQ (with spectrum overlay),
+      compressor, limiter, gate, de-esser. Visual, keyframable, and each
+      one verified by measurement tests (band levels, gain reduction), the
+      way the ducker already is.
+- [ ] **Repair suite**, all local: broadband noise reduction (RNNoise or
+      spectral gating), de-hum (notch at mains + harmonics), de-click,
+      de-ess. One-button "Fix voice" chain with sensible defaults.
+- [ ] **Loudness delivery**: EBU R128 / platform targets (−14 LUFS YouTube,
+      etc.) — measure, then normalize the master automatically per preset.
+      A render test asserts the delivered integrated loudness.
+- [ ] Clip fade handles with curve choice (linear/equal-power/exp) directly
+      on the timeline; crossfade by overlap, as video does.
+- [ ] **Silence removal**: detect gaps, tighten to a rhythm (podcast jump-cut
+      editing in one command; `reel tighten` in the CLI).
+- [ ] **Filler-word removal**: captions know where every "um" is —
+      one-click remove-with-ripple, review list before applying.
+- [ ] Beat detection on the music bed → beat snap for cuts and markers.
+- [ ] Time-stretch without pitch (rubberband-class) for music fitting;
+      "fit music to edit length" as a command.
+- [ ] Voice recording straight into a track (cpal input), with punch-in.
+- [ ] Room tone generation (sample a quiet span, fill gaps with it).
+
+**Exit criteria**: a podcast or voice-over video never needs Audacity/
+Audition: record, repair, tighten, level, deliver at target loudness —
+inside the cut, undoable, scriptable.
+
+---
+
+## Phase 5 — Images: rival Photoshop where creators live
+
+Not a Photoshop clone — the 95% creators actually do, done natively in the
+same engine. A still is a one-frame composition; every video effect that
+makes sense for a still already works on one. That unification is the
+feature.
+
+- [ ] **Layer stack for stills**: the frame graph applied to a canvas —
+      image layers, text layers (titles.rs), shape layers, adjustment
+      layers; blend modes and opacity per layer; reorder, group. Saved in
+      the project format; exports flatten.
+- [ ] **Non-destructive adjustments**: the Phase-3 color stack (curves,
+      levels, HSL, WB, LUTs) on any layer or the whole canvas.
+- [ ] **Selections & masks**: rect/ellipse/freehand/polygon; feather/invert/
+      grow; paint a mask with a brush; masks drive any adjustment.
+- [ ] Crop/rotate/straighten/perspective; canvas resize vs image resize
+      done right; high-quality resampling (Lanczos already in the chain).
+- [ ] **Retouch**: clone stamp, spot heal (patch-match inpainting), red-eye.
+      GPU-assisted where it matters.
+- [ ] **Local-model magic, same pattern as captions** (fetched once, run
+      locally, never uploaded):
+      - Background removal / subject cut-out (U²-Net-class segmentation).
+      - Smart select ("select subject") feeding the mask system.
+      - 2×/4× upscale (Real-ESRGAN-class) as an export option for stills
+        *and* a quality tier for video reframes.
+- [ ] Brushes: basic round brush/eraser with pressure (tablet input via
+      winit), color picker, swatches. Painting is in scope; a full digital-
+      painting suite is not.
+- [ ] Text on images = titles, verbatim: same fractions, same fonts, same
+      styles. A lower-third designed on a video drops onto a thumbnail
+      unchanged.
+- [ ] **Thumbnail workflow** (the creator loop): grab frame from the edit →
+      image canvas with subject cut-out → title + shapes → export PNG/WebP
+      at platform size. Three clicks end to end, and a CLI recipe.
+- [ ] Batch: every image operation available on N files via the CLI
+      (`reel convert` grows `--script` or a small op pipeline).
+- [ ] RAW ingest (via embedded dcraw-class decode) — view and basic-develop.
+
+**Exit criteria**: banners, thumbnails, screenshots-annotated, product
+shots, social crops — none of them require leaving Reel; each is scriptable.
+
+---
+
+## Phase 6 — Capture, everywhere, properly
+
+- [ ] Live **capture preview** (see what you're recording), pause/resume,
+      and a mic track alongside system audio, mixed by the Phase-1 audio
+      engine.
+- [ ] Webcam as a source (V4L2/PipeWire): record it, PiP it live over a
+      screen recording (the streamer layout), or use it as a multicam angle.
+- [ ] Replay buffer ("keep the last 60 s") — the clip-anything feature.
+- [ ] Region capture with a real region-drag UI where the portal allows.
+- [ ] **Windows capture backend** (Windows.Graphics.Capture + WASAPI
+      loopback) — capture parity off Linux.
+- [ ] Portal audio fully via PipeWire stream (drop the pulse-monitor
+      bridge).
+- [ ] Direct **virtual camera** output (v4l2loopback) — present any Reel
+      composition as a camera. The seam to "Reel as a streaming tool"
+      without becoming OBS.
+
+---
+
+## Phase 7 — Platforms, ecosystem, longevity
+
+### 7.1 Platforms
+- [ ] **macOS**: the build (VideoToolbox encode already contemplated in the
+      probe design; ScreenCaptureKit for capture; notarized dmg;
+      self-hosted runner exists in pearl).
+- [ ] Windows polish: file associations (registry), installer,
+      code-signing, winget/scoop manifests.
+- [ ] Linux packaging beyond Arch: Flatpak (portals we already speak),
+      AppImage, AUR official, Debian/Fedora repos.
+- [ ] Wayland file-drop the moment winit lands it (tracked upstream).
+
+### 7.2 The agent platform
+- [ ] CLI parity as a standing rule (every phase above lands its verbs).
+- [ ] `reel serve`: a long-lived JSON-RPC/stdio session — same verbs, no
+      process-per-command, plus *subscriptions* (render progress, caption
+      progress) for orchestrators.
+- [ ] **MCP server mode**: the `commands` table exposed as MCP tools, so
+      any agent runtime drives Reel natively. The one-table design means
+      this is a projection, not a second implementation.
+- [ ] Machine-readable project schema (JSON Schema for `.reel`) published
+      and versioned; migration guaranteed forwards.
+- [ ] A cookbook of agent recipes (docs/): "clip highlights from a stream
+      VOD", "caption + tighten + publish shorts from a podcast", "thumbnail
+      from frame 00:12".
+
+### 7.3 Extensibility
+- [ ] Effect plugins as **WGSL fragments** with a declared parameter block —
+      loaded from `~/.config/reel/effects`, hot-reloaded, keyframable like
+      built-ins, shareable as single files.
+- [ ] Title/motion preset format (keyframe templates as data) with an
+      in-app browser; community presets are just files.
+- [ ] Raw ffmpeg filter escape hatch per clip for power users (clearly
+      marked "expert; preview via frame-server still honest").
+- [ ] LADSPA/LV2 hosting for audio inserts (the Linux-native audio plugin
+      world, for free).
+
+### 7.4 Being a good citizen of someone's work
+- [ ] Project history: periodic snapshots + named versions; "restore from
+      an hour ago" without ceremony. Crash recovery restores the exact
+      editor state.
+- [ ] Accessibility: complete keyboard operation, AccessKit wiring for
+      screen readers, UI scale, reduced-motion mode.
+- [ ] Localization scaffolding (the string table exists before the second
+      language does).
+- [ ] Theme system (the palette is already tokens; make it user-facing).
+
+### 7.5 Sustainability
+- [ ] GitHub Sponsors live (org toggle pending) + donation link on the
+      site; funding goes to keeping the promise: local, free, no strings.
+- [ ] CONTRIBUTING.md + labeled starter issues; CI running the full suite
+      (including Xvfb visual checks) on PRs.
+- [ ] A public benchmark page: cold-open, scrub latency, export speed
+      against Premiere/Resolve/Shotcut on identical footage — measured,
+      reproducible, updated per release. We win by measuring in public.
+
+---
+
+## The order, compressed
+
+```
+1  Engine        GPU compositor · decoder pool/proxies · frame-server render · audio mixer · color
+2  Time          keyframes → curves → speed ramps → animated titles
+3  NLE           roll/slip/slide → media pool → multicam → color tools/scopes/key/track → transitions → delivery → captions v2
+4  Audio         mixer UI → EQ/dynamics → repair → loudness → silence/filler removal → beats → recording
+5  Images        layer stack → selections/masks → retouch → local models (cutout/upscale) → thumbnail loop → batch
+6  Capture       live preview/mic/webcam → replay buffer → Windows backend → virtual camera
+7  Platform      macOS/Windows/Flatpak → serve/MCP → plugins → history/a11y/i18n → sponsors/CI/benchmarks
+```
+
+Phases 3–7 interleave freely once 1–2 exist; nothing in them blocks anything
+else. Within each phase the list is the priority order. When reality
+disagrees with this document, reality wins — and this document gets edited.
