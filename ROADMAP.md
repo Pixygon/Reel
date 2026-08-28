@@ -120,8 +120,18 @@ never leaving the GPU.
       saturation, fade in/out. One formula (`effects.rs`) drives BOTH the
       preview shader and the ffmpeg render, and a test drives real ffmpeg and
       compares its pixels against that formula, so the editor cannot lie.
-- [ ] Render queue; ProRes; transitions between clips (crossfade needs two
-      textures in the preview pass); per-clip transform/crop.
+- [x] **Render queue** — line up every platform (＋ Queue), jobs run one at a
+      time with live progress, per-job results and cancel-all.
+- [x] **Crossfade transitions** — per-clip "crossfade in", rendered with
+      xfade/acrossfade (clips overlap, so the export gets shorter by exactly
+      the fade); the timeline draws the overlap wedge and the export dialog
+      reports the true rendered duration. The preview still shows the cut —
+      compositing two clips live needs a second decoder (next step).
+- [x] **Reframe (zoom/pan)** — put a landscape shot inside a vertical frame
+      without blurred sides. Preview UV maths and the ffmpeg scale+crop share
+      one geometry, checked by a test.
+- [ ] ProRes; transition types beyond crossfade; preview compositing of
+      transitions (second decoder).
 - [ ] Audio levels/mixer.
 - [x] Native file dialogs (rfd) and drag-and-drop open. — [ ] thumbnails/waveforms.
 - [ ] Proxy workflow for heavy media; background conform.

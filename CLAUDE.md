@@ -16,11 +16,15 @@ cargo run --release -- <file>  # run; opens and auto-plays the file
 RUST_LOG=info … reel <file>    # logs which playback backend engaged
 REEL_BACKEND=ffmpeg …          # force the subprocess fallback
 pearl ship                     # ship ritual: test → draft → ship → commit (builds lin+win → CDN)
-# AFTER every pearl ship: update ~/repos/ReelSite/latest.json to the new
-# version, commit+push, and trigger the Coolify deploy (app uuid
-# j3agln7m9aqo8j88nqnou5j1). The CDN caches manifest.json for 30 days with no
-# purge, so the site's latest.json is the ONLY fresh "latest" pointer —
-# installs and the download buttons read it first.
+# AFTER every pearl ship: VERIFY the release actually landed before touching
+# the site — `pearl ship` sometimes prints "✓ committed (no release)" and cuts
+# nothing (re-running it then ships). Check:
+#   curl -sI https://pixygontech.b-cdn.net/releases/reel/vX.Y.Z/reel-linux-x86_64.tar.gz
+# THEN update ~/repos/ReelSite/latest.json, commit+push, trigger the Coolify
+# deploy (app uuid j3agln7m9aqo8j88nqnou5j1). Pointing latest.json at a
+# version that was never uploaded serves 404s to every download button.
+# The CDN caches manifest.json for 30 days with no purge, so the site's
+# latest.json is the ONLY fresh "latest" pointer.
 ```
 
 ## Architecture rules (the non-negotiables)
