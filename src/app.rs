@@ -42,6 +42,9 @@ pub struct ReelApp {
     pub export_timeline: bool,
     /// Queued exports — line up every platform, then walk away.
     pub queue: export::Queue,
+    /// A captioning run in progress (local, on a worker thread).
+    pub captions_job: Option<crate::captions::Job>,
+    pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
@@ -98,6 +101,8 @@ impl ReelApp {
             export: None,
             export_timeline: false,
             queue: export::Queue::default(),
+            captions_job: None,
+            caption_model: crate::captions::Model::BaseEn,
             picker: None,
             opening: None,
             shot_rx: None,
@@ -588,6 +593,8 @@ impl ReelApp {
             export::Job::Timeline {
                 segments,
                 project: (self.project.width, self.project.height, self.project.fps),
+                captions: self.project.captions.clone(),
+                caption_size: self.project.caption_size,
             }
         } else {
             let Some(path) = self.media_path() else { return };
@@ -652,6 +659,52 @@ impl ReelApp {
                 log::warn!("autosave failed for {path}: {e}");
             }
         });
+    }
+
+    /// Generate captions for the edit, entirely on this machine. One button:
+    /// the model is fetched on first use, nothing is uploaded.
+    pub fn start_captions(&mut self) {
+        if self.captions_job.is_some() {
+            return;
+        }
+        let Some(src) = self.media_path() else { return };
+        self.captions_job = Some(crate::captions::start(&src, self.caption_model));
+        self.status = "Captioning — this stays on your machine.".into();
+    }
+
+    /// Collect a finished captioning run.
+    pub fn poll_captions(&mut self) {
+        let Some(job) = &self.captions_job else { return };
+        let st = job.state();
+        if !st.finished {
+            return;
+        }
+        self.captions_job = None;
+        match st.error {
+            Some(e) if e == "cancelled" => self.status = "Captioning cancelled.".into(),
+            Some(e) => self.status = format!("Captions: {e}"),
+            None => {
+                // Cues come back in SOURCE time. Map each window onto every
+                // place it survives in the edit, so trims, splits, reorders
+                // and duplicated clips all caption correctly.
+                let mut mapped = Vec::new();
+                let src = self.media_path().unwrap_or_default();
+                for cue in st.cues {
+                    for (start, end) in self.project.map_source_window(&src, cue.start, cue.end) {
+                        mapped.push(crate::captions::Cue {
+                            start,
+                            end,
+                            text: cue.text.clone(),
+                        });
+                    }
+                }
+                mapped.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+                let n = mapped.len();
+                self.editor.push_undo(&self.project);
+                self.project.captions = mapped;
+                self.status = format!("{n} captions added — they burn in on export.");
+            }
+        }
     }
 
     /// Advance the render queue; keeps the UI repainting while it works.
@@ -940,6 +993,7 @@ impl ReelApp {
         self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
             || self.queue.is_busy()
+            || self.captions_job.is_some()
             || self.picker.is_some()
             || self.opening.is_some()
             || self.shot_rx.is_some()

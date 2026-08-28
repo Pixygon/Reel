@@ -518,12 +518,22 @@ mod tests {
         }
         let fixture = format!("{}/tests/fixture.mp4", env!("CARGO_MANIFEST_DIR"));
         let mut p = Player::open(&fixture).expect("open fixture");
-        p.seek(1.6);
-        for _ in 0..20 {
-            p.update();
-            std::thread::sleep(Duration::from_millis(20));
+        // Wait for the seek to actually land — open is asynchronous, and a
+        // seek issued before the demuxer is ready is simply dropped. Reverse
+        // from 0.03s has nowhere to go, which is how this test used to flake.
+        let ready = Instant::now() + Duration::from_secs(8);
+        while Instant::now() < ready {
+            p.seek(1.6);
+            for _ in 0..10 {
+                p.update();
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            if p.position > 1.0 {
+                break;
+            }
         }
         let start = p.position;
+        assert!(start > 1.0, "seek never landed (position {start:.2})");
 
         assert_eq!(p.shuttle(false), -1.0, "J shuttles into reverse");
         assert_eq!(p.shuttle(false), -2.0, "J again doubles the reverse rate");

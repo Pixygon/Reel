@@ -92,8 +92,18 @@ pub struct Project {
     pub width: u32,
     pub height: u32,
     pub tracks: Vec<Track>,
+    /// Captions for the edit, in TIMELINE time. Generated locally; burned in
+    /// at export. `serde(default)` so older documents still load.
+    #[serde(default)]
+    pub captions: Vec<crate::captions::Cue>,
+    #[serde(default = "default_caption_size")]
+    pub caption_size: u32,
     #[serde(skip)]
     next_id: u64,
+}
+
+fn default_caption_size() -> u32 {
+    20
 }
 
 impl Default for Project {
@@ -107,6 +117,8 @@ impl Default for Project {
                 Track { id: 1, name: "V1".into(), kind: TrackKind::Video, clips: vec![], muted: false },
                 Track { id: 2, name: "A1".into(), kind: TrackKind::Audio, clips: vec![], muted: false },
             ],
+            captions: Vec::new(),
+            caption_size: default_caption_size(),
             next_id: 100,
         }
     }
@@ -148,6 +160,11 @@ impl Project {
                 transition_in: 0.0,
             });
         }
+    }
+
+    /// The caption showing at timeline time `t`, if any.
+    pub fn caption_at(&self, t: f64) -> Option<&crate::captions::Cue> {
+        self.captions.iter().find(|c| c.start <= t && t < c.end)
     }
 
     pub fn clip(&self, id: u64) -> Option<&Clip> {
@@ -404,6 +421,32 @@ impl Project {
             .filter(|c| c.source == source)
             .find(|c| c.in_point <= pos && pos <= c.in_point + c.duration)
             .map(|c| c.start + (pos - c.in_point))
+    }
+
+    /// Map a window of SOURCE time onto every place it appears on the
+    /// timeline, clipped to the clip that carries it.
+    ///
+    /// Captions are generated against the original recording, but the edit
+    /// may have trimmed it, split it, reordered it, or used the same moment
+    /// twice — so a source window can land in zero, one, or several places,
+    /// and must never spill past the cut it belongs to.
+    pub fn map_source_window(&self, source: &str, a: f64, b: f64) -> Vec<(f64, f64)> {
+        let mut out = Vec::new();
+        for track in self.tracks.iter().filter(|t| t.kind == TrackKind::Video) {
+            for c in &track.clips {
+                if c.source != source {
+                    continue;
+                }
+                let (cs, ce) = (c.in_point, c.in_point + c.duration);
+                let (lo, hi) = (a.max(cs), b.min(ce));
+                if hi <= lo {
+                    continue;
+                }
+                out.push((c.start + (lo - cs), c.start + (hi - cs)));
+            }
+        }
+        out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        out
     }
 
     /// The edit flattened for export: V1 clips in timeline order as
@@ -778,5 +821,44 @@ mod tests {
         p.delete_clip(left_id);
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 5.0), Some(5.0));
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 2.0), None); // trimmed away
+    }
+
+    /// Captions are written against the original recording, so mapping them
+    /// into the edit has to survive the three things editors actually do:
+    /// cut a line in half, delete a chunk, and reuse a moment twice.
+    #[test]
+    fn caption_windows_survive_cuts_gaps_and_reuse() {
+        let mut p = one_clip_project();
+        // Source is 0..10 at timeline 0..10. Cut at 4 and pull the right
+        // half later, leaving a gap: 0..4 stays, 4..10 moves to 6..12.
+        p.split_at(4.0);
+        p.tracks[0].clips[1].start = 6.0;
+
+        // A cue spanning the cut (3.5..4.5 in source) must land in BOTH
+        // pieces, clipped at the join — never running over the gap.
+        let spans = p.map_source_window("/tmp/a.mp4", 3.5, 4.5);
+        assert_eq!(spans.len(), 2, "a cue across a cut belongs to both pieces");
+        assert!((spans[0].0 - 3.5).abs() < 1e-6 && (spans[0].1 - 4.0).abs() < 1e-6);
+        assert!((spans[1].0 - 6.0).abs() < 1e-6 && (spans[1].1 - 6.5).abs() < 1e-6);
+
+        // Reuse: duplicate the tail, and the same words caption both copies.
+        let clip = p.tracks[0].clips[1].clone();
+        let mut copy = clip.clone();
+        copy.id = p.next_id;
+        p.next_id += 1;
+        copy.start = 20.0;
+        p.tracks[0].clips.push(copy);
+        assert_eq!(
+            p.map_source_window("/tmp/a.mp4", 5.0, 5.5).len(),
+            2,
+            "a moment used twice captions twice"
+        );
+
+        // A window that was trimmed away captions nowhere.
+        let mut q = one_clip_project();
+        q.split_at(4.0);
+        let left = q.tracks[0].clips[0].id;
+        q.delete_clip(left);
+        assert!(q.map_source_window("/tmp/a.mp4", 1.0, 2.0).is_empty());
     }
 }

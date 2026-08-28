@@ -163,6 +163,29 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   downscaled before upload (see `ImageDoc::clamp_to`; an 8560×1440 ultrawide
   screenshot is the regression case).
 
+- Captions (`captions.rs`) run whisper.cpp as a subprocess. If the machine
+  has no engine, Reel fetches the official prebuilt one into
+  `~/.cache/reel/engine` (upstream sets `RUNPATH=$ORIGIN`, so the extracted
+  folder is self-contained) and the ggml model into `~/.cache/reel/models`.
+  Nothing is uploaded and nothing is installed system-wide — that is the
+  whole point of the feature, so don't replace it with a cloud call or a
+  hard package dependency.
+- CAPTION GEOMETRY: libass renders an SRT through a script whose PlayResY is
+  **288**, then scales it to the video height. Every number in
+  `force_style` is therefore a fraction of the frame already — do NOT scale
+  Fontsize or MarginV by the export resolution (that bug shipped a 4K
+  caption ~3.7× too large and made the preview a lie). `captions::metrics()`
+  is the single formula; the preview reads it directly and
+  `the_burned_caption_matches_the_previewed_formula` renders at two
+  resolutions and checks a real frame against it.
+- Cues are generated in SOURCE time and mapped through
+  `Project::map_source_window`, which clips them to each clip they land in —
+  so a line spanning a cut appears in both halves, a duplicated clip gets
+  captioned twice, and trimmed-away speech captions nowhere.
+- Anything drawn ON the picture (captions, future overlays) must be painted
+  after the `video_pass` paint callback and inside the same branch — that
+  branch returns early for every real frame.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against
@@ -170,3 +193,11 @@ Unit tests cover both backends and the export engine against
 encode and re-probes the output.
 For a live check: `RUST_LOG=info timeout 6 ./target/release/reel
 tests/fixture.mp4` — expect `playback backend: libmpv`, no panics.
+`REEL_TEST_NET=1 cargo test captions::` additionally fetches the engine and
+model and transcribes `tests/speech.wav`, asserting the actual words come
+back — the only test that proves the caption promise end to end.
+For anything visual, run under Xvfb and read the screenshot rather than
+guessing: `Xvfb :97 -screen 0 1600x1000x24 &` then
+`env -u WAYLAND_DISPLAY DISPLAY=:97 LIBGL_ALWAYS_SOFTWARE=1 ./target/release/reel <file>`
+and `DISPLAY=:97 import -window root shot.png`. Kill test instances by PID —
+never `pkill reel`, which also kills the copy the user is watching.

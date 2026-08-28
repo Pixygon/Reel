@@ -7,6 +7,7 @@
 //! ROADMAP.md; this is the running foundation it builds on.
 
 mod app;
+mod captions;
 mod capture;
 mod edit;
 mod effects;

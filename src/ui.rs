@@ -14,6 +14,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_captures();
     app.poll_queue();
     app.poll_autosave();
+    app.poll_captions();
     app.update_editor_playback();
     app.track_status();
     dropped_files(ctx, app);
@@ -616,6 +617,58 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
         }
+        // ── Captions ────────────────────────────────────────────────────
+        ui.separator();
+        ui.label(RichText::new("Captions").color(theme::CYAN));
+        if let Some(job) = &app.captions_job {
+            let st = job.state();
+            ui.label(RichText::new(&st.stage).small());
+            if st.fraction > 0.0 {
+                ui.add(egui::ProgressBar::new(st.fraction).show_percentage());
+            } else {
+                ui.spinner();
+            }
+            if ui.button("Cancel").clicked() {
+                job.cancel();
+            }
+        } else if !app.project.captions.is_empty() {
+            ui.label(
+                RichText::new(format!("{} captions · burned in on export", app.project.captions.len()))
+                    .small()
+                    .color(egui::Color32::from_gray(150)),
+            );
+            ui.add(egui::Slider::new(&mut app.project.caption_size, 12..=40).text("Size"));
+            ui.horizontal(|ui| {
+                if ui.button("Redo captions").clicked() {
+                    app.start_captions();
+                }
+                if ui.button("Remove").clicked() {
+                    app.editor.push_undo(&app.project);
+                    app.project.captions.clear();
+                }
+            });
+        } else {
+            let btn = egui::Button::new(RichText::new("✦ Generate captions").color(theme::VOID))
+                .fill(theme::CYAN)
+                .corner_radius(8.0);
+            if ui.add_sized([ui.available_width(), 30.0], btn)
+                .on_hover_text(
+                    "Speech to captions, entirely on this machine — nothing is uploaded.\n\
+                     The engine and model are fetched once, automatically.",
+                )
+                .clicked()
+            {
+                app.start_captions();
+            }
+            egui::ComboBox::from_id_salt("capmodel")
+                .selected_text(app.caption_model.label())
+                .show_ui(ui, |ui| {
+                    for m in crate::captions::Model::ALL {
+                        ui.selectable_value(&mut app.caption_model, m, m.label());
+                    }
+                });
+        }
+
         ui.separator();
         ui.label(RichText::new("J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\nDel delete · Shift+Del ripple delete · right-click to close gaps").small().color(egui::Color32::from_gray(120)));
     }
@@ -664,6 +717,10 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     effects,
                 },
             ));
+            // Captions sit on top of the picture, so they must be painted
+            // AFTER the video callback — and inside this branch, which
+            // returns early for every real frame.
+            draw_caption(app, &painter, img_rect);
             return;
         }
     }
@@ -701,6 +758,46 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
 
 /// The classic transparency checkerboard, drawn under a still image. Base
 /// fill plus alternate cells only, so the rect count stays modest.
+/// Preview the caption at the playhead where it will burn in: bottom-centre,
+/// white with a dark outline. Approximate — the render itself is drawn by
+/// ffmpeg from the same SRT — but the wording, timing and placement match, so
+/// what you read here is what ships.
+fn draw_caption(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
+    if app.mode != Mode::Editor {
+        return;
+    }
+    let Some(cue) = app.project.caption_at(app.editor.playhead) else { return };
+    // Every number comes from captions::metrics, which is also what the
+    // render is built from — one formula, two drawings of it.
+    let m = crate::captions::metrics(app.project.caption_size);
+    let font = egui::FontId::proportional((m.font * pic.height()).max(7.0));
+    let pos = egui::pos2(pic.center().x, pic.bottom() - m.margin_bottom * pic.height());
+    let outline = (m.outline * pic.height()).max(1.0);
+    for (dx, dy) in [
+        (-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0),
+        (-0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7),
+    ] {
+        painter.text(
+            pos + Vec2::new(dx * outline, dy * outline),
+            egui::Align2::CENTER_BOTTOM,
+            &cue.text,
+            font.clone(),
+            Color32::BLACK,
+        );
+    }
+    // The render is bold; egui's default proportional face has no bold cut,
+    // so thicken it by overdrawing. Keeps the preview honest about weight.
+    for dx in [-0.35, 0.0, 0.35] {
+        painter.text(
+            pos + Vec2::new(dx * outline, 0.0),
+            egui::Align2::CENTER_BOTTOM,
+            &cue.text,
+            font.clone(),
+            Color32::WHITE,
+        );
+    }
+}
+
 fn checkerboard(painter: &egui::Painter, rect: Rect) {
     const CELL: f32 = 14.0;
     painter.rect_filled(rect, 0.0, Color32::from_gray(52));
@@ -1005,6 +1102,16 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                             "The whole timeline as cut"
                         });
                 });
+                if app.export_timeline && !app.project.captions.is_empty() {
+                    ui.label(
+                        RichText::new(format!(
+                            "✦ {} captions will be burned in",
+                            app.project.captions.len()
+                        ))
+                        .small()
+                        .color(theme::CYAN),
+                    );
+                }
                 if app.export_timeline != before {
                     app.export_out = if app.export_timeline {
                         app.timeline_output()
@@ -1327,7 +1434,14 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .corner_radius(10.0),
             );
             if start.clicked() && app.export_timeline {
-                match export::start_timeline(&segments, &app.export_out, &app.export_settings, (app.project.width, app.project.height, app.project.fps)) {
+                match export::start_timeline_with_captions(
+                    &segments,
+                    &app.export_out,
+                    &app.export_settings,
+                    (app.project.width, app.project.height, app.project.fps),
+                    &app.project.captions,
+                    app.project.caption_size,
+                ) {
                     Ok(job) => app.export = Some(job),
                     Err(e) => app.status = format!("Export: {e}"),
                 }

@@ -89,7 +89,15 @@ never leaving the GPU.
       GPU pass and rendered identically — see Milestone 3.
 - [x] Close gaps (right-click a clip: close the gap before it, or every gap).
 - [x] Autosave — projects save themselves after each edit; no Save button.
-- [ ] Ripple/roll edits; cut/copy/paste.
+- [x] Ripple delete (Shift+Delete) and ripple trim to playhead (Q/W), linked
+      across tracks; J-K-L shuttle with true reverse playback.
+- [x] **Local auto-captions** — one button, transcribed on this machine, with
+      the engine and model fetched automatically. Cues map through the edit
+      (clipped per clip), preview exactly where they burn in, and burn into
+      the render. The competitive point: CapCut's captions go to a cloud,
+      and the open-source route "takes scripts and setup" — this takes
+      neither.
+- [ ] Cut/copy/paste, duplicate, markers; roll edits.
 - [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
       then the preview shows the V1 source frame.
 

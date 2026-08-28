@@ -699,13 +699,17 @@ pub fn build_timeline_args(
     a
 }
 
-/// Start a timeline (edit) export. Progress is driven by the cut's total
-/// duration = the sum of segment durations.
-pub fn start_timeline(
+/// Start a timeline (edit) export, burning any `captions` (timeline-time)
+/// into the picture. Progress is driven by the cut's total duration = the sum
+/// of segment durations. Captions are rendered by ffmpeg from an SRT we write
+/// beside the output, styled by `captions::force_style`.
+pub fn start_timeline_with_captions(
     segments: &[Segment],
     output: &str,
     settings: &ExportSettings,
     project: (u32, u32, f64),
+    captions: &[crate::captions::Cue],
+    caption_size: u32,
 ) -> Result<ExportJob> {
     if segments.is_empty() {
         return Err(anyhow!("the timeline is empty"));
@@ -715,7 +719,27 @@ pub fn start_timeline(
     }
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
     let total = crate::edit::render_duration(segments);
-    let args = build_timeline_args(segments, output, settings, with_audio, render_target(project, settings));
+    let target = render_target(project, settings);
+    let mut args = build_timeline_args(segments, output, settings, with_audio, target);
+    if !captions.is_empty() {
+        // Write the SRT next to the output and hand it to the filter chain.
+        // Scale the type with the frame so a vertical export isn't tiny.
+        let srt = format!("{output}.srt");
+        std::fs::write(&srt, crate::captions::to_srt(captions))?;
+        // NOT scaled by the target height — see captions::PLAY_RES_Y.
+        let escaped = srt.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'");
+        let filter = format!(
+            "subtitles='{escaped}':force_style='{}'",
+            crate::captions::force_style(caption_size)
+        );
+        // Insert after the concat/xfade chain, before the encoder.
+        if let Some(i) = args.iter().position(|a| a == "-filter_complex") {
+            args[i + 1] = format!("{};[vcat]{filter}[vsub]", args[i + 1]);
+            if let Some(m) = args.iter().position(|a| a == "[vcat]") {
+                args[m] = "[vsub]".into();
+            }
+        }
+    }
     spawn_job(args, output, total)
 }
 
@@ -821,8 +845,14 @@ fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob
 pub enum Job {
     /// Convert a source file (`path`, its duration).
     Source { path: String, duration: f64 },
-    /// Render the edit: flattened segments + the project's frame/rate.
-    Timeline { segments: Vec<Segment>, project: (u32, u32, f64) },
+    /// Render the edit: flattened segments + the project's frame/rate,
+    /// plus any captions to burn in.
+    Timeline {
+        segments: Vec<Segment>,
+        project: (u32, u32, f64),
+        captions: Vec<crate::captions::Cue>,
+        caption_size: u32,
+    },
 }
 
 /// One export waiting its turn.
@@ -910,8 +940,10 @@ impl Queue {
                     Job::Source { path, duration } => {
                         start(path, &next.output, &next.settings, *duration)
                     }
-                    Job::Timeline { segments, project } => {
-                        start_timeline(segments, &next.output, &next.settings, *project)
+                    Job::Timeline { segments, project, captions, caption_size } => {
+                        start_timeline_with_captions(
+                            segments, &next.output, &next.settings, *project, captions, *caption_size,
+                        )
                     }
                 };
                 match started {
@@ -1092,7 +1124,7 @@ mod tests {
         // fixture is ~2s; take 0.0–0.4 and 1.4–1.8 → expect ≈0.8s.
         let segs = vec![seg(&fixture(), 0.0, 0.4), seg(&fixture(), 1.4, 0.4)];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline(&segs, &out.to_string_lossy(), &s, (320, 240, 30.0))
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 30.0), &[], 28)
             .expect("start timeline export");
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -1183,7 +1215,7 @@ mod tests {
             seg(&a.to_string_lossy(), 1.2, 0.5),
         ];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline(&segs, &out.to_string_lossy(), &s, (640, 480, 25.0))
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (640, 480, 25.0), &[], 28)
             .expect("start mixed-source export");
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
@@ -1342,7 +1374,7 @@ mod tests {
         assert!(graph.contains("xfade=transition=fade:duration=0.5000:offset=1.0000"), "{graph}");
 
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline(&segs, &out.to_string_lossy(), &s, (320, 240, 25.0)).expect("start xfade");
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &[], 28).expect("start xfade");
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
             let st = job.state();
@@ -1360,6 +1392,74 @@ mod tests {
             info.duration
         );
         for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Captions must survive all the way into pixels — the filter chain is
+    /// fiddly enough (escaping, label rewiring) that only a real render proves
+    /// it. We compare a frame with captions against one without.
+    #[test]
+    fn captions_are_burned_into_the_render() {
+        let dir = std::env::temp_dir();
+        let plain = dir.join(format!("reel-cap-plain-{}.mp4", std::process::id()));
+        let capped = dir.join(format!("reel-cap-burned-{}.mp4", std::process::id()));
+        let f_plain = dir.join(format!("reel-cap-plain-{}.png", std::process::id()));
+        let f_capped = dir.join(format!("reel-cap-burned-{}.png", std::process::id()));
+        for f in [&plain, &capped, &f_plain, &f_capped] {
+            let _ = std::fs::remove_file(f);
+        }
+        // A dark, flat source so drawn text is unmistakable.
+        let src = dir.join(format!("reel-cap-src-{}.mp4", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=black:size=640x480:rate=25:duration=2",
+                   "-c:v", "libx264", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+
+        let segs = vec![seg(&src.to_string_lossy(), 0.0, 2.0)];
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let cues = vec![crate::captions::Cue {
+            start: 0.0,
+            end: 2.0,
+            text: "HELLO CAPTIONS".into(),
+        }];
+
+        for (out, cues) in [(&plain, Vec::new()), (&capped, cues)] {
+            let job = start_timeline_with_captions(
+                &segs, &out.to_string_lossy(), &s, (640, 480, 25.0), &cues, 28,
+            ).expect("start captioned export");
+            let deadline = Instant::now() + Duration::from_secs(90);
+            loop {
+                let st = job.state();
+                if st.finished {
+                    assert!(st.error.is_none(), "caption export failed: {:?}", st.error);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "caption export timed out");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+
+        // Pull a frame from each and compare brightness: white text on black
+        // can only make the captioned frame brighter.
+        let grab = |v: &std::path::Path, png: &std::path::Path| {
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-ss", "1", "-i", &v.to_string_lossy(),
+                       "-frames:v", "1", &png.to_string_lossy()])
+                .status().map(|s| s.success()).unwrap_or(false));
+            let img = image::open(png).expect("read frame").to_luma8();
+            img.pixels().map(|p| p.0[0] as u64).sum::<u64>()
+        };
+        let lum_plain = grab(&plain, &f_plain);
+        let lum_capped = grab(&capped, &f_capped);
+        assert!(
+            lum_capped > lum_plain + 10_000,
+            "captioned frame should carry visible text (luma {lum_plain} → {lum_capped})"
+        );
+        // And the sidecar SRT we wrote is real.
+        let srt = format!("{}.srt", capped.to_string_lossy());
+        assert!(std::fs::read_to_string(&srt).unwrap().contains("HELLO CAPTIONS"));
+        for f in [&plain, &capped, &f_plain, &f_capped, &src, &std::path::PathBuf::from(srt)] {
             let _ = std::fs::remove_file(f);
         }
     }

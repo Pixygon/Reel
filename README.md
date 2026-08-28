@@ -33,6 +33,15 @@ not the finished tool, but real, honest software you can build and run today.
   Instagram, Facebook, X. Mixed resolutions and
   codecs are normalised automatically, and the render uses your **GPU
   encoder** (NVENC/VideoToolbox) when there is one.
+- **Captions in one button — and they never leave your machine.** Press
+  **✦ Generate captions** and Reel transcribes the speech locally, places
+  the lines on the timeline, previews them exactly where they will burn in,
+  and burns them into the export. There is nothing to install and no account
+  to make: the speech engine and model are fetched automatically the first
+  time (~85 MB, once), then it works offline, on a plane, for free, with no
+  per-minute billing and nothing uploaded. Cues follow your edit — a line
+  spanning a cut appears in both halves, and speech you trimmed away
+  captions nowhere.
 - **Convert without editing — the HandBrake seam.** Hit **⬇ Export** on
   anything open: video → H.264/H.265/AV1/VP9 with quality presets (or custom
   CRF), downscale, audio bitrate/copy, instant lossless MKV remux — or
