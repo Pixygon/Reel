@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.24.0] — 2026-08-28
+
+### Added
+- Add titles: type text and drag it into place directly on the preview to set its position, then adjust size, colour, boldness and outline. Position is stored as a fraction of the frame, so a title placed on the preview lands in exactly the same spot in an export at any resolution, including 4K. _(acb6173)_
+- Add a music bed under your edit: pick a track, set its level and fade-in/out, and it automatically ducks under speech whenever the edit's own audio is talking — no volume curves or keyframes to draw. _(acb6173)_
+- Each clip now has its own volume (gain) slider, so you can trim a clip's audio level up or down without touching the rest of the timeline. _(acb6173)_
+
+### Fixed
+- Corrected an issue where, under certain conditions, the exported video and audio streams could be swapped in the output file, which could cause some players or downstream tools to reject or misread the file. _(acb6173)_
+
+
 ## [0.23.0] — 2026-08-28
 
 ### Added
