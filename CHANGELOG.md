@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.25.0] — 2026-08-28
+
+### Added
+- Waveforms now appear on every clip in the timeline, decoded in the background and cached per source, so you can cut on a word instead of hunting for it. Splitting, trimming, moving or duplicating a clip never re-decodes the audio. _(7b57238)_
+- Copy, paste and duplicate clips with Ctrl+C / Ctrl+V / Ctrl+D. Pasting inserts and ripples the rest of the track along, so it never silently overwrites footage you've already placed. _(7b57238)_
+- Drop markers at the playhead with Ctrl+M and jump between them with Ctrl+Left/Right, making it easy to flag and return to specific moments on the timeline. _(7b57238)_
+
+### Changed
+- Arrow-key seeking and the M mute shortcut now ignore the Ctrl modifier so they don't collide with the new marker-jump and marker shortcuts. _(7b57238)_
+
+
 ## [0.24.0] — 2026-08-28
 
 ### Added
