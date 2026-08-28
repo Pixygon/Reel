@@ -71,6 +71,10 @@ not the finished tool, but real, honest software you can build and run today.
   the picture, set size and colour. Position is stored as a fraction of the
   frame, so a title composed on the preview lands in exactly the same place
   in a 4K export.
+- **You hear the whole edit.** Editor playback mixes the timeline live —
+  every clip's audio with its gain and fades, and the music bed ducking
+  under speech in real time — through a native PipeWire stream on Linux.
+  What was once export-only is now what your ears get while you cut.
 - **Sound that behaves.** A volume trim per clip, plus a music bed under the
   whole edit that **ducks under speech automatically** — no volume curves to
   draw, no keyframes to place. Verified by measuring the music's own

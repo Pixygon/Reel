@@ -71,6 +71,22 @@ pub struct ReelApp {
     /// The transition being previewed at the playhead, if any:
     /// (incoming clip id, 0..1 progress).
     pub transition_preview: Option<(u64, f32)>,
+    /// The live timeline audio mix (editor mode): every sounding clip, the
+    /// music bed, gains, fades and ducking — not just the main clip's own
+    /// track. The video clock stays master; this chases it.
+    #[cfg(target_os = "linux")]
+    pub mixer: Option<crate::audio::Mixer>,
+    /// Whether we've tried to open the mixer (it opens lazily on first
+    /// entering the editor — an audio stream at app start would tax the
+    /// cold-open budget for people who only came to watch something).
+    mixer_attempted: bool,
+    /// Decoded PCM per source for the mixer.
+    pub samples: crate::audio::SampleCache,
+    /// When the current mix plan was built — rebuilt after edits.
+    mix_built_at: std::time::Instant,
+    /// The user's mute intent — kept apart from `player.muted`, which the
+    /// editor borrows while the mixer speaks for the timeline.
+    pub user_muted: bool,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -136,6 +152,12 @@ impl ReelApp {
             thumbs: crate::thumbs::Cache::default(),
             overlay_previews: std::collections::HashMap::new(),
             transition_preview: None,
+            #[cfg(target_os = "linux")]
+            mixer: None,
+            mixer_attempted: false,
+            samples: crate::audio::SampleCache::default(),
+            mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
+            user_muted: false,
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -722,8 +744,98 @@ impl ReelApp {
         }
     }
 
+    /// Keep the live audio mix in step with the editor: the plan tracks the
+    /// project, playback tracks the main player, position chases the
+    /// playhead, and the main player is muted while the mixer speaks.
+    #[cfg(target_os = "linux")]
+    fn sync_mixer(&mut self) {
+        if self.mode == Mode::Editor && !self.mixer_attempted {
+            self.mixer_attempted = true;
+            self.mixer = crate::audio::Mixer::open();
+        }
+        let Some(mixer) = &self.mixer else { return };
+        if self.mode != Mode::Editor {
+            mixer.set_playing(false);
+            // Give mpv its voice back for player mode.
+            if let Some(p) = self.player.as_mut() {
+                if p.muted && !self.user_muted {
+                    p.set_muted(false);
+                }
+            }
+            return;
+        }
+        // The mixer speaks for the timeline; mpv would double every voice.
+        if let Some(p) = self.player.as_mut() {
+            if !p.muted {
+                p.set_muted(true);
+            }
+        }
+        // Rebuild the plan after edits (and as decoded PCM arrives), at a
+        // gentle cadence — building is cheap, but not per-frame cheap.
+        let stale = self.editor.changed_at > self.mix_built_at
+            || self.mix_built_at.elapsed() > std::time::Duration::from_millis(700);
+        if stale {
+            self.mix_built_at = std::time::Instant::now();
+            let mut plan = crate::audio::Plan::default();
+            let clips: Vec<crate::edit::Clip> = self
+                .project
+                .tracks
+                .iter()
+                .filter(|t| {
+                    !t.muted
+                        && matches!(
+                            t.kind,
+                            crate::edit::TrackKind::Video | crate::edit::TrackKind::Audio
+                        )
+                })
+                .flat_map(|t| t.clips.iter().cloned())
+                .collect();
+            for c in clips {
+                let Some(pcm) = self.samples.get(&c.source) else { continue };
+                let avg = (c.source_len() / c.duration.max(1e-9)).max(0.01);
+                plan.clips.push(crate::audio::PlanClip {
+                    pcm,
+                    start: c.start,
+                    duration: c.duration,
+                    in_point: c.in_point,
+                    gain: crate::audio::db_to_gain(c.gain_db),
+                    fade_in: c.effects.fade_in,
+                    fade_out: c.effects.fade_out,
+                    speed: avg,
+                });
+            }
+            if let Some(m) = &self.project.music {
+                if let Some(pcm) = self.samples.get(&m.source.clone()) {
+                    plan.music = Some(crate::audio::PlanMusic {
+                        pcm,
+                        start: m.start,
+                        gain: crate::audio::db_to_gain(m.gain_db),
+                        duck: m.duck,
+                        fade: m.fade,
+                        total: crate::edit::render_duration(&self.project.export_segments()),
+                    });
+                }
+            }
+            mixer.set_plan(plan);
+        }
+        let (playing, volume, muted) = self
+            .player
+            .as_ref()
+            .map(|p| (p.playing, p.volume, self.user_muted))
+            .unwrap_or((false, 100.0, false));
+        mixer.set_playing(playing);
+        mixer.set_master(if muted { 0.0 } else { (volume / 100.0) as f32 });
+        // Chase the playhead; nudge only on real drift so playback stays
+        // smooth (the clocks tick within a few ms of each other).
+        if (mixer.position() - self.editor.playhead).abs() > 0.08 {
+            mixer.seek(self.editor.playhead);
+        }
+    }
+
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
         self.sync_overlay_previews(gpu, egui);
+        #[cfg(target_os = "linux")]
+        self.sync_mixer();
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {
                 img.clamp_to(gpu.max_texture_dim);
@@ -1278,6 +1390,7 @@ impl ReelApp {
             || self.captions_job.is_some()
             || self.waveforms.is_busy()
             || self.thumbs.is_busy()
+            || self.samples.is_busy()
             || self.picker.is_some()
             || self.opening.is_some()
             || self.shot_rx.is_some()

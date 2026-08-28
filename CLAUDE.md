@@ -295,6 +295,17 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   keyframe interval at the interval's true average tempo, and
   source↔timeline mapping inverts it by bisection. `geq` writes LIMITED
   range luma — the ramp test encodes time in RGB so it round-trips.
+- The LIVE MIXER (`audio.rs`, Linux): `render_into` is a pure function over
+  an immutable Plan — every mixing rule (windows, gain, fades, live duck
+  attack/release) is unit-tested with no device. Output is a NATIVE
+  PipeWire stream on a dedicated thread (the Rc API is !Send — build
+  everything on that thread); cpal was rejected because its ALSA backend
+  can't reach a PipeWire server without the pipewire-alsa shim (this
+  machine has none). In the editor the mixer speaks and the main player is
+  MUTED (`user_muted` keeps the user's intent separate); leaving the
+  editor unmutes. Video stays the clock; the mixer chases the playhead,
+  nudging only past 80 ms drift. It opens LAZILY on first entering the
+  editor — an audio stream at app start would tax the cold-open budget.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

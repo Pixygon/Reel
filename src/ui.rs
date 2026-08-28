@@ -242,7 +242,8 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             player.set_volume(player.volume - 5.0);
         }
         if k.mute {
-            player.set_muted(!player.muted);
+            app.user_muted = !app.user_muted;
+            player.set_muted(app.user_muted);
         }
         if k.looping {
             player.set_looping(!player.looping);
@@ -1670,9 +1671,10 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     player.set_volume(vol);
                 }
-                let speaker = if player.muted || player.volume <= 0.0 { "🔇" } else { "🔊" };
+                let speaker = if app.user_muted || player.volume <= 0.0 { "🔇" } else { "🔊" };
                 if ui.button(speaker).on_hover_text("Mute (M)").clicked() {
-                    player.set_muted(!player.muted);
+                    app.user_muted = !app.user_muted;
+                    player.set_muted(app.user_muted);
                 }
             }
 

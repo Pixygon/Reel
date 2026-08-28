@@ -173,13 +173,18 @@ sources at once (PiP live, transitions previewing both sides, multicam):
 mpv currently plays whichever single source is loaded; export audio is an
 ffmpeg graph. Neither can express "the timeline, mixed, live":
 
-- [ ] Reel's own mixer: sample-accurate pull graph — clip readers (with
-      resample + tempo) → per-clip gain/fade → per-track strip
-      (gain/pan/mute/solo) → per-track insert effects → master bus →
-      output device (cpal) *and* export sink. `f32` throughout.
-- [ ] Editor playback switches to it: video chases the audio clock (the
-      standard discipline), mpv remains the *player-mode* engine where it
-      is excellent.
+- [x] The preview mixer (`audio.rs`): a pure, unit-tested mix core (clips
+      with gain/fades/speed, the music bed, live ducking) pulled by a
+      NATIVE PipeWire output stream — not cpal, whose ALSA backend is
+      silently inert on shim-less PipeWire desktops. Editor audio now plays
+      the whole timeline: every sounding clip, A1, the bed, ducked live.
+      Still open toward the full 1.4: per-track strips/solo, insert
+      effects, the mixer as the EXPORT sink (export audio remains the
+      proven wav graph), and pitch-preserving preview of speed changes
+      (previews pitched today; the render uses atempo).
+- [x] Editor playback keeps video as the clock; the mixer chases the
+      playhead and nudges only past 80 ms drift. mpv remains the
+      player-mode engine, and speaks again the moment you leave the editor.
 - [ ] Waveform/loudness taps for meters (UI in Phase 4; taps live here).
 - [ ] Latency-compensated so inserted effects don't skew sync.
 
