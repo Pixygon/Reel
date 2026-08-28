@@ -592,6 +592,7 @@ pub fn build_timeline_args(
 
 /// Build the ffmpeg argument list for a timeline render, with an optional
 /// music bed laid under the cut. Pure, and unit-tested.
+#[cfg(test)]
 pub fn build_timeline_args_with_music(
     segments: &[Segment],
     output: &str,
@@ -599,6 +600,20 @@ pub fn build_timeline_args_with_music(
     with_audio: bool,
     target: (u32, u32, f64),
     music: Option<&crate::edit::Music>,
+) -> Vec<String> {
+    build_timeline_args_full(segments, output, s, with_audio, target, music, &[])
+}
+
+/// The full timeline graph: the cut, a music bed, and any overlay clips
+/// composited on top.
+pub fn build_timeline_args_full(
+    segments: &[Segment],
+    output: &str,
+    s: &ExportSettings,
+    with_audio: bool,
+    target: (u32, u32, f64),
+    music: Option<&crate::edit::Music>,
+    overlays: &[crate::edit::OverlaySegment],
 ) -> Vec<String> {
     let (tw, th, tfps) = target;
     let mut a: Vec<String> = Vec::new();
@@ -614,10 +629,20 @@ pub fn build_timeline_args_with_music(
     }
     // The music bed is one more input, after every clip source.
     let music = music.filter(|m| !m.source.is_empty());
+    let mut next_input = sources.len();
     let music_input = music.map(|m| {
         a.extend(["-i".into(), m.source.clone()]);
-        sources.len()
+        next_input += 1;
+        next_input - 1
     });
+    let overlay_inputs: Vec<usize> = overlays
+        .iter()
+        .map(|o| {
+            a.extend(["-i".into(), o.source.clone()]);
+            next_input += 1;
+            next_input - 1
+        })
+        .collect();
 
     // concat demands identical geometry/rate/audio format across segments, so
     // every segment is normalised to the target frame with the chosen fit
@@ -628,6 +653,11 @@ pub fn build_timeline_args_with_music(
 
     let mut graph = String::new();
     for (k, seg) in segments.iter().enumerate() {
+        // `duration` is the clip's TIMELINE length, so the window taken from
+        // the source is longer (or shorter) by the speed factor. Getting this
+        // backwards makes a 2x clip run half as long as the timeline says.
+        let rate = seg.speed.clamp(0.05, 20.0) as f64;
+        let src_len = seg.duration * rate;
         let i = sources.iter().position(|s| *s == seg.source).unwrap();
         let (in_point, duration) = (seg.in_point, seg.duration);
         // Per-clip effects run before the frame is fitted to the target, so
@@ -640,8 +670,14 @@ pub fn build_timeline_args_with_music(
             .map(|f| format!(",{f}"))
             .unwrap_or_default();
         let vnorm = format!("{}{reframe},fps={tfps:.4}", s.fit.chain(tw, th, &k.to_string()));
+        let vspeed = if (rate - 1.0).abs() > 1e-6 {
+            format!(",setpts=PTS/{rate:.6}")
+        } else {
+            String::new()
+        };
         graph.push_str(&format!(
-            "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{fx}{vnorm}[v{k}];"
+            "[{i}:v]trim=start={in_point:.4}:duration={src_len:.4},setpts=PTS-STARTPTS{vspeed},\
+             {fx}{vnorm}[v{k}];"
         ));
         if with_audio {
             let gain = if seg.gain_db.abs() > 0.01 {
@@ -650,7 +686,9 @@ pub fn build_timeline_args_with_music(
                 String::new()
             };
             graph.push_str(&format!(
-                "[{i}:a]atrim=start={in_point:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,{anorm}{gain}[a{k}];"
+                "[{i}:a]atrim=start={in_point:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,\
+                 {anorm}{}{gain}[a{k}];",
+                atempo_chain(rate)
             ));
         }
     }
@@ -707,6 +745,31 @@ pub fn build_timeline_args_with_music(
             if with_audio { "1[vcat][acat]" } else { "0[vcat]" }
         ));
     }
+    // Overlays composite onto the cut. Each is trimmed, scaled to a fraction
+    // of the target frame, shifted to its timeline position, and switched on
+    // only for its own window — so the base picture is untouched everywhere
+    // else. Geometry comes from Pip fractions, which is what makes a PiP
+    // placed on a 720p preview land identically at 4K.
+    let mut video_out = "[vcat]".to_string();
+    for (n, (o, idx)) in overlays.iter().zip(overlay_inputs.iter()).enumerate() {
+        let w = ((o.pip.scale.clamp(0.02, 1.0) as f64) * target.0 as f64 / 2.0).round() * 2.0;
+        let (end, at) = (o.at + o.duration, o.at);
+        // -1 keeps the overlay's own aspect ratio rather than distorting it.
+        graph.push_str(&format!(
+            ";[{idx}:v]trim=start={:.4}:duration={:.4},setpts=PTS-STARTPTS+{at:.4}/TB,\
+             scale={w}:-2,setsar=1[ov{n}]",
+            o.in_point, o.duration
+        ));
+        let next = format!("[vo{n}]");
+        // x/y are the CENTRE of the inset, so half its size comes off each.
+        graph.push_str(&format!(
+            ";{video_out}[ov{n}]overlay=x='(W*{:.5})-(w/2)':y='(H*{:.5})-(h/2)':\
+             enable='between(t,{at:.4},{end:.4})':eof_action=pass:repeatlast=0{next}",
+            o.pip.x, o.pip.y
+        ));
+        video_out = next;
+    }
+
     // The music bed, laid under whatever the cut itself carries.
     let mut audio_out = if with_audio { Some("[acat]".to_string()) } else { None };
     if let (Some(idx), Some(m)) = (music_input, music) {
@@ -763,7 +826,7 @@ pub fn build_timeline_args_with_music(
 
     // No post-concat scale: `target` already carries the chosen resolution,
     // and every segment was normalised to it above.
-    a.extend(["-filter_complex".into(), graph, "-map".into(), "[vcat]".into()]);
+    a.extend(["-filter_complex".into(), graph, "-map".into(), video_out.clone()]);
     let has_audio_out = audio_out.is_some();
     if let Some(out) = &audio_out {
         a.extend(["-map".into(), out.clone()]);
@@ -792,6 +855,8 @@ pub struct Overlays<'a> {
     pub titles: &'a [crate::titles::Title],
     /// A music bed laid under the cut (and ducked under it, if asked).
     pub music: Option<&'a crate::edit::Music>,
+    /// Picture composited on top of the cut.
+    pub overlays: &'a [crate::edit::OverlaySegment],
 }
 
 /// Start a timeline (edit) export, burning any captions and titles into the
@@ -816,8 +881,14 @@ pub fn start_timeline_with_captions(
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
     let total = crate::edit::render_duration(segments);
     let target = render_target(project, settings);
-    let mut args = build_timeline_args_with_music(
-        segments, output, settings, with_audio, target, overlays.music,
+    let mut args = build_timeline_args_full(
+        segments,
+        output,
+        settings,
+        with_audio,
+        target,
+        overlays.music,
+        overlays.overlays,
     );
 
     let mut chain: Vec<String> = Vec::new();
@@ -841,12 +912,15 @@ pub fn start_timeline_with_captions(
     }
 
     if !chain.is_empty() {
-        // Insert after the concat/xfade chain, before the encoder.
-        if let Some(i) = args.iter().position(|a| a == "-filter_complex") {
-            args[i + 1] = format!("{};[vcat]{}[vsub]", args[i + 1], chain.join(","));
-            if let Some(m) = args.iter().position(|a| a == "[vcat]") {
-                args[m] = "[vsub]".into();
-            }
+        // Attach to whatever the graph currently ends on — [vcat] for a plain
+        // cut, but [voN] once overlays have been composited. Hardcoding
+        // [vcat] here would have silently dropped every overlay.
+        let map_at = args.iter().position(|a| a == "-map").map(|i| i + 1);
+        let graph_at = args.iter().position(|a| a == "-filter_complex").map(|i| i + 1);
+        if let (Some(m), Some(g)) = (map_at, graph_at) {
+            let current = args[m].clone();
+            args[g] = format!("{};{current}{}[vsub]", args[g], chain.join(","));
+            args[m] = "[vsub]".into();
         }
     }
     spawn_job(args, output, total)
@@ -857,6 +931,25 @@ pub fn start_timeline_with_captions(
 /// drive letter or an apostrophe silently breaks the whole graph.
 fn escape_filter_path(p: &str) -> String {
     p.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'")
+}
+
+/// `atempo` only accepts 0.5–100 per instance, so anything slower than half
+/// speed has to be chained. Returns "" at normal speed.
+fn atempo_chain(rate: f64) -> String {
+    if (rate - 1.0).abs() <= 1e-6 {
+        return String::new();
+    }
+    let mut left = rate.clamp(0.05, 20.0);
+    let mut parts = Vec::new();
+    while left < 0.5 {
+        parts.push(0.5);
+        left /= 0.5;
+    }
+    parts.push(left);
+    parts
+        .iter()
+        .map(|r| format!(",atempo={r:.6}"))
+        .collect::<String>()
 }
 
 /// The geometry every segment is normalised to: the project's frame, or the
@@ -970,6 +1063,7 @@ pub enum Job {
         caption_size: u32,
         titles: Vec<crate::titles::Title>,
         music: Option<crate::edit::Music>,
+        overlays: Vec<crate::edit::OverlaySegment>,
     },
 }
 
@@ -1058,20 +1152,21 @@ impl Queue {
                     Job::Source { path, duration } => {
                         start(path, &next.output, &next.settings, *duration)
                     }
-                    Job::Timeline { segments, project, captions, caption_size, titles, music } => {
-                        start_timeline_with_captions(
-                            segments,
-                            &next.output,
-                            &next.settings,
-                            *project,
-                            Overlays {
-                                captions,
-                                caption_size: *caption_size,
-                                titles,
-                                music: music.as_ref(),
-                            },
-                        )
-                    }
+                    Job::Timeline {
+                        segments, project, captions, caption_size, titles, music, overlays,
+                    } => start_timeline_with_captions(
+                        segments,
+                        &next.output,
+                        &next.settings,
+                        *project,
+                        Overlays {
+                            captions,
+                            caption_size: *caption_size,
+                            titles,
+                            music: music.as_ref(),
+                            overlays,
+                        },
+                    ),
                 };
                 match started {
                     Ok(job) => self.running = Some((next, job)),
@@ -1106,6 +1201,7 @@ mod tests {
             effects: crate::effects::Effects::default(),
             transition_in: 0.0,
             gain_db: 0.0,
+            speed: 1.0,
         }
     }
 
@@ -1621,6 +1717,7 @@ mod tests {
             effects: Default::default(),
             transition_in: 0.0,
             gain_db: 0.0,
+            speed: 1.0,
         }];
         let s = ExportSettings::default();
 
@@ -1683,6 +1780,185 @@ mod tests {
     /// Captions and titles are two separate libass passes chained onto the
     /// same graph. This is the check that they coexist — an earlier version
     /// overwrote one label with the other and silently dropped the titles.
+    /// A PiP has to appear in the right place, at the right size, only while
+    /// it is meant to — and the base picture must survive underneath it. The
+    /// geometry is stored as fractions, so this measures the rendered pixels
+    /// against those fractions directly.
+    #[test]
+    fn an_overlay_lands_where_it_was_placed_and_only_when_it_should() {
+        use crate::edit::{OverlaySegment, Pip};
+        let dir = std::env::temp_dir();
+        let base = dir.join(format!("reel-ov-base-{}.mp4", std::process::id()));
+        let top = dir.join(format!("reel-ov-top-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-ov-out-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // Base is black; the overlay is pure red, so any red pixel is the PiP.
+        for (path, colour) in [(&base, "black"), (&top, "red")] {
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi",
+                       "-i", &format!("color=c={colour}:size=640x480:rate=10:duration=4"),
+                       "-c:v", "libx264", "-pix_fmt", "yuv420p", &path.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+        }
+
+        let segs = vec![seg(&base.to_string_lossy(), 0.0, 4.0)];
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        // A quarter-width inset, centred left-of-middle, for the middle 2s.
+        let pip = Pip { x: 0.3, y: 0.5, scale: 0.25 };
+        let ov = vec![OverlaySegment {
+            source: top.to_string_lossy().into(),
+            in_point: 0.0,
+            duration: 2.0,
+            at: 1.0,
+            pip,
+            gain_db: 0.0,
+        }];
+        let job = start_timeline_with_captions(
+            &segs,
+            &out.to_string_lossy(),
+            &s,
+            (640, 480, 10.0),
+            Overlays { overlays: &ov, ..Default::default() },
+        )
+        .expect("start overlay render");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "overlay render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "overlay render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // Measure the red region at t=2s (inside the window).
+        let frame = dir.join(format!("reel-ov-f-{}.png", std::process::id()));
+        let grab = |t: &str, to: &std::path::Path| {
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-ss", t, "-i", &out.to_string_lossy(),
+                       "-frames:v", "1", &to.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            image::open(to).expect("read frame").to_rgb8()
+        };
+        let img = grab("2", &frame);
+        let (mut x0, mut x1, mut y0, mut y1, mut n) = (u32::MAX, 0u32, u32::MAX, 0u32, 0u32);
+        for (x, y, px) in img.enumerate_pixels() {
+            let [r, g, b] = px.0;
+            if r > 130 && g < 90 && b < 90 {
+                x0 = x0.min(x); x1 = x1.max(x);
+                y0 = y0.min(y); y1 = y1.max(y);
+                n += 1;
+            }
+        }
+        assert!(n > 100, "no overlay in the frame");
+        let (w, h) = (img.width() as f32, img.height() as f32);
+        let cx = (x0 + x1) as f32 / 2.0 / w;
+        let cy = (y0 + y1) as f32 / 2.0 / h;
+        let sw = (x1 - x0 + 1) as f32 / w;
+        assert!((cx - pip.x).abs() < 0.02, "overlay centre x {cx:.3}, asked {:.3}", pip.x);
+        assert!((cy - pip.y).abs() < 0.02, "overlay centre y {cy:.3}, asked {:.3}", pip.y);
+        assert!((sw - pip.scale).abs() < 0.03, "overlay width {sw:.3}, asked {:.3}", pip.scale);
+
+        // Outside its window the base picture must be untouched.
+        let before = grab("0.3", &frame);
+        let red_before = before.pixels().filter(|p| p.0[0] > 130 && p.0[1] < 90).count();
+        assert_eq!(red_before, 0, "the overlay showed up before it was supposed to");
+        let after = grab("3.6", &frame);
+        let red_after = after.pixels().filter(|p| p.0[0] > 130 && p.0[1] < 90).count();
+        assert_eq!(red_after, 0, "the overlay stayed on screen after its window");
+
+        for f in [&base, &top, &out, &frame] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Speed has to change how long the clip actually runs, not just how
+    /// fast it looks: `duration` is TIMELINE length, so a 2× clip must
+    /// consume twice as much source and still occupy its stated slot. Getting
+    /// that backwards halves the output, which is the kind of thing you only
+    /// notice after publishing.
+    #[test]
+    fn speed_consumes_more_source_and_keeps_the_timeline_length() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-speed-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-speed-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=8",
+                   "-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                   &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        // 3 s on the timeline at 2x = 6 s of source.
+        let segs = vec![Segment {
+            source: src.to_string_lossy().into(),
+            in_point: 0.0,
+            duration: 3.0,
+            effects: Default::default(),
+            transition_in: 0.0,
+            gain_db: 0.0,
+            speed: 2.0,
+        }];
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let job = start_timeline_with_captions(
+            &segs, &out.to_string_lossy(), &s, (160, 120, 25.0), Overlays::default(),
+        )
+        .expect("start speed render");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "speed render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "speed render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe");
+        assert!(
+            (info.duration - 3.0).abs() < 0.35,
+            "a 3s slot at 2x should render 3s, got {:.2}s",
+            info.duration
+        );
+
+        // The audio has to be sped up too, or it drifts away from the picture.
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "a:0",
+                   "-show_entries", "stream=duration", "-of", "csv=p=0",
+                   &out.to_string_lossy()])
+            .output()
+            .expect("ffprobe audio");
+        let adur: f64 = String::from_utf8_lossy(&probe.stdout).trim().parse().unwrap_or(0.0);
+        assert!(
+            (adur - 3.0).abs() < 0.5,
+            "audio ran {adur:.2}s against a 3s picture — the tempo change is missing"
+        );
+
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    #[test]
+    fn slow_motion_chains_atempo_because_one_filter_cannot_go_below_half() {
+        assert_eq!(atempo_chain(1.0), "");
+        assert_eq!(atempo_chain(2.0), ",atempo=2.000000");
+        // 0.25 is out of atempo's range, so it becomes 0.5 x 0.5.
+        let quarter = atempo_chain(0.25);
+        assert_eq!(quarter.matches("atempo").count(), 2, "got {quarter}");
+        // Whatever the chain, the rates must multiply back to the ask.
+        let product: f64 = quarter
+            .split(",atempo=")
+            .filter(|s| !s.is_empty())
+            .map(|s| s.parse::<f64>().unwrap())
+            .product();
+        assert!((product - 0.25).abs() < 1e-6, "chain multiplies to {product}");
+    }
+
     #[test]
     fn captions_and_titles_burn_in_the_same_render() {
         let dir = std::env::temp_dir();
@@ -1719,7 +1995,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);

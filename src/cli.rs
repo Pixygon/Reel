@@ -94,7 +94,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "at", value: Some("SECONDS"), help: "Timeline position (default: after the last clip)" },
             Flag { name: "in", value: Some("SECONDS"), help: "Start point inside the source (default 0)" },
             Flag { name: "duration", value: Some("SECONDS"), help: "How much of the source to use (default: all of it)" },
-            Flag { name: "track", value: Some("KIND"), help: "video or audio (default video)" },
+            Flag { name: "track", value: Some("KIND"), help: "video, overlay (picture-in-picture) or audio" },
             F_JSON,
         ],
         help: "Append a piece of media to the timeline",
@@ -173,6 +173,29 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Colour, fades and reframing for one clip",
+    },
+    Cmd {
+        name: "pip",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "An overlay clip's id" },
+            Flag { name: "x", value: Some("0..1"), help: "Centre of the inset across the frame" },
+            Flag { name: "y", value: Some("0..1"), help: "Centre of the inset down the frame" },
+            Flag { name: "scale", value: Some("0..1"), help: "Inset width as a fraction of the frame" },
+            F_JSON,
+        ],
+        help: "Place a picture-in-picture overlay in the frame",
+    },
+    Cmd {
+        name: "speed",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "rate", value: Some("N"), help: "2 = twice as fast, 0.5 = half. Audio follows." },
+            Flag { name: "keep-length", value: None, help: "Keep the timeline slot; use more or less source" },
+            F_JSON,
+        ],
+        help: "Change how fast a clip plays",
     },
     Cmd {
         name: "transition",
@@ -434,6 +457,8 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "gap" => cmd_gap(p),
         "gain" => cmd_gain(p),
         "effects" => cmd_effects(p),
+        "pip" => cmd_pip(p),
+        "speed" => cmd_speed(p),
         "transition" => cmd_transition(p),
         "title" => cmd_title(p),
         "music" => cmd_music(p),
@@ -534,13 +559,20 @@ fn clip_json(c: &crate::edit::Clip, kind: TrackKind) -> serde_json::Value {
         "id": c.id,
         "name": c.name,
         "source": c.source,
-        "track": if kind == TrackKind::Video { "video" } else { "audio" },
+        "track": match kind {
+            TrackKind::Video => "video",
+            TrackKind::Overlay => "overlay",
+            TrackKind::Audio => "audio",
+        },
+        "pip": if kind == TrackKind::Overlay { serde_json::to_value(c.pip).unwrap_or(serde_json::Value::Null) } else { serde_json::Value::Null },
         "start": c.start,
         "duration": c.duration,
         "in_point": c.in_point,
         "end": c.end(),
         "gain_db": c.gain_db,
         "transition_in": c.transition_in,
+        "speed": c.speed,
+        "source_len": c.source_len(),
     })
 }
 
@@ -618,7 +650,11 @@ fn cmd_inspect(p: &Parsed) -> Result<Output> {
                     c.start,
                     c.end(),
                     c.in_point,
-                    if t.kind == TrackKind::Video { "V" } else { "A" }
+                    match t.kind {
+                        TrackKind::Video => "V",
+                        TrackKind::Overlay => "PiP",
+                        TrackKind::Audio => "A",
+                    }
                 ));
             }
         }
@@ -662,7 +698,8 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     let kind = match p.str("track").unwrap_or("video") {
         "video" | "v" => TrackKind::Video,
         "audio" | "a" => TrackKind::Audio,
-        other => bail!("--track wants video or audio, got {other:?}"),
+        "overlay" | "pip" | "v2" => TrackKind::Overlay,
+        other => bail!("--track wants video, overlay or audio, got {other:?}"),
     };
 
     // Default the length to the whole source, which needs a probe.
@@ -848,6 +885,67 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
     Ok(Output::new(
         format!("Updated the look of clip {id}"),
         serde_json::json!({ "clip": id, "effects": fx }),
+    ))
+}
+
+fn cmd_speed(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let rate: f32 = p.need_num("rate")?;
+    if !(0.05..=20.0).contains(&rate) {
+        bail!("--rate must be between 0.05 and 20");
+    }
+    let mut proj = load(path)?;
+    let (duration, source_len) = {
+        let c = find_clip_mut(&mut proj, id)?;
+        let old_source = c.source_len();
+        c.speed = rate;
+        // By default the clip keeps the same footage and its timeline slot
+        // grows or shrinks — which is what "make this bit faster" means.
+        // --keep-length instead holds the slot and takes more source.
+        if !p.on("keep-length") {
+            c.duration = old_source / rate.max(0.01) as f64;
+        }
+        (c.duration, c.source_len())
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Clip {id} at {rate}× — {duration:.2}s on the timeline, {source_len:.2}s of source"),
+        serde_json::json!({ "clip": id, "speed": rate, "duration": duration, "source_len": source_len }),
+    ))
+}
+
+fn cmd_pip(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let on_overlay = proj
+        .tracks
+        .iter()
+        .any(|t| t.kind == TrackKind::Overlay && t.clips.iter().any(|c| c.id == id));
+    if !on_overlay {
+        bail!("clip {id} isn't on an overlay track — add it with `reel add … --track overlay`");
+    }
+    let pip = {
+        let c = find_clip_mut(&mut proj, id)?;
+        if let Some(v) = p.num::<f32>("x")? {
+            c.pip.x = v;
+        }
+        if let Some(v) = p.num::<f32>("y")? {
+            c.pip.y = v;
+        }
+        if let Some(v) = p.num::<f32>("scale")? {
+            if !(0.02..=1.0).contains(&v) {
+                bail!("--scale is a fraction of the frame, between 0.02 and 1.0");
+            }
+            c.pip.scale = v;
+        }
+        c.pip
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Overlay {id} at ({:.2}, {:.2}), {:.0}% wide", pip.x, pip.y, pip.scale * 100.0),
+        serde_json::json!({ "clip": id, "pip": pip }),
     ))
 }
 
@@ -1216,6 +1314,7 @@ fn cmd_render(p: &Parsed) -> Result<Output> {
             caption_size: proj.caption_size,
             titles: &proj.titles,
             music: proj.music.as_ref(),
+            overlays: &proj.overlay_segments(),
         },
     )?;
     await_job(job, p.on("quiet") || p.on("json"))?;

@@ -38,6 +38,7 @@ mod theme;
 mod titles;
 pub mod ui;
 mod ui_tests;
+mod thumbs;
 mod video;
 mod waveform;
 mod video_pass;

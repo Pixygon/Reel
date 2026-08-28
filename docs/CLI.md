@@ -75,7 +75,7 @@ Append a piece of media to the timeline
 | `--at` | `SECONDS` | Timeline position (default: after the last clip) |
 | `--in` | `SECONDS` | Start point inside the source (default 0) |
 | `--duration` | `SECONDS` | How much of the source to use (default: all of it) |
-| `--track` | `KIND` | video or audio (default video) |
+| `--track` | `KIND` | video, overlay (picture-in-picture) or audio |
 
 ### `reel split PROJECT`
 
@@ -143,6 +143,27 @@ Colour, fades and reframing for one clip
 | `--pan-x` | `N` | -1..1, where the zoom sits |
 | `--pan-y` | `N` | -1..1 |
 | `--reset` | — | Back to no effects |
+
+### `reel pip PROJECT`
+
+Place a picture-in-picture overlay in the frame
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | An overlay clip's id |
+| `--x` | `0..1` | Centre of the inset across the frame |
+| `--y` | `0..1` | Centre of the inset down the frame |
+| `--scale` | `0..1` | Inset width as a fraction of the frame |
+
+### `reel speed PROJECT`
+
+Change how fast a clip plays
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id |
+| `--rate` | `N` | 2 = twice as fast, 0.5 = half. Audio follows. |
+| `--keep-length` | — | Keep the timeline slot; use more or less source |
 
 ### `reel transition PROJECT`
 

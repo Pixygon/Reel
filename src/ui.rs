@@ -604,6 +604,62 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).text("Pan ↕"));
                 }
 
+                // Picture-in-picture placement, for overlay clips only.
+                let is_overlay = app.project.tracks.iter().any(|t| {
+                    t.kind == crate::edit::TrackKind::Overlay
+                        && t.clips.iter().any(|c| c.id == id)
+                });
+                if is_overlay {
+                    ui.add_space(4.0);
+                    ui.label(RichText::new("Picture-in-picture").color(theme::CYAN));
+                    let mut pip = app.project.clip(id).map(|c| c.pip).unwrap_or_default();
+                    let before_pip = pip;
+                    ui.add(egui::Slider::new(&mut pip.scale, 0.05..=1.0).text("Size"));
+                    ui.add(egui::Slider::new(&mut pip.x, 0.02..=0.98).text("Across"));
+                    ui.add(egui::Slider::new(&mut pip.y, 0.02..=0.98).text("Down"));
+                    ui.horizontal(|ui| {
+                        for (label, x, y) in [
+                            ("↖", 0.24, 0.26), ("↗", 0.76, 0.26),
+                            ("↙", 0.24, 0.74), ("↘", 0.76, 0.74),
+                        ] {
+                            if ui.small_button(label).clicked() {
+                                pip.x = x;
+                                pip.y = y;
+                            }
+                        }
+                    });
+                    if pip != before_pip {
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.pip = pip;
+                        }
+                        app.editor.mark_changed();
+                    }
+                    ui.label(
+                        RichText::new("Drag it on the preview to place it. The inset shows a still, not live video.")
+                            .small()
+                            .color(egui::Color32::from_gray(140)),
+                    );
+                }
+
+                // Playback rate. Changing it keeps the footage and resizes
+                // the clip's slot, which is what "speed this bit up" means.
+                let mut rate = app.project.clip(id).map(|c| c.speed).unwrap_or(1.0);
+                let before_rate = rate;
+                ui.add(
+                    egui::Slider::new(&mut rate, 0.25..=4.0)
+                        .logarithmic(true)
+                        .text("Speed")
+                        .custom_formatter(|v, _| format!("{v:.2}×")),
+                );
+                if (rate - before_rate).abs() > 1e-4 {
+                    if let Some(c) = app.project.clip_mut(id) {
+                        let source = c.source_len();
+                        c.speed = rate;
+                        c.duration = source / rate.max(0.01) as f64;
+                    }
+                    app.editor.mark_changed();
+                }
+
                 // Level for this clip's own audio.
                 let mut gain = app.project.clip(id).map(|c| c.gain_db).unwrap_or(0.0);
                 let before_gain = gain;
@@ -894,8 +950,10 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             // Captions sit on top of the picture, so they must be painted
             // AFTER the video callback — and inside this branch, which
             // returns early for every real frame.
+            draw_pip(app, ui.ctx(), &painter, img_rect);
             draw_overlays(app, &painter, img_rect);
             drag_title(app, &response, img_rect);
+            drag_pip(app, &response, img_rect);
             return;
         }
     }
@@ -971,6 +1029,92 @@ fn draw_overlays(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
             font.clone(),
             Color32::WHITE,
         );
+    }
+}
+
+/// The overlay under the playhead, previewed in place.
+///
+/// The picture comes from the clip's thumbnail sheet rather than a second
+/// live decoder: the POSITION and SIZE are exact — they read the same Pip
+/// fractions the renderer uses — while the frame itself is the nearest
+/// thumbnail. That is the honest trade: composition is what you place a PiP
+/// by, and it is exactly right; the inset just doesn't play.
+fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic: Rect) {
+    if app.mode != Mode::Editor {
+        return;
+    }
+    let t = app.editor.playhead;
+    let shots: Vec<(crate::edit::Pip, String, f64, bool)> = app
+        .project
+        .tracks
+        .iter()
+        .filter(|tr| tr.kind == crate::edit::TrackKind::Overlay && !tr.muted)
+        .flat_map(|tr| tr.clips.iter())
+        .filter(|c| t >= c.start && t < c.end())
+        .map(|c| {
+            (
+                c.pip,
+                c.source.clone(),
+                c.in_point + (t - c.start),
+                app.editor.selected == Some(c.id),
+            )
+        })
+        .collect();
+
+    for (pip, source, src_t, selected) in shots {
+        let w = pip.scale.clamp(0.02, 1.0) * pic.width();
+        // Height follows the source's own aspect, as the render does.
+        let aspect = app
+            .project
+            .width
+            .max(1) as f32
+            / app.project.height.max(1) as f32;
+        let h = w / aspect;
+        let centre = pic.min + Vec2::new(pip.x * pic.width(), pip.y * pic.height());
+        let box_rect = Rect::from_center_size(centre, Vec2::new(w, h));
+
+        let mut drew = false;
+        if let Some(sheet) = app.thumbs.get(ctx, &source, src_t.max(0.1) + 1.0) {
+            if let Some(uv) = sheet.uv_at(src_t) {
+                painter.add(egui::Shape::image(sheet.tex.id(), box_rect, uv, Color32::WHITE));
+                drew = true;
+            }
+        }
+        if !drew {
+            painter.rect_filled(box_rect, 2.0, Color32::from_black_alpha(180));
+        }
+        painter.rect_stroke(
+            box_rect,
+            2.0,
+            Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { theme::CYAN }),
+            egui::StrokeKind::Outside,
+        );
+    }
+}
+
+/// Drag the selected overlay around the frame. Same contract as titles:
+/// position is a fraction, so what you place is what renders at any size.
+fn drag_pip(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
+    if app.mode != Mode::Editor || pic.width() <= 0.0 || !response.dragged() {
+        return;
+    }
+    let Some(id) = app.editor.selected else { return };
+    let t = app.editor.playhead;
+    let is_overlay_now = app
+        .project
+        .tracks
+        .iter()
+        .any(|tr| {
+            tr.kind == crate::edit::TrackKind::Overlay
+                && tr.clips.iter().any(|c| c.id == id && t >= c.start && t < c.end())
+        });
+    if !is_overlay_now {
+        return;
+    }
+    if let (Some(p), Some(c)) = (response.interact_pointer_pos(), app.project.clip_mut(id)) {
+        c.pip.x = ((p.x - pic.min.x) / pic.width()).clamp(0.02, 0.98);
+        c.pip.y = ((p.y - pic.min.y) / pic.height()).clamp(0.02, 0.98);
+        app.editor.mark_changed();
     }
 }
 
@@ -1694,6 +1838,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         caption_size: app.project.caption_size,
                         titles: &app.project.titles,
                         music: app.project.music.as_ref(),
+                        overlays: &app.project.overlay_segments(),
                     },
                 ) {
                     Ok(job) => app.export = Some(job),
@@ -1796,8 +1941,10 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         return;
     }
     let ruler_h = 18.0;
+    // Lanes get taller than they used to: a clip now carries its thumbnails
+    // and its waveform, and both are useless when squeezed into 40 px.
     let lane_h = ((full.height() - ruler_h - 8.0) / app.project.tracks.len().max(1) as f32)
-        .clamp(24.0, 46.0);
+        .clamp(24.0, 72.0);
 
     // Wheel: pan; Ctrl+wheel: zoom around the cursor.
     if ui.rect_contains_pointer(full) {
@@ -1914,6 +2061,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         let base = match kind {
             TrackKind::Video => theme::CYAN,
             TrackKind::Audio => theme::EMBER,
+            TrackKind::Overlay => theme::STAR,
         };
         for clip in clips {
             let x0 = t_to_x(clip.start);
@@ -1934,20 +2082,65 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { base }),
                 egui::StrokeKind::Inside,
             );
+            // Thumbnails fill the clip, waveform sits in a band along the
+            // bottom — the arrangement every NLE settled on, because you
+            // scan for a shot by picture and for a cut by sound.
+            let mut wave_rect = cr;
+            if cr.width() > 8.0
+                && cr.height() > 26.0
+                && matches!(kind, TrackKind::Video | TrackKind::Overlay)
+            {
+                let source_len = clip.in_point + clip.source_len();
+                if let Some(sheet) = app.thumbs.get(ui.ctx(), &clip.source, source_len.max(0.1)) {
+                    let cell_w = (cr.height() - 2.0) * 16.0 / 9.0;
+                    let n = (cr.width() / cell_w).ceil().max(1.0) as usize;
+                    let step = cr.width() / n as f32;
+                    let tex = sheet.tex.id();
+                    for i in 0..n {
+                        let x0 = cr.left() + i as f32 * step;
+                        let cell = Rect::from_min_max(
+                            egui::pos2(x0, cr.top() + 1.0),
+                            egui::pos2((x0 + step).min(cr.right()), cr.bottom() - 1.0),
+                        );
+                        let t = clip.in_point
+                            + clip.source_len() * ((i as f64 + 0.5) / n as f64);
+                        let Some(mut uv) = sheet.uv_at(t) else { continue };
+                        // The last cell is usually clipped; crop its UV to
+                        // match so the picture isn't squashed.
+                        if cell.width() < step - 0.5 {
+                            uv.max.x = uv.min.x + uv.width() * (cell.width() / step);
+                        }
+                        painter.add(egui::Shape::image(tex, cell, uv, Color32::WHITE));
+                    }
+                    // Waveform gets the bottom third, over a scrim.
+                    let band = Rect::from_min_max(
+                        egui::pos2(cr.left(), cr.bottom() - cr.height() * 0.34),
+                        cr.right_bottom(),
+                    );
+                    painter.rect_filled(band, 0.0, Color32::from_black_alpha(120));
+                    wave_rect = band;
+                }
+            }
+
             // The waveform, so you can cut on a word instead of hunting for
             // it. Peaks are cached per source and computed off-thread; until
             // they land the clip just draws plain.
-            if cr.width() > 8.0 {
+            if wave_rect.width() > 8.0 {
                 if let Some(peaks) = app.waveforms.get(&clip.source) {
-                    let slots = (cr.width() as usize).clamp(1, 4000);
-                    let vals = peaks.window(clip.in_point, clip.in_point + clip.duration, slots);
+                    let slots = (wave_rect.width() as usize).clamp(1, 4000);
+                    let vals =
+                        peaks.window(clip.in_point, clip.in_point + clip.source_len(), slots);
                     if !vals.is_empty() {
-                        let mid = cr.center().y;
-                        let half = (cr.height() * 0.5) - 3.0;
-                        let colour = base.linear_multiply(if selected { 0.95 } else { 0.6 });
-                        let step = cr.width() / vals.len() as f32;
+                        let mid = wave_rect.center().y;
+                        let half = (wave_rect.height() * 0.5) - 2.0;
+                        let colour = if wave_rect == cr {
+                            base.linear_multiply(if selected { 0.95 } else { 0.6 })
+                        } else {
+                            theme::STAR.linear_multiply(0.75)
+                        };
+                        let step = wave_rect.width() / vals.len() as f32;
                         for (i, v) in vals.iter().enumerate() {
-                            let x = cr.left() + i as f32 * step + step * 0.5;
+                            let x = wave_rect.left() + i as f32 * step + step * 0.5;
                             let h = (v * half).max(0.5);
                             painter.line_segment(
                                 [egui::pos2(x, mid - h), egui::pos2(x, mid + h)],
@@ -1966,7 +2159,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                     egui::FontId::proportional(11.0),
                     theme::STAR,
                 );
-                let at = egui::pos2(cr.left() + 6.0, cr.center().y - galley.size().y * 0.5);
+                let at = egui::pos2(cr.left() + 6.0, cr.top() + 3.0);
                 painter.rect_filled(
                     Rect::from_min_size(at, galley.size()).expand2(Vec2::new(3.0, 1.0)),
                     3.0,

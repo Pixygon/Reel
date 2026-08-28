@@ -8,8 +8,14 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrackKind {
+    /// The base sequence — the cut itself.
     Video,
     Audio,
+    /// Picture composited ON TOP of the base sequence: a PiP window, a
+    /// reaction cam, a logo. Kept a distinct kind rather than "a second video
+    /// track" so the flattening that builds the cut can't accidentally splice
+    /// an overlay into the main sequence.
+    Overlay,
 }
 
 /// One clip placed on a track: a window `[in_point, in_point+duration)` of a
@@ -34,9 +40,45 @@ pub struct Clip {
     /// Level change for this clip's audio, in decibels. 0 is untouched.
     #[serde(default)]
     pub gain_db: f32,
+    /// Playback rate. 2.0 plays twice as fast, 0.5 half. `duration` is the
+    /// clip's length ON THE TIMELINE, so the window it consumes from the
+    /// source is `duration * speed` — see `source_len`.
+    #[serde(default = "one")]
+    pub speed: f32,
+    /// Where this clip sits in the frame when it's on an overlay track.
+    /// Ignored elsewhere. Fractions of the frame, so a PiP placed against a
+    /// 720p preview lands identically in a 4K render — same rule as titles.
+    #[serde(default)]
+    pub pip: Pip,
+}
+
+/// Placement of an overlay clip within the frame, in fractions.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Pip {
+    /// Centre of the inset.
+    pub x: f32,
+    pub y: f32,
+    /// Width of the inset as a fraction of the frame width.
+    pub scale: f32,
+}
+
+impl Default for Pip {
+    fn default() -> Self {
+        // Bottom-right quarter — where a webcam inset conventionally goes.
+        Self { x: 0.76, y: 0.74, scale: 0.30 }
+    }
 }
 
 impl Clip {
+    /// How much of the SOURCE this clip consumes. Equal to `duration` at
+    /// normal speed; twice that at 2×. Every place that reads a window out of
+    /// the source file — trimming, waveforms, thumbnails, caption mapping —
+    /// must use this rather than `duration`, or the picture and the sound
+    /// drift apart the moment a clip is sped up.
+    pub fn source_len(&self) -> f64 {
+        self.duration * self.speed.max(0.01) as f64
+    }
+
     pub fn end(&self) -> f64 {
         self.start + self.duration
     }
@@ -79,6 +121,8 @@ pub struct Segment {
     pub transition_in: f64,
     /// Level change for this clip's own audio, in decibels.
     pub gain_db: f32,
+    /// Playback rate; `duration` is already the sped-up length.
+    pub speed: f32,
 }
 
 /// A music bed laid under the edit.
@@ -107,6 +151,18 @@ impl Default for Music {
     fn default() -> Self {
         Self { source: String::new(), start: 0.0, gain_db: -12.0, duck: true, fade: 1.0 }
     }
+}
+
+/// One overlay placement, flattened for rendering.
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverlaySegment {
+    pub source: String,
+    pub in_point: f64,
+    pub duration: f64,
+    /// Where it appears on the TIMELINE.
+    pub at: f64,
+    pub pip: Pip,
+    pub gain_db: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -143,6 +199,10 @@ pub struct Project {
     pub markers: Vec<f64>,
     #[serde(skip)]
     next_id: u64,
+}
+
+fn one() -> f32 {
+    1.0
 }
 
 fn default_caption_size() -> u32 {
@@ -221,6 +281,7 @@ impl Project {
             .unwrap_or_else(|| source.to_string());
         let id = self.next_id;
         self.next_id += 1;
+        self.ensure_track(kind);
         if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
             track.clips.push(Clip {
                 id,
@@ -232,10 +293,56 @@ impl Project {
                 effects: Default::default(),
                 transition_in: 0.0,
                 gain_db: 0.0,
+                speed: 1.0,
+                pip: Pip::default(),
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
         id
+    }
+
+    /// Make sure a track of this kind exists, creating it if not. Overlay
+    /// tracks are made on demand so a project that never uses one never shows
+    /// an empty lane.
+    pub fn ensure_track(&mut self, kind: TrackKind) {
+        if self.tracks.iter().any(|t| t.kind == kind) {
+            return;
+        }
+        let id = self.tracks.iter().map(|t| t.id).max().unwrap_or(0) + 1;
+        let name = match kind {
+            TrackKind::Video => "V1",
+            TrackKind::Overlay => "V2",
+            TrackKind::Audio => "A1",
+        };
+        let track = Track { id, name: name.into(), kind, clips: vec![], muted: false };
+        // Overlays sit above the base video, audio below — the order lanes
+        // are drawn in.
+        match kind {
+            TrackKind::Overlay => self.tracks.insert(0, track),
+            _ => self.tracks.push(track),
+        }
+    }
+
+    /// Overlay clips, in timeline order — everything composited on top of the
+    /// cut. Timeline positions, not sequence positions: an overlay appears at
+    /// the moment it sits at, and the rest of the edit doesn't move for it.
+    pub fn overlay_segments(&self) -> Vec<OverlaySegment> {
+        let mut out: Vec<OverlaySegment> = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Overlay && !t.muted)
+            .flat_map(|t| t.clips.iter())
+            .map(|c| OverlaySegment {
+                source: c.source.clone(),
+                in_point: c.in_point,
+                duration: c.duration,
+                at: c.start,
+                pip: c.pip,
+                gain_db: c.gain_db,
+            })
+            .collect();
+        out.sort_by(|a, b| a.at.total_cmp(&b.at));
+        out
     }
 
     /// The caption showing at timeline time `t`, if any.
@@ -291,12 +398,14 @@ impl Project {
             let mut additions = Vec::new();
             for clip in &mut track.clips {
                 if clip.start + MIN < t && t < clip.end() - MIN {
-                    let cut = t - clip.start; // offset into the clip
+                    let cut = t - clip.start; // offset into the clip, timeline time
                     let mut right = clip.clone();
                     right.id = new_id;
                     new_id += 1;
                     right.start = t;
-                    right.in_point = clip.in_point + cut;
+                    // The source advances faster than the timeline on a
+                    // sped-up clip, so the cut point has to be scaled.
+                    right.in_point = clip.in_point + cut * clip.speed.max(0.01) as f64;
                     right.duration = clip.duration - cut;
                     clip.duration = cut;
                     additions.push(right);
@@ -546,8 +655,8 @@ impl Project {
             .filter(|t| t.kind == TrackKind::Video)
             .flat_map(|t| t.clips.iter())
             .filter(|c| c.source == source)
-            .find(|c| c.in_point <= pos && pos <= c.in_point + c.duration)
-            .map(|c| c.start + (pos - c.in_point))
+            .find(|c| c.in_point <= pos && pos <= c.in_point + c.source_len())
+            .map(|c| c.start + (pos - c.in_point) / c.speed.max(0.01) as f64)
     }
 
     /// Map a window of SOURCE time onto every place it appears on the
@@ -564,12 +673,13 @@ impl Project {
                 if c.source != source {
                     continue;
                 }
-                let (cs, ce) = (c.in_point, c.in_point + c.duration);
+                let (cs, ce) = (c.in_point, c.in_point + c.source_len());
                 let (lo, hi) = (a.max(cs), b.min(ce));
                 if hi <= lo {
                     continue;
                 }
-                out.push((c.start + (lo - cs), c.start + (hi - cs)));
+                let rate = c.speed.max(0.01) as f64;
+                out.push((c.start + (lo - cs) / rate, c.start + (hi - cs) / rate));
             }
         }
         out.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
@@ -611,13 +721,14 @@ impl Project {
                 let head = start - c.start; // trimmed off the clip's front
                 Some(Segment {
                     source: c.source.clone(),
-                    in_point: c.in_point + head,
+                    in_point: c.in_point + head * c.speed.max(0.01) as f64,
                     duration: end - start,
                     effects: c.effects,
                     // A clip cut into by the range marker loses its
                     // transition — there's no longer a clip to fade from.
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
                     gain_db: c.gain_db,
+                    speed: c.speed,
                 })
             })
             .collect()

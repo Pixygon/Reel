@@ -44,6 +44,17 @@ reel render cut.reel out.mp4 --preset tiktok
 6. **Unknown flags are refused.** A typo errors out instead of being ignored,
    so a render never quietly differs from what was asked for.
 
+## Overlays and speed
+
+`reel add cut.reel cam.mp4 --track overlay --at 3` puts a clip on the overlay
+track; `reel pip cut.reel --clip ID --x 0.25 --y 0.3 --scale 0.35` places it.
+`--x/--y` are the centre of the inset and `--scale` its width, all as
+fractions of the frame.
+
+`reel speed cut.reel --clip ID --rate 2` plays a clip at 2× with the audio
+following. By default the footage is kept and the clip's timeline slot
+shrinks; `--keep-length` holds the slot and consumes more source instead.
+
 ## Captions run locally
 
 `reel captions cut.reel` transcribes the speech on the machine it runs on.

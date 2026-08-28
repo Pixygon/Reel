@@ -42,6 +42,14 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **A second video track — picture-in-picture.** Drop a clip on the overlay
+  track and drag it where you want it on the preview: a reaction cam, a logo,
+  a screen inset. Position and size are fractions of the frame, so what you
+  place is what renders at any resolution.
+- **Speed.** Any clip, 0.25× to 4×, with the audio pitched to match. The
+  clip's slot on the timeline resizes to suit, so the rest of the cut stays
+  where you put it. (Constant speed per clip — *ramps* that accelerate
+  through a shot aren't in yet.)
 - **Waveforms on every clip.** The audio is drawn right on the timeline, so
   you cut on a word instead of hunting for it. Peaks are decoded in the
   background and cached per source, so splitting, trimming, moving or

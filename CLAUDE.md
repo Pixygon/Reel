@@ -233,6 +233,26 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   logs on stderr, so `--json 2>/dev/null | jq` is always safe. Print through
   `say()`, which treats a closed pipe as a normal end instead of panicking.
 
+- Overlay/PiP is `TrackKind::Overlay` — deliberately NOT "a second video
+  track", so `export_segments` (which flattens the cut) can never splice an
+  overlay into the main sequence. Geometry is `Clip.pip` fractions, rendered
+  with ffmpeg `overlay` + `enable='between(...)'`; the preview draws the same
+  fractions with a thumbnail, so position/size are exact and only the moving
+  picture is missing.
+- The caption/title filter chain attaches to whatever label the graph
+  currently ends on (read from the `-map` argument), NOT a hardcoded
+  `[vcat]` — overlays rename it to `[voN]`, and hardcoding silently dropped
+  them.
+- SPEED: `Clip.duration` is TIMELINE length; the source window is
+  `duration * speed` (`Clip::source_len()`). Everything reading a window out
+  of the source — trim, waveform, thumbnails, caption mapping, split — must
+  use `source_len()`, or picture and sound drift apart on any sped-up clip.
+  `atempo` only accepts 0.5–100, so slow motion chains it (`atempo_chain`).
+- Thumbnails (`thumbs.rs`) bake ONE tiled sheet per source via a single
+  ffmpeg call (`fps=…,scale,tile=12x10`) and draw sub-rectangles of that one
+  texture — a timeline full of clips costs one texture per file. `Layout` is
+  kept separate from the texture so the time→cell mapping is testable.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

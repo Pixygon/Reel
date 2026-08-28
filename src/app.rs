@@ -54,6 +54,8 @@ pub struct ReelApp {
     pub captions_job: Option<crate::captions::Job>,
     /// Audio peaks per source, for the timeline. Decoded in the background.
     pub waveforms: crate::waveform::Cache,
+    /// Tiled thumbnail sheets per source, for the timeline.
+    pub thumbs: crate::thumbs::Cache,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -115,6 +117,7 @@ impl ReelApp {
             queue: export::Queue::default(),
             captions_job: None,
             waveforms: crate::waveform::Cache::default(),
+            thumbs: crate::thumbs::Cache::default(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -653,6 +656,7 @@ impl ReelApp {
                 caption_size: self.project.caption_size,
                 titles: self.project.titles.clone(),
                 music: self.project.music.clone(),
+                overlays: self.project.overlay_segments(),
             }
         } else {
             let Some(path) = self.media_path() else { return };
@@ -948,7 +952,7 @@ impl ReelApp {
                 return;
             }
         }
-        if pos <= clip.in_point + clip.duration + 0.02 {
+        if pos <= clip.in_point + clip.source_len() + 0.02 {
             self.editor.playhead = clip.start + (pos - clip.in_point).max(0.0);
         } else {
             match self.project.clip_after(TrackKind::Video, clip.start).cloned() {
@@ -1117,6 +1121,7 @@ impl ReelApp {
             || self.queue.is_busy()
             || self.captions_job.is_some()
             || self.waveforms.is_busy()
+            || self.thumbs.is_busy()
             || self.picker.is_some()
             || self.opening.is_some()
             || self.shot_rx.is_some()

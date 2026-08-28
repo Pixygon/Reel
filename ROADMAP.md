@@ -104,9 +104,17 @@ never leaving the GPU.
 - [x] **Waveforms on clips** — decoded off-thread, cached per source.
 - [x] Copy/paste/duplicate (paste inserts and ripples, never overwrites) and
       markers with jump-to-next/previous.
-- [ ] Thumbnails on clips; roll edits.
-- [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
-      then the preview shows the V1 source frame.
+- [x] **Thumbnails on clips** — one ffmpeg call bakes a tiled contact sheet
+      per source, so a whole timeline costs one texture per file.
+- [x] **A second video track (overlay / PiP)** with drag-to-place composition,
+      rendered through ffmpeg `overlay` from the same frame fractions the
+      preview draws. The inset previews as a still, not live video.
+- [x] **Per-clip speed** (0.25×–4×), audio tempo included.
+- [ ] Speed RAMPS (accelerating through a shot) and keyframed effects.
+- [ ] Roll edits; live compositing of the overlay in the preview.
+- [x] A second video track composited at render time (see Milestone 2 above).
+- [ ] Multi-track compositing on the GPU so the overlay plays live in the
+      preview — today its position and size are exact but the inset is a still.
 
 ## Milestone 3 — finish & polish
 
