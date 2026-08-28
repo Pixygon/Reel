@@ -4,6 +4,30 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.22.0] — 2026-08-28
+
+### Added
+- Added J-K-L shuttle controls: L steps up forward playback speed, J shuttles backwards (including true reverse playback), and K stops — the classic editor's shortcut for scrubbing through footage. _(39fdbb0)_
+- Added ripple delete (Shift+Delete) — removing a clip now closes the gap behind it automatically, keeping video and linked audio in sync. _(39fdbb0)_
+- Added ripple trim shortcuts Q and W to trim a clip's head or tail back to the playhead and instantly close up the resulting gap. _(39fdbb0)_
+
+### Changed
+- The L key now requires Shift to toggle looping, since plain L is used for shuttle-forward; Ctrl/Cmd+K is now an alternate shortcut for splitting a clip. **(BREAKING)** _(39fdbb0)_
+- Updated the on-screen editor shortcut hints to reflect the new J K L shuttle, ripple delete, and ripple trim controls. _(39fdbb0)_
+
+
+## [0.21.1] — 2026-08-28
+
+### Added
+- Added J-K-L shuttle controls: L steps up forward playback speed, J shuttles backwards (including true reverse playback), and K stops — the classic editor's shortcut for scrubbing through footage. _(39fdbb0)_
+- Added ripple delete (Shift+Delete) — removing a clip now closes the gap behind it automatically, keeping video and linked audio in sync. _(39fdbb0)_
+- Added ripple trim shortcuts Q and W to trim a clip's head or tail back to the playhead and instantly close up the resulting gap. _(39fdbb0)_
+
+### Changed
+- The L key now requires Shift to toggle looping, since plain L is used for shuttle-forward; Ctrl/Cmd+K is now an alternate shortcut for splitting a clip. **(BREAKING)** _(39fdbb0)_
+- Updated the on-screen editor shortcut hints to reflect the new J K L shuttle, ripple delete, and ripple trim controls. _(39fdbb0)_
+
+
 ## [0.21.0] — 2026-08-28
 
 ### Changed

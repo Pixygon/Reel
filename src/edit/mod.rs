@@ -267,6 +267,83 @@ impl Project {
         removed
     }
 
+    /// Shift every clip that starts at or after `from` left by `amount`, on
+    /// EVERY track — so video and audio stay in sync through a ripple.
+    fn ripple_from(&mut self, from: f64, amount: f64) {
+        if amount <= 0.0 {
+            return;
+        }
+        for track in &mut self.tracks {
+            for clip in &mut track.clips {
+                if clip.start >= from - 1e-6 {
+                    clip.start = (clip.start - amount).max(0.0);
+                }
+            }
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        }
+    }
+
+    /// Remove a clip and close the hole behind it — Shift+Delete in every
+    /// NLE. Clips on OTHER tracks lying inside the same span go too (video
+    /// and audio arrive as linked pairs, so removing a shot must remove its
+    /// sound); rippling one track while leaving another would overlap clips.
+    /// Returns the seconds removed from the timeline.
+    pub fn ripple_delete(&mut self, id: u64) -> f64 {
+        let Some(clip) = self.clip(id) else { return 0.0 };
+        let (start, end, duration) = (clip.start, clip.end(), clip.duration);
+        for track in &mut self.tracks {
+            track
+                .clips
+                .retain(|c| c.id != id && !(c.start >= start - 1e-6 && c.end() <= end + 1e-6));
+        }
+        self.ripple_from(end - 1e-9, duration);
+        duration
+    }
+
+    /// Trim the clip under `t` back to the playhead and close the gap —
+    /// Q (trim the head) and W (trim the tail) in Premiere's keymap.
+    /// Returns the seconds removed.
+    pub fn ripple_trim_to_playhead(&mut self, t: f64, head: bool) -> f64 {
+        const MIN: f64 = 0.05;
+        // Take the video track's clip as the reference for how much to remove,
+        // then ripple every track by that amount so nothing drifts.
+        let Some(clip) = self.clip_at(TrackKind::Video, t) else { return 0.0 };
+        let (id, start, end) = (clip.id, clip.start, clip.end());
+        let removed = if head { t - start } else { end - t };
+        if removed <= MIN || (end - start) - removed < MIN {
+            return 0.0;
+        }
+        // Apply the same trim to every track's clip under the playhead, so
+        // picture and sound stay locked together.
+        let ids: Vec<u64> = self
+            .tracks
+            .iter()
+            .flat_map(|tr| tr.clips.iter())
+            .filter(|c| c.start <= t && t < c.end())
+            .map(|c| c.id)
+            .collect();
+        let _ = id;
+        for cid in ids {
+            if let Some(c) = self.clip_mut(cid) {
+                if head {
+                    let d = (t - c.start).min(c.duration - MIN).max(0.0);
+                    c.in_point += d;
+                    c.duration -= d;
+                    c.start = t;
+                } else {
+                    let d = (c.end() - t).min(c.duration - MIN).max(0.0);
+                    c.duration -= d;
+                }
+            }
+        }
+        if head {
+            self.ripple_from(t - 1e-9, removed);
+        } else {
+            self.ripple_from(end - 1e-9, removed);
+        }
+        removed
+    }
+
     pub fn delete_clip(&mut self, id: u64) -> bool {
         for track in &mut self.tracks {
             let before = track.clips.len();
@@ -580,6 +657,59 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&p).unwrap(), "second, longer contents");
         assert!(!std::path::Path::new(&format!("{p}.tmp")).exists(), "temp file left behind");
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn ripple_delete_closes_the_hole_on_every_track() {
+        let mut p = one_clip_project(); // 10s on V1 and A1
+        p.split_at(4.0);
+        p.split_at(7.0); // → [0,4) [4,7) [7,10) on both tracks
+        let mid = p.tracks[0].clips[1].id;
+        let before = p.duration();
+        assert_eq!(p.tracks[0].clips.len(), 3);
+
+        let removed = p.ripple_delete(mid);
+        assert!((removed - 3.0).abs() < 1e-9, "removed the middle clip's 3s");
+        assert_eq!(p.tracks[0].clips.len(), 2);
+        // The third clip slid left into the hole: no gap, and the edit is 3s shorter.
+        assert!((p.tracks[0].clips[1].start - 4.0).abs() < 1e-9);
+        assert!((p.duration() - (before - 3.0)).abs() < 1e-9);
+        // The linked audio clip went with it, and what remains stays in sync
+        // with the picture — no overlaps left behind.
+        assert_eq!(p.tracks[1].clips.len(), 2, "the sound of that shot went too");
+        assert!((p.tracks[1].clips[1].start - 4.0).abs() < 1e-9);
+        for track in &p.tracks {
+            for pair in track.clips.windows(2) {
+                assert!(pair[0].end() <= pair[1].start + 1e-6, "clips must never overlap");
+            }
+        }
+    }
+
+    #[test]
+    fn ripple_trim_pulls_the_edit_to_the_playhead() {
+        // Trim the head: Q at 2s inside a clip starting at 0.
+        let mut p = one_clip_project();
+        p.split_at(5.0);
+        let removed = p.ripple_trim_to_playhead(2.0, true);
+        assert!((removed - 2.0).abs() < 1e-9);
+        let first = &p.tracks[0].clips[0];
+        assert!((first.start - 0.0).abs() < 1e-9, "clip slid back to the start");
+        assert!((first.in_point - 2.0).abs() < 1e-9, "and kept its source offset");
+        assert!((first.duration - 3.0).abs() < 1e-9);
+        assert!((p.duration() - 8.0).abs() < 1e-9, "edit is 2s shorter");
+
+        // Trim the tail: W at 1s inside a 3s clip removes its last 2s.
+        let mut p = one_clip_project();
+        p.split_at(3.0);
+        let removed = p.ripple_trim_to_playhead(1.0, false);
+        assert!((removed - 2.0).abs() < 1e-9);
+        assert!((p.tracks[0].clips[0].duration - 1.0).abs() < 1e-9);
+        assert!((p.tracks[0].clips[1].start - 1.0).abs() < 1e-9, "the next clip closed up");
+
+        // Refuses to leave a sliver, or to trim outside a clip.
+        let mut p = one_clip_project();
+        assert_eq!(p.ripple_trim_to_playhead(0.01, true), 0.0);
+        assert_eq!(p.ripple_trim_to_playhead(99.0, true), 0.0);
     }
 
     #[test]

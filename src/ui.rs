@@ -179,6 +179,9 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         vol_down: bool,
         mute: bool,
         looping: bool,
+        shuttle_fwd: bool,
+        shuttle_back: bool,
+        shuttle_stop: bool,
         fullscreen: bool,
         escape: bool,
         edit: bool,
@@ -197,7 +200,10 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         vol_up: i.key_pressed(Key::ArrowUp),
         vol_down: i.key_pressed(Key::ArrowDown),
         mute: i.key_pressed(Key::M),
-        looping: i.key_pressed(Key::L),
+        looping: i.key_pressed(Key::L) && i.modifiers.shift,
+        shuttle_fwd: i.key_pressed(Key::L) && !i.modifiers.shift,
+        shuttle_back: i.key_pressed(Key::J),
+        shuttle_stop: i.key_pressed(Key::K),
         fullscreen: i.key_pressed(Key::F) || i.key_pressed(Key::F11),
         escape: i.key_pressed(Key::Escape),
         edit: i.key_pressed(Key::E),
@@ -207,6 +213,7 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         viz: i.key_pressed(Key::V),
     });
 
+    let mut shuttle_note: Option<String> = None;
     if let Some(player) = app.player.as_mut() {
         if k.space {
             player.toggle_play();
@@ -236,6 +243,19 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if k.looping {
             player.set_looping(!player.looping);
         }
+        // J-K-L: the shuttle every editor's left hand already knows.
+        if k.shuttle_back || k.shuttle_fwd {
+            let rate = player.shuttle(k.shuttle_fwd);
+            shuttle_note = Some(if rate < 0.0 {
+                format!("◀◀ {:.0}× reverse", -rate)
+            } else {
+                format!("{rate:.0}× forward")
+            });
+        }
+        if k.shuttle_stop {
+            player.shuttle_stop();
+            shuttle_note = Some("paused".into());
+        }
         if k.speed_up {
             player.set_speed(player.speed + 0.25);
         }
@@ -248,6 +268,9 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if k.viz && player.supports_visualizer() {
             player.set_visualizer(player.visualizer.next());
         }
+    }
+    if let Some(note) = shuttle_note {
+        app.status = note;
     }
     if k.fullscreen {
         app.fullscreen = !app.fullscreen;
@@ -268,13 +291,20 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         struct EdKeys {
             split: bool,
             delete: bool,
+            ripple_delete: bool,
+            trim_head: bool,
+            trim_tail: bool,
             undo: bool,
             redo: bool,
             save: bool,
         }
         let ek = ctx.input(|i| EdKeys {
-            split: i.key_pressed(Key::S) && !i.modifiers.ctrl && !i.modifiers.command,
-            delete: i.key_pressed(Key::Delete),
+            split: (i.key_pressed(Key::S) && !i.modifiers.ctrl && !i.modifiers.command)
+                || ((i.modifiers.ctrl || i.modifiers.command) && i.key_pressed(Key::K)),
+            delete: i.key_pressed(Key::Delete) && !i.modifiers.shift,
+            ripple_delete: i.key_pressed(Key::Delete) && i.modifiers.shift,
+            trim_head: i.key_pressed(Key::Q),
+            trim_tail: i.key_pressed(Key::W),
             undo: (i.modifiers.ctrl || i.modifiers.command) && !i.modifiers.shift && i.key_pressed(Key::Z),
             redo: (i.modifiers.ctrl || i.modifiers.command)
                 && (i.key_pressed(Key::Y) || (i.modifiers.shift && i.key_pressed(Key::Z))),
@@ -285,6 +315,15 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         }
         if ek.delete {
             app.editor_delete();
+        }
+        if ek.ripple_delete {
+            app.editor_ripple_delete();
+        }
+        if ek.trim_head {
+            app.editor_ripple_trim(true);
+        }
+        if ek.trim_tail {
+            app.editor_ripple_trim(false);
         }
         if ek.undo {
             app.editor.undo(&mut app.project);
@@ -578,7 +617,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             }
         }
         ui.separator();
-        ui.label(RichText::new("S split · Del delete · drag edges to trim\nright-click a clip to close gaps · Ctrl+scroll zoom").small().color(egui::Color32::from_gray(120)));
+        ui.label(RichText::new("J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\nDel delete · Shift+Del ripple delete · right-click to close gaps").small().color(egui::Color32::from_gray(120)));
     }
 }
 

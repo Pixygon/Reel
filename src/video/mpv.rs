@@ -349,6 +349,12 @@ impl MpvPlayer {
         self.set_f64("speed", speed);
     }
 
+    /// Play backwards (J in every NLE). mpv can genuinely decode in reverse;
+    /// it is expensive, so callers should keep it to shuttle speeds.
+    pub fn set_direction(&mut self, backward: bool) {
+        let _ = self.command(&["set", "play-direction", if backward { "backward" } else { "forward" }]);
+    }
+
     pub fn set_looping(&mut self, looping: bool) {
         let _ = self.command(&["set", "loop-file", if looping { "inf" } else { "no" }]);
     }

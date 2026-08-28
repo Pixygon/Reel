@@ -98,6 +98,8 @@ pub struct Player {
     pub looping: bool,
     /// Active audio visualizer (mpv backend, audio media).
     pub visualizer: Visualizer,
+    /// J-K-L shuttle rate; negative is reverse, 1.0 is ordinary playback.
+    shuttle_rate: f64,
     /// Hardware decode is enabled lazily (~1 s in) — probing GPUs before the
     /// first pixel costs ~500 ms of cold-open time.
     hwdec_upgraded: bool,
@@ -135,6 +137,7 @@ impl Player {
             speed: 1.0,
             looping: false,
             visualizer: Visualizer::Off,
+            shuttle_rate: 1.0,
             hwdec_upgraded: false,
             dirty: true,
             active_until: Instant::now() + Duration::from_millis(500),
@@ -167,6 +170,15 @@ impl Player {
     }
 
     pub fn toggle_play(&mut self) {
+        if self.shuttle_rate != 1.0 {
+            // Space always means "normal playback", whatever J/L were doing.
+            self.shuttle_rate = 1.0;
+            self.speed = 1.0;
+            if let Backend::Mpv(m) = &mut self.backend {
+                m.set_direction(false);
+                m.set_speed(1.0);
+            }
+        }
         if self.ended && !self.playing {
             self.seek(0.0); // replay from the top, VLC-style
         }
@@ -228,6 +240,52 @@ impl Player {
         if let Backend::Mpv(m) = &mut self.backend {
             m.set_muted(muted);
         }
+    }
+
+    /// The J-K-L shuttle every editor's left hand already knows: L steps the
+    /// speed up forwards, J steps it up backwards, K stops. Returns the
+    /// resulting rate for the status line (negative = reverse).
+    pub fn shuttle(&mut self, forward: bool) -> f64 {
+        const LADDER: [f64; 4] = [1.0, 2.0, 4.0, 8.0];
+        let same_way = self.shuttle_rate.signum() == if forward { 1.0 } else { -1.0 };
+        let next = if same_way && self.playing {
+            let mag = self.shuttle_rate.abs();
+            LADDER.iter().copied().find(|s| *s > mag + 1e-6).unwrap_or(8.0)
+        } else {
+            1.0
+        };
+        self.shuttle_rate = if forward { next } else { -next };
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_direction(!forward);
+            m.set_speed(next);
+        }
+        self.speed = next;
+        if !self.playing {
+            self.playing = true;
+            if let Backend::Mpv(m) = &mut self.backend {
+                m.set_pause(false);
+            }
+        }
+        self.touch();
+        self.shuttle_rate
+    }
+
+    /// K — stop, and return to ordinary forward playback at 1×.
+    pub fn shuttle_stop(&mut self) {
+        self.shuttle_rate = 1.0;
+        self.speed = 1.0;
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_direction(false);
+            m.set_speed(1.0);
+            m.set_pause(true);
+        }
+        self.playing = false;
+        self.touch();
+    }
+
+    /// Current shuttle rate; negative means reverse.
+    pub fn shuttle_rate(&self) -> f64 {
+        self.shuttle_rate
     }
 
     pub fn set_speed(&mut self, speed: f64) {
@@ -449,6 +507,46 @@ impl Player {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// J runs the picture backwards. mpv can genuinely decode in reverse;
+    /// this proves it does, rather than trusting the property write.
+    #[test]
+    fn shuttle_runs_the_picture_backwards() {
+        if mpv::lib().is_none() {
+            eprintln!("libmpv not installed — skipping shuttle test");
+            return;
+        }
+        let fixture = format!("{}/tests/fixture.mp4", env!("CARGO_MANIFEST_DIR"));
+        let mut p = Player::open(&fixture).expect("open fixture");
+        p.seek(1.6);
+        for _ in 0..20 {
+            p.update();
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let start = p.position;
+
+        assert_eq!(p.shuttle(false), -1.0, "J shuttles into reverse");
+        assert_eq!(p.shuttle(false), -2.0, "J again doubles the reverse rate");
+        assert_eq!(p.shuttle(true), 1.0, "L turns it around at 1x");
+
+        // Back into reverse, and confirm the clock actually moves backwards.
+        p.shuttle(false);
+        let deadline = Instant::now() + Duration::from_secs(8);
+        let mut moved_back = false;
+        while Instant::now() < deadline {
+            p.update();
+            if p.position < start - 0.15 {
+                moved_back = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        assert!(moved_back, "position should decrease while shuttling back (was {start:.2})");
+
+        p.shuttle_stop();
+        assert_eq!(p.shuttle_rate(), 1.0);
+        assert!(!p.playing, "K stops");
+    }
 
     /// Audio files are first-class: open one through the same Player and it
     /// plays (position advances on mpv's clock, no video frames required).

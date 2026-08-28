@@ -847,6 +847,47 @@ impl ReelApp {
         self.status = format!("Split {n} clip(s) at {t:.2}s.");
     }
 
+    /// Ripple delete: remove the selected clip and close the hole
+    /// (Shift+Delete). Falls back to the clip under the playhead.
+    pub fn editor_ripple_delete(&mut self) {
+        let id = self
+            .editor
+            .selected
+            .or_else(|| self.project.clip_at(TrackKind::Video, self.editor.playhead).map(|c| c.id));
+        let Some(id) = id else {
+            self.status = "Nothing selected to ripple-delete.".into();
+            return;
+        };
+        self.editor.push_undo(&self.project);
+        let removed = self.project.ripple_delete(id);
+        self.editor.selected = None;
+        self.status = if removed > 0.0 {
+            format!("Rippled out {removed:.2}s.")
+        } else {
+            "Nothing to remove there.".into()
+        };
+    }
+
+    /// Q / W — trim the clip under the playhead back to it and close up.
+    pub fn editor_ripple_trim(&mut self, head: bool) {
+        self.editor.push_undo(&self.project);
+        let removed = self.project.ripple_trim_to_playhead(self.editor.playhead, head);
+        if removed <= 0.0 {
+            self.editor.undo(&mut self.project); // nothing happened; don't leave an undo step
+            self.status = "No edit to trim at the playhead.".into();
+            return;
+        }
+        if head {
+            // The material before the playhead is gone, so the playhead is
+            // now where that clip begins.
+            let t = self.editor.playhead - removed;
+            self.seek_timeline(t.max(0.0));
+        } else {
+            self.seek_timeline(self.editor.playhead);
+        }
+        self.status = format!("Trimmed {removed:.2}s and closed up.");
+    }
+
     /// Delete the selected clip (Del).
     pub fn editor_delete(&mut self) {
         if let Some(id) = self.editor.selected {
