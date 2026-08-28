@@ -17,6 +17,14 @@ pub enum Mode {
     Editor,
 }
 
+/// What the open dialog is currently being used for.
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub enum PickerTarget {
+    #[default]
+    Media,
+    Music,
+}
+
 pub struct ReelApp {
     pub mode: Mode,
     pub player: Option<Player>,
@@ -48,6 +56,8 @@ pub struct ReelApp {
 
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
+    /// Where the next picked file goes — the same dialog serves both.
+    picker_target: PickerTarget,
     /// A video/audio open in progress on a worker thread.
     opening: Option<Receiver<Result<Player, String>>>,
     /// Result channel of a screenshot being taken on a worker thread.
@@ -104,6 +114,7 @@ impl ReelApp {
             captions_job: None,
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
+            picker_target: PickerTarget::Media,
             opening: None,
             shot_rx: None,
             recorder: None,
@@ -212,13 +223,33 @@ impl ReelApp {
 
     /// Kick off the native file picker on a worker thread (it must not block
     /// the UI/event loop); `poll_picker` collects the choice.
+    /// Pick a music bed instead of opening media. Same picker, different
+    /// destination — see `picker_target`.
+    pub fn pick_music(&mut self) {
+        if self.picker.is_some() {
+            return;
+        }
+        self.picker_target = PickerTarget::Music;
+        self.open_picker_inner(true);
+    }
+
     pub fn open_picker(&mut self) {
         if self.picker.is_some() {
             return; // one picker at a time
         }
+        self.picker_target = PickerTarget::Media;
+        self.open_picker_inner(false);
+    }
+
+    fn open_picker_inner(&mut self, audio_only: bool) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
-            let filters: [(&str, &[&str]); 5] = [
+            let audio_filters: [(&str, &[&str]); 2] = [
+                ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac", "aiff"]),
+                ("Any media", &["mp4", "mkv", "webm", "mov", "m4v", "mp3", "flac", "ogg",
+                                "opus", "m4a", "wav"]),
+            ];
+            let media_filters: [(&str, &[&str]); 5] = [
                 ("Media", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
                             "mp3", "flac", "ogg", "opus", "m4a", "wav",
                             "png", "jpg", "jpeg", "webp", "bmp", "svg"]),
@@ -235,16 +266,28 @@ impl ReelApp {
             #[cfg(target_os = "linux")]
             let picked = crate::runtime::rt().block_on(async {
                 let mut d = rfd::AsyncFileDialog::new();
-                for (name, ext) in filters {
-                    d = d.add_filter(name, ext);
+                if audio_only {
+                    for (name, ext) in audio_filters {
+                        d = d.add_filter(name, ext);
+                    }
+                } else {
+                    for (name, ext) in media_filters {
+                        d = d.add_filter(name, ext);
+                    }
                 }
                 d.pick_file().await.map(|h| h.path().to_string_lossy().into_owned())
             });
             #[cfg(not(target_os = "linux"))]
             let picked = {
                 let mut d = rfd::FileDialog::new();
-                for (name, ext) in filters {
-                    d = d.add_filter(name, ext);
+                if audio_only {
+                    for (name, ext) in audio_filters {
+                        d = d.add_filter(name, ext);
+                    }
+                } else {
+                    for (name, ext) in media_filters {
+                        d = d.add_filter(name, ext);
+                    }
                 }
                 d.pick_file().map(|p| p.to_string_lossy().into_owned())
             };
@@ -258,7 +301,17 @@ impl ReelApp {
         match rx.try_recv() {
             Ok(Some(path)) => {
                 self.picker = None;
-                self.open(&path);
+                match self.picker_target {
+                    PickerTarget::Media => self.open(&path),
+                    PickerTarget::Music => {
+                        self.editor.push_undo(&self.project);
+                        let keep = self.project.music.clone().unwrap_or_default();
+                        self.project.music = Some(crate::edit::Music { source: path, ..keep });
+                        self.editor.mark_changed();
+                        self.status = "Music bed added — it ducks under speech on export.".into();
+                    }
+                }
+                self.picker_target = PickerTarget::Media;
             }
             Ok(None) => self.picker = None, // dialog dismissed
             Err(crossbeam_channel::TryRecvError::Empty) => {}
@@ -595,6 +648,8 @@ impl ReelApp {
                 project: (self.project.width, self.project.height, self.project.fps),
                 captions: self.project.captions.clone(),
                 caption_size: self.project.caption_size,
+                titles: self.project.titles.clone(),
+                music: self.project.music.clone(),
             }
         } else {
             let Some(path) = self.media_path() else { return };

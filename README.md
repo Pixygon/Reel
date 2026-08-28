@@ -42,6 +42,14 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **Titles you place by dragging.** Add text, drag it where you want it on
+  the picture, set size and colour. Position is stored as a fraction of the
+  frame, so a title composed on the preview lands in exactly the same place
+  in a 4K export.
+- **Sound that behaves.** A volume trim per clip, plus a music bed under the
+  whole edit that **ducks under speech automatically** — no volume curves to
+  draw, no keyframes to place. Verified by measuring the music's own
+  frequency band in a real render, not by eye.
 - **Convert without editing — the HandBrake seam.** Hit **⬇ Export** on
   anything open: video → H.264/H.265/AV1/VP9 with quality presets (or custom
   CRF), downscale, audio bitrate/copy, instant lossless MKV remux — or

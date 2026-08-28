@@ -579,12 +579,26 @@ pub fn has_audio_stream(path: &str) -> bool {
 /// are trimmed and concatenated (video + audio in lockstep when the sources
 /// have sound), then encoded with the chosen video codec settings. This is
 /// the timeline export — the cut itself becomes the file.
+#[cfg(test)]
 pub fn build_timeline_args(
     segments: &[Segment],
     output: &str,
     s: &ExportSettings,
     with_audio: bool,
     target: (u32, u32, f64),
+) -> Vec<String> {
+    build_timeline_args_with_music(segments, output, s, with_audio, target, None)
+}
+
+/// Build the ffmpeg argument list for a timeline render, with an optional
+/// music bed laid under the cut. Pure, and unit-tested.
+pub fn build_timeline_args_with_music(
+    segments: &[Segment],
+    output: &str,
+    s: &ExportSettings,
+    with_audio: bool,
+    target: (u32, u32, f64),
+    music: Option<&crate::edit::Music>,
 ) -> Vec<String> {
     let (tw, th, tfps) = target;
     let mut a: Vec<String> = Vec::new();
@@ -598,6 +612,12 @@ pub fn build_timeline_args(
     for src in &sources {
         a.extend(["-i".into(), (*src).into()]);
     }
+    // The music bed is one more input, after every clip source.
+    let music = music.filter(|m| !m.source.is_empty());
+    let music_input = music.map(|m| {
+        a.extend(["-i".into(), m.source.clone()]);
+        sources.len()
+    });
 
     // concat demands identical geometry/rate/audio format across segments, so
     // every segment is normalised to the target frame with the chosen fit
@@ -624,8 +644,13 @@ pub fn build_timeline_args(
             "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{fx}{vnorm}[v{k}];"
         ));
         if with_audio {
+            let gain = if seg.gain_db.abs() > 0.01 {
+                format!(",volume={:.2}dB", seg.gain_db)
+            } else {
+                String::new()
+            };
             graph.push_str(&format!(
-                "[{i}:a]atrim=start={in_point:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,{anorm}[a{k}];"
+                "[{i}:a]atrim=start={in_point:.4}:duration={duration:.4},asetpts=PTS-STARTPTS,{anorm}{gain}[a{k}];"
             ));
         }
     }
@@ -671,24 +696,84 @@ pub fn build_timeline_args(
                 graph.push_str(&format!("[a{k}]"));
             }
         }
+        // Label order matters: concat emits video first, then audio, and the
+        // labels bind in that order. Writing "[acat]" first silently bound
+        // the VIDEO pad to it — harmless-looking (the file still played,
+        // with its streams swapped) right up until something downstream
+        // tried to treat [acat] as audio.
         graph.push_str(&format!(
-            "concat=n={}:v=1:a={}[vcat]",
+            "concat=n={}:v=1:a={}",
             segments.len(),
-            if with_audio { "1[acat]" } else { "0" }
+            if with_audio { "1[vcat][acat]" } else { "0[vcat]" }
         ));
     }
+    // The music bed, laid under whatever the cut itself carries.
+    let mut audio_out = if with_audio { Some("[acat]".to_string()) } else { None };
+    if let (Some(idx), Some(m)) = (music_input, music) {
+        let total = crate::edit::render_duration(segments);
+        let delay_ms = (m.start.max(0.0) * 1000.0).round() as u64;
+        let delay = if delay_ms > 0 {
+            format!(",adelay={delay_ms}|{delay_ms}")
+        } else {
+            String::new()
+        };
+        // Trim to the cut's length so a long track can't extend the render,
+        // and fade so it never just stops dead.
+        let fade = if m.fade > 0.0 && total > m.fade * 2.0 {
+            format!(
+                ",afade=t=in:st=0:d={:.2},afade=t=out:st={:.2}:d={:.2}",
+                m.fade,
+                total - m.fade,
+                m.fade
+            )
+        } else {
+            String::new()
+        };
+        graph.push_str(&format!(
+            ";[{idx}:a]{anorm},volume={:.2}dB{delay},atrim=0:{total:.4},asetpts=PTS-STARTPTS{fade}[mus]",
+            m.gain_db
+        ));
+
+        match &audio_out {
+            // Speech present: duck the music under it if asked, then mix.
+            Some(cut) => {
+                let bed = if m.duck {
+                    // The cut's audio drives the compressor AND is kept — so
+                    // it is split first; a filter output can only be used once.
+                    graph.push_str(&format!(";{cut}asplit=2[sc_keep][sc_key]"));
+                    graph.push_str(
+                        ";[mus][sc_key]sidechaincompress=threshold=0.03:ratio=12:attack=20:release=400:makeup=1[mus_d]",
+                    );
+                    ("[sc_keep]", "[mus_d]")
+                } else {
+                    (cut.as_str(), "[mus]")
+                };
+                // normalize=0: amix otherwise divides every input by the
+                // number of inputs, quietly halving the dialogue.
+                graph.push_str(&format!(
+                    ";{}{}amix=inputs=2:duration=first:normalize=0:dropout_transition=0[amix]",
+                    bed.0, bed.1
+                ));
+                audio_out = Some("[amix]".into());
+            }
+            // Nothing but music: it becomes the soundtrack.
+            None => audio_out = Some("[mus]".into()),
+        }
+    }
+
     // No post-concat scale: `target` already carries the chosen resolution,
     // and every segment was normalised to it above.
     a.extend(["-filter_complex".into(), graph, "-map".into(), "[vcat]".into()]);
-    if with_audio {
-        a.extend(["-map".into(), "[acat]".into()]);
+    let has_audio_out = audio_out.is_some();
+    if let Some(out) = &audio_out {
+        a.extend(["-map".into(), out.clone()]);
     }
 
     // Non-video codecs handed in by mistake render as H.264 — the safe
     // default for a timeline.
     let vcodec = if matches!(s.codec, Codec::H265 | Codec::Av1 | Codec::Vp9) { s.codec } else { Codec::H264 };
     a.extend(video_encoder_args(vcodec, s.quality, s.hardware));
-    if with_audio {
+    if has_audio_out {
         let (codec, kbps) = if s.codec == Codec::Vp9 { ("libopus", 128) } else { ("aac", 160) };
         a.extend(["-c:a".into(), codec.into(), "-b:a".into(), format!("{kbps}k")]);
     }
@@ -699,17 +784,28 @@ pub fn build_timeline_args(
     a
 }
 
-/// Start a timeline (edit) export, burning any `captions` (timeline-time)
-/// into the picture. Progress is driven by the cut's total duration = the sum
-/// of segment durations. Captions are rendered by ffmpeg from an SRT we write
-/// beside the output, styled by `captions::force_style`.
+/// Everything drawn on top of the picture at render time.
+#[derive(Clone, Copy, Default)]
+pub struct Overlays<'a> {
+    pub captions: &'a [crate::captions::Cue],
+    pub caption_size: u32,
+    pub titles: &'a [crate::titles::Title],
+    /// A music bed laid under the cut (and ducked under it, if asked).
+    pub music: Option<&'a crate::edit::Music>,
+}
+
+/// Start a timeline (edit) export, burning any captions and titles into the
+/// picture. Progress is driven by the cut's total duration = the sum of
+/// segment durations.
+///
+/// Overlays are drawn by libass from documents written beside the output.
+/// Titles go on last so hand-placed text sits above transcribed speech.
 pub fn start_timeline_with_captions(
     segments: &[Segment],
     output: &str,
     settings: &ExportSettings,
     project: (u32, u32, f64),
-    captions: &[crate::captions::Cue],
-    caption_size: u32,
+    overlays: Overlays<'_>,
 ) -> Result<ExportJob> {
     if segments.is_empty() {
         return Err(anyhow!("the timeline is empty"));
@@ -720,27 +816,47 @@ pub fn start_timeline_with_captions(
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
     let total = crate::edit::render_duration(segments);
     let target = render_target(project, settings);
-    let mut args = build_timeline_args(segments, output, settings, with_audio, target);
-    if !captions.is_empty() {
-        // Write the SRT next to the output and hand it to the filter chain.
-        // Scale the type with the frame so a vertical export isn't tiny.
+    let mut args = build_timeline_args_with_music(
+        segments, output, settings, with_audio, target, overlays.music,
+    );
+
+    let mut chain: Vec<String> = Vec::new();
+    if !overlays.captions.is_empty() {
         let srt = format!("{output}.srt");
-        std::fs::write(&srt, crate::captions::to_srt(captions))?;
-        // NOT scaled by the target height — see captions::PLAY_RES_Y.
-        let escaped = srt.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'");
-        let filter = format!(
-            "subtitles='{escaped}':force_style='{}'",
-            crate::captions::force_style(caption_size)
-        );
+        std::fs::write(&srt, crate::captions::to_srt(overlays.captions))?;
+        // Font size is NOT scaled by the target height — see captions::PLAY_RES_Y.
+        chain.push(format!(
+            "subtitles='{}':force_style='{}'",
+            escape_filter_path(&srt),
+            crate::captions::force_style(overlays.caption_size)
+        ));
+    }
+    if !overlays.titles.is_empty() {
+        let ass = format!("{output}.titles.ass");
+        std::fs::write(
+            &ass,
+            crate::titles::to_ass(overlays.titles, target.0, target.1),
+        )?;
+        chain.push(format!("subtitles='{}'", escape_filter_path(&ass)));
+    }
+
+    if !chain.is_empty() {
         // Insert after the concat/xfade chain, before the encoder.
         if let Some(i) = args.iter().position(|a| a == "-filter_complex") {
-            args[i + 1] = format!("{};[vcat]{filter}[vsub]", args[i + 1]);
+            args[i + 1] = format!("{};[vcat]{}[vsub]", args[i + 1], chain.join(","));
             if let Some(m) = args.iter().position(|a| a == "[vcat]") {
                 args[m] = "[vsub]".into();
             }
         }
     }
     spawn_job(args, output, total)
+}
+
+/// A path inside an ffmpeg filter argument. Colons separate filter options
+/// and quotes end the string, so both have to be escaped or a path with a
+/// drive letter or an apostrophe silently breaks the whole graph.
+fn escape_filter_path(p: &str) -> String {
+    p.replace('\\', "/").replace(':', "\\:").replace('\'', "\\'")
 }
 
 /// The geometry every segment is normalised to: the project's frame, or the
@@ -852,6 +968,8 @@ pub enum Job {
         project: (u32, u32, f64),
         captions: Vec<crate::captions::Cue>,
         caption_size: u32,
+        titles: Vec<crate::titles::Title>,
+        music: Option<crate::edit::Music>,
     },
 }
 
@@ -940,9 +1058,18 @@ impl Queue {
                     Job::Source { path, duration } => {
                         start(path, &next.output, &next.settings, *duration)
                     }
-                    Job::Timeline { segments, project, captions, caption_size } => {
+                    Job::Timeline { segments, project, captions, caption_size, titles, music } => {
                         start_timeline_with_captions(
-                            segments, &next.output, &next.settings, *project, captions, *caption_size,
+                            segments,
+                            &next.output,
+                            &next.settings,
+                            *project,
+                            Overlays {
+                                captions,
+                                caption_size: *caption_size,
+                                titles,
+                                music: music.as_ref(),
+                            },
                         )
                     }
                 };
@@ -978,6 +1105,7 @@ mod tests {
             duration,
             effects: crate::effects::Effects::default(),
             transition_in: 0.0,
+            gain_db: 0.0,
         }
     }
 
@@ -1091,7 +1219,9 @@ mod tests {
         assert!(graph.contains("[0:v]trim=start=0.0000:duration=2.0000"));
         assert!(graph.contains("[0:v]trim=start=5.0000:duration=1.5000"));
         assert!(graph.contains("[1:v]trim=start=1.0000:duration=3.0000"));
-        assert!(graph.contains("concat=n=3:v=1:a=1[acat]"), "{graph}");
+        // Video pad first, then audio — concat emits them in that order, so
+        // labelling them the other way round binds video to [acat].
+        assert!(graph.contains("concat=n=3:v=1:a=1[vcat][acat]"), "{graph}");
         assert!(joined.contains("-map [vcat]") && joined.contains("-map [acat]"));
     }
 
@@ -1124,7 +1254,7 @@ mod tests {
         // fixture is ~2s; take 0.0–0.4 and 1.4–1.8 → expect ≈0.8s.
         let segs = vec![seg(&fixture(), 0.0, 0.4), seg(&fixture(), 1.4, 0.4)];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 30.0), &[], 28)
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 30.0), Overlays::default())
             .expect("start timeline export");
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
@@ -1142,6 +1272,23 @@ mod tests {
             "cut should be ≈0.8s (the two kept pieces), got {}",
             info.duration
         );
+        // Video must be stream 0. It wasn't, for a while: the concat labels
+        // were written [acat][vcat], which binds video to the audio label —
+        // files still played, so nothing complained until the music bed
+        // tried to use [acat] as audio and ffmpeg rejected the graph.
+        let streams = std::process::Command::new("ffprobe")
+            .args([
+                "-v", "error", "-show_entries", "stream=codec_type",
+                "-of", "csv=p=0", &out.to_string_lossy(),
+            ])
+            .output()
+            .expect("ffprobe the cut");
+        let kinds: Vec<String> = String::from_utf8_lossy(&streams.stdout)
+            .lines()
+            .map(|l| l.trim().to_string())
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert_eq!(kinds.first().map(String::as_str), Some("video"), "streams: {kinds:?}");
         let _ = std::fs::remove_file(&out);
     }
 
@@ -1215,7 +1362,7 @@ mod tests {
             seg(&a.to_string_lossy(), 1.2, 0.5),
         ];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (640, 480, 25.0), &[], 28)
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (640, 480, 25.0), Overlays::default())
             .expect("start mixed-source export");
         let deadline = Instant::now() + Duration::from_secs(120);
         loop {
@@ -1374,7 +1521,7 @@ mod tests {
         assert!(graph.contains("xfade=transition=fade:duration=0.5000:offset=1.0000"), "{graph}");
 
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
-        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &[], 28).expect("start xfade");
+        let job = start_timeline_with_captions(&segs, &out.to_string_lossy(), &s, (320, 240, 25.0), Overlays::default()).expect("start xfade");
         let deadline = Instant::now() + Duration::from_secs(90);
         loop {
             let st = job.state();
@@ -1399,6 +1546,218 @@ mod tests {
     /// Captions must survive all the way into pixels — the filter chain is
     /// fiddly enough (escaping, label rewiring) that only a real render proves
     /// it. We compare a frame with captions against one without.
+    /// Build a 4 s clip whose audio is silent except for a 1 s burst in the
+    /// middle — a stand-in for someone speaking over a music bed.
+    fn speech_fixture(path: &Path) {
+        let ok = std::process::Command::new("ffmpeg")
+            .args([
+                "-y", "-v", "error",
+                "-f", "lavfi", "-i", "color=c=black:size=160x120:rate=15:duration=4",
+                "-f", "lavfi",
+                // 3 kHz only between 1.5 s and 2.5 s.
+                "-i", "sine=frequency=3000:sample_rate=48000:duration=4",
+                // A DISABLED volume filter passes audio through untouched —
+                // it does not mute. To silence outside the window the gain
+                // itself has to be the expression.
+                "-af", "volume=volume='between(t,1.5,2.5)':eval=frame",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                &path.to_string_lossy(),
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        assert!(ok, "could not build the speech fixture");
+    }
+
+    /// Mean volume of one frequency band over a time window, in dBFS.
+    fn band_level(file: &Path, from: f64, to: f64, freq: u32) -> f32 {
+        let out = std::process::Command::new("ffmpeg")
+            .args([
+                "-v", "info", "-i", &file.to_string_lossy(),
+                "-af", &format!(
+                    "atrim={from}:{to},asetpts=PTS-STARTPTS,bandpass=f={freq}:width_type=h:w=120,volumedetect"
+                ),
+                "-f", "null", "-",
+            ])
+            .output()
+            .expect("run volumedetect");
+        let text = String::from_utf8_lossy(&out.stderr);
+        text.lines()
+            .find_map(|l| l.split("mean_volume:").nth(1))
+            .and_then(|v| v.trim().split(' ').next())
+            .and_then(|v| v.parse::<f32>().ok())
+            .unwrap_or_else(|| panic!("no mean_volume in ffmpeg output:\n{text}"))
+    }
+
+    /// The point of ducking: when the edit's own audio speaks, the music
+    /// gets out of the way — and comes back when it stops. Measured on the
+    /// music's own frequency band so the speech itself can't flatter it.
+    #[test]
+    fn music_ducks_under_speech_and_returns() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-duck-src-{}.mp4", std::process::id()));
+        let bed = dir.join(format!("reel-duck-bed-{}.wav", std::process::id()));
+        let ducked = dir.join(format!("reel-duck-on-{}.mp4", std::process::id()));
+        let flat = dir.join(format!("reel-duck-off-{}.mp4", std::process::id()));
+        for f in [&ducked, &flat] {
+            let _ = std::fs::remove_file(f);
+        }
+        speech_fixture(&src);
+        // A steady 300 Hz bed — any level change in this band is the ducker.
+        assert!(std::process::Command::new("ffmpeg")
+            .args([
+                "-y", "-v", "error", "-f", "lavfi",
+                "-i", "sine=frequency=300:sample_rate=48000:duration=4",
+                &bed.to_string_lossy(),
+            ])
+            .status()
+            .map(|st| st.success())
+            .unwrap_or(false));
+
+        let segs = vec![Segment {
+            source: src.to_string_lossy().into(),
+            in_point: 0.0,
+            duration: 4.0,
+            effects: Default::default(),
+            transition_in: 0.0,
+            gain_db: 0.0,
+        }];
+        let s = ExportSettings::default();
+
+        let render = |out: &Path, duck: bool| {
+            let music = crate::edit::Music {
+                source: bed.to_string_lossy().into(),
+                start: 0.0,
+                gain_db: 0.0,
+                duck,
+                fade: 0.0,
+            };
+            let job = start_timeline_with_captions(
+                &segs,
+                &out.to_string_lossy(),
+                &s,
+                (160, 120, 15.0),
+                Overlays { music: Some(&music), ..Default::default() },
+            )
+            .expect("start render");
+            let deadline = Instant::now() + Duration::from_secs(180);
+            loop {
+                let st = job.state();
+                if st.finished {
+                    assert!(st.error.is_none(), "render failed: {:?}", st.error);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "render hung");
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        };
+        render(&ducked, true);
+        render(&flat, false);
+
+        // Quiet window (no speech) vs the middle of the burst.
+        let quiet_on = band_level(&ducked, 0.3, 1.2, 300);
+        let under_on = band_level(&ducked, 1.8, 2.4, 300);
+        let quiet_off = band_level(&flat, 0.3, 1.2, 300);
+        let under_off = band_level(&flat, 1.8, 2.4, 300);
+
+        assert!(
+            quiet_on - under_on > 4.0,
+            "music barely moved under speech: {quiet_on:.1} dB → {under_on:.1} dB"
+        );
+        assert!(
+            (quiet_off - under_off).abs() < 2.0,
+            "music moved without ducking asked for: {quiet_off:.1} dB → {under_off:.1} dB"
+        );
+        // And it comes back afterwards, or the bed just dies mid-video.
+        let after = band_level(&ducked, 3.2, 3.9, 300);
+        assert!(
+            after - under_on > 3.0,
+            "music never recovered after the speech: {under_on:.1} dB → {after:.1} dB"
+        );
+
+        for f in [&src, &bed, &ducked, &flat] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Captions and titles are two separate libass passes chained onto the
+    /// same graph. This is the check that they coexist — an earlier version
+    /// overwrote one label with the other and silently dropped the titles.
+    #[test]
+    fn captions_and_titles_burn_in_the_same_render() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-both-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-both-{}.mp4", std::process::id()));
+        let frame = dir.join(format!("reel-both-{}.png", std::process::id()));
+        for f in [&out, &frame] {
+            let _ = std::fs::remove_file(f);
+        }
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=black:size=640x480:rate=25:duration=2",
+                   "-c:v", "libx264", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let segs = vec![seg(&src.to_string_lossy(), 0.0, 2.0)];
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let cues = vec![crate::captions::Cue { start: 0.0, end: 2.0, text: "SPOKEN".into() }];
+        // Pure red, near the top — nothing else in this render is red.
+        let titles = vec![crate::titles::Title {
+            text: "TITLE".into(),
+            start: 0.0,
+            end: 2.0,
+            x: 0.5,
+            y: 0.2,
+            size: 0.15,
+            color: [255, 0, 0],
+            bold: true,
+            outline: false,
+        }];
+
+        let job = start_timeline_with_captions(
+            &segs,
+            &out.to_string_lossy(),
+            &s,
+            (640, 480, 25.0),
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None },
+        )
+        .expect("start export");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "export failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "export timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "1", "-i", &out.to_string_lossy(),
+                   "-frames:v", "1", &frame.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let img = image::open(&frame).expect("read frame").to_rgb8();
+
+        let mut red_top = 0;
+        let mut white_bottom = 0;
+        for (_, y, px) in img.enumerate_pixels() {
+            let [r, g, b] = px.0;
+            if y < img.height() / 2 && r > 150 && g < 90 && b < 90 {
+                red_top += 1;
+            }
+            if y > img.height() * 2 / 3 && r > 200 && g > 200 && b > 200 {
+                white_bottom += 1;
+            }
+        }
+        assert!(red_top > 200, "the red title is missing from the render ({red_top} px)");
+        assert!(white_bottom > 200, "the caption is missing from the render ({white_bottom} px)");
+
+        for f in [&src, &out, &frame] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     #[test]
     fn captions_are_burned_into_the_render() {
         let dir = std::env::temp_dir();
@@ -1426,7 +1785,11 @@ mod tests {
 
         for (out, cues) in [(&plain, Vec::new()), (&capped, cues)] {
             let job = start_timeline_with_captions(
-                &segs, &out.to_string_lossy(), &s, (640, 480, 25.0), &cues, 28,
+                &segs,
+                &out.to_string_lossy(),
+                &s,
+                (640, 480, 25.0),
+                Overlays { captions: &cues, caption_size: 20, ..Default::default() },
             ).expect("start captioned export");
             let deadline = Instant::now() + Duration::from_secs(90);
             loop {

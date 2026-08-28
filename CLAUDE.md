@@ -186,6 +186,25 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   after the `video_pass` paint callback and inside the same branch — that
   branch returns early for every real frame.
 
+- Titles (`titles.rs`) generate an ASS document with an explicit
+  `PlayResX/Y` set to the render frame, so `\pos()` is in real pixels and
+  every stored value is a FRACTION of the frame. That is what lets a title
+  placed by dragging on a 720p preview land identically in a 4K export —
+  don't store pixels here.
+- Concat label order is load-bearing: `concat=...:v=1:a=1[vcat][acat]` binds
+  video to the FIRST label. Writing `[acat]` first (as this did for a while)
+  silently swaps the streams — the file still plays, so nothing complains
+  until a downstream filter treats `[acat]` as audio and ffmpeg rejects the
+  whole graph. `renders_a_real_cut_from_the_fixture` now ffprobes the output
+  and asserts stream 0 is video.
+- The music bed mixes with `amix=...:normalize=0` — the default normalize
+  divides every input by the input count, which quietly halves the dialogue.
+  Ducking uses `sidechaincompress` keyed off the cut's own audio, which must
+  be `asplit`'d first because a filter output can only be consumed once.
+- A disabled ffmpeg filter is a PASS-THROUGH, not a mute: `volume=enable=...`
+  leaves audio untouched outside the window. To gate audio, make the gain
+  itself the expression (`volume=volume='between(t,a,b)':eval=frame`).
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

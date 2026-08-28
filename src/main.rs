@@ -34,6 +34,7 @@ pub enum UserEvent {
     Quit,
 }
 mod theme;
+mod titles;
 pub mod ui;
 mod ui_tests;
 mod video;

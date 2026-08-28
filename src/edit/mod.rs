@@ -31,6 +31,9 @@ pub struct Clip {
     /// ffmpeg's `xfade` does at render time.
     #[serde(default)]
     pub transition_in: f64,
+    /// Level change for this clip's audio, in decibels. 0 is untouched.
+    #[serde(default)]
+    pub gain_db: f32,
 }
 
 impl Clip {
@@ -74,6 +77,36 @@ pub struct Segment {
     pub effects: Effects,
     /// Crossfade from the previous segment, in seconds (0 = hard cut).
     pub transition_in: f64,
+    /// Level change for this clip's own audio, in decibels.
+    pub gain_db: f32,
+}
+
+/// A music bed laid under the edit.
+///
+/// Kept deliberately small: one track, a level, and ducking. Music under
+/// speech is the thing editors actually do, and the thing they most often
+/// get wrong by hand — so Reel does the level-riding itself rather than
+/// making you draw a volume curve.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Music {
+    pub source: String,
+    /// Where it starts on the timeline, in seconds.
+    #[serde(default)]
+    pub start: f64,
+    /// Level, in decibels.
+    pub gain_db: f32,
+    /// Pull the music down automatically whenever the edit's own audio
+    /// speaks over it.
+    pub duck: bool,
+    /// Fade the bed in and out, in seconds (0 = hard start/stop).
+    #[serde(default)]
+    pub fade: f64,
+}
+
+impl Default for Music {
+    fn default() -> Self {
+        Self { source: String::new(), start: 0.0, gain_db: -12.0, duck: true, fade: 1.0 }
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -98,6 +131,12 @@ pub struct Project {
     pub captions: Vec<crate::captions::Cue>,
     #[serde(default = "default_caption_size")]
     pub caption_size: u32,
+    /// Text placed on the picture by hand, in TIMELINE time.
+    #[serde(default)]
+    pub titles: Vec<crate::titles::Title>,
+    /// An optional music bed under the whole edit.
+    #[serde(default)]
+    pub music: Option<Music>,
     #[serde(skip)]
     next_id: u64,
 }
@@ -119,6 +158,8 @@ impl Default for Project {
             ],
             captions: Vec::new(),
             caption_size: default_caption_size(),
+            titles: Vec::new(),
+            music: None,
             next_id: 100,
         }
     }
@@ -158,6 +199,7 @@ impl Project {
                 duration,
                 effects: Effects::default(),
                 transition_in: 0.0,
+                gain_db: 0.0,
             });
         }
     }
@@ -490,6 +532,7 @@ impl Project {
                     // A clip cut into by the range marker loses its
                     // transition — there's no longer a clip to fade from.
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
+                    gain_db: c.gain_db,
                 })
             })
             .collect()
@@ -534,6 +577,9 @@ pub struct EditorState {
     pub project_path: Option<String>,
     /// The clip whose effect sliders are mid-drag — one undo step per gesture.
     pub fx_gesture: Option<u64>,
+    /// Index of the title being edited, if any — it shows a box in the
+    /// preview and is the one you can drag around.
+    pub selected_title: Option<usize>,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -564,6 +610,7 @@ impl Default for EditorState {
             dirty: false,
             project_path: None,
             fx_gesture: None,
+            selected_title: None,
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),

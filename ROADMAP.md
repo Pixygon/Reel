@@ -97,6 +97,10 @@ never leaving the GPU.
       the render. The competitive point: CapCut's captions go to a cloud,
       and the open-source route "takes scripts and setup" — this takes
       neither.
+- [x] **Titles** — text placed by dragging it on the preview, stored as
+      frame fractions so the preview and any export resolution agree.
+- [x] **Audio that behaves** — per-clip gain, a music bed, and automatic
+      ducking under speech (sidechain, no curves to draw).
 - [ ] Cut/copy/paste, duplicate, markers; roll edits.
 - [ ] Multi-track compositing on the GPU (blend, opacity, transform) — until
       then the preview shows the V1 source frame.

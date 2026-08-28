@@ -569,6 +569,23 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).text("Pan ↕"));
                 }
 
+                // Level for this clip's own audio.
+                let mut gain = app.project.clip(id).map(|c| c.gain_db).unwrap_or(0.0);
+                let before_gain = gain;
+                ui.add(
+                    egui::Slider::new(&mut gain, -30.0..=12.0)
+                        .text("Volume (dB)")
+                        .custom_formatter(|v, _| {
+                            if v <= -29.9 { "silent".into() } else { format!("{v:+.1} dB") }
+                        }),
+                );
+                if (gain - before_gain).abs() > 1e-4 {
+                    if let Some(c) = app.project.clip_mut(id) {
+                        c.gain_db = if gain <= -29.9 { -100.0 } else { gain };
+                    }
+                    app.editor.mark_changed();
+                }
+
                 // Crossfade from the previous clip. Only meaningful when
                 // there IS a previous clip on the same track.
                 let has_prev = app
@@ -669,6 +686,124 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 });
         }
 
+        // ── Music ───────────────────────────────────────────────────────
+        ui.separator();
+        ui.label(RichText::new("Music").color(theme::CYAN));
+        match app.project.music.clone() {
+            None => {
+                if ui
+                    .button("♪ Add music bed")
+                    .on_hover_text("A track under the whole edit — ducked under speech automatically")
+                    .clicked()
+                {
+                    app.pick_music();
+                }
+            }
+            Some(mut m) => {
+                let name = std::path::Path::new(&m.source)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| m.source.clone());
+                ui.label(RichText::new(name).small().color(egui::Color32::from_gray(160)));
+                let before = m.clone();
+                ui.add(egui::Slider::new(&mut m.gain_db, -40.0..=6.0).text("Level (dB)"));
+                ui.checkbox(&mut m.duck, "Duck under speech")
+                    .on_hover_text("Pull the music down whenever the edit's own audio speaks");
+                ui.add(egui::Slider::new(&mut m.fade, 0.0..=5.0).text("Fade (s)"));
+                ui.horizontal(|ui| {
+                    if ui.button("Replace…").clicked() {
+                        app.pick_music();
+                    }
+                    if ui.button("Remove").clicked() {
+                        app.editor.push_undo(&app.project);
+                        app.project.music = None;
+                        app.editor.mark_changed();
+                    }
+                });
+                if app.project.music.is_some() && m != before {
+                    app.project.music = Some(m);
+                    app.editor.mark_changed();
+                }
+            }
+        }
+
+        // ── Titles ──────────────────────────────────────────────────────
+        ui.separator();
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Titles").color(theme::CYAN));
+            if ui.button("+ Add").on_hover_text("Text on the picture at the playhead").clicked() {
+                app.editor.push_undo(&app.project);
+                let head = app.editor.playhead;
+                app.project.titles.push(crate::titles::Title {
+                    start: head,
+                    end: head + 3.0,
+                    ..Default::default()
+                });
+                app.editor.selected_title = Some(app.project.titles.len() - 1);
+            }
+        });
+        let mut remove = None;
+        for i in 0..app.project.titles.len() {
+            let selected = app.editor.selected_title == Some(i);
+            let head = app.editor.playhead;
+            let label = {
+                let t = &app.project.titles[i];
+                let shown = if t.text.chars().count() > 18 {
+                    format!("{}…", t.text.chars().take(18).collect::<String>())
+                } else {
+                    t.text.clone()
+                };
+                format!("{} {}", if t.covers(head) { "●" } else { "○" }, shown)
+            };
+            if ui.selectable_label(selected, label).clicked() {
+                app.editor.selected_title = if selected { None } else { Some(i) };
+            }
+            if !selected {
+                continue;
+            }
+            let dur = app.project.titles[i].end - app.project.titles[i].start;
+            let mut changed = false;
+            ui.group(|ui| {
+                let t = &mut app.project.titles[i];
+                changed |= ui.text_edit_singleline(&mut t.text).changed();
+                changed |= ui
+                    .add(egui::Slider::new(&mut t.size, 0.03..=0.30).text("Size"))
+                    .changed();
+                ui.horizontal(|ui| {
+                    changed |= ui.color_edit_button_srgb(&mut t.color).changed();
+                    changed |= ui.checkbox(&mut t.bold, "Bold").changed();
+                    changed |= ui.checkbox(&mut t.outline, "Outline").changed();
+                });
+                ui.horizontal(|ui| {
+                    if ui.button("Start here").on_hover_text("Begin at the playhead").clicked() {
+                        t.start = head;
+                        t.end = head + dur.max(0.5);
+                        changed = true;
+                    }
+                    if ui.button("End here").clicked() {
+                        t.end = head.max(t.start + 0.2);
+                        changed = true;
+                    }
+                });
+                ui.label(
+                    RichText::new(format!("{:.2}s → {:.2}s · drag it on the picture", t.start, t.end))
+                        .small()
+                        .color(egui::Color32::from_gray(140)),
+                );
+                if ui.button("🗑 Remove").clicked() {
+                    remove = Some(i);
+                }
+            });
+            if changed {
+                app.editor.mark_changed();
+            }
+        }
+        if let Some(i) = remove {
+            app.editor.push_undo(&app.project);
+            app.project.titles.remove(i);
+            app.editor.selected_title = None;
+        }
+
         ui.separator();
         ui.label(RichText::new("J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\nDel delete · Shift+Del ripple delete · right-click to close gaps").small().color(egui::Color32::from_gray(120)));
     }
@@ -678,7 +813,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 /// a ♪ card for pure audio, or the drop hint.
 fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
     let avail = ui.available_size();
-    let (rect, _) = ui.allocate_exact_size(avail, Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::VOID);
 
@@ -720,7 +855,8 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             // Captions sit on top of the picture, so they must be painted
             // AFTER the video callback — and inside this branch, which
             // returns early for every real frame.
-            draw_caption(app, &painter, img_rect);
+            draw_overlays(app, &painter, img_rect);
+            drag_title(app, &response, img_rect);
             return;
         }
     }
@@ -762,10 +898,11 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
 /// white with a dark outline. Approximate — the render itself is drawn by
 /// ffmpeg from the same SRT — but the wording, timing and placement match, so
 /// what you read here is what ships.
-fn draw_caption(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
+fn draw_overlays(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
     if app.mode != Mode::Editor {
         return;
     }
+    draw_titles(app, painter, pic);
     let Some(cue) = app.project.caption_at(app.editor.playhead) else { return };
     // Every number comes from captions::metrics, which is also what the
     // render is built from — one formula, two drawings of it.
@@ -795,6 +932,80 @@ fn draw_caption(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
             font.clone(),
             Color32::WHITE,
         );
+    }
+}
+
+/// Titles at the playhead, drawn from the very fractions the renderer uses
+/// (see titles.rs) so placing one on the preview places it in the export.
+fn draw_titles(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
+    let t = app.editor.playhead;
+    for (i, title) in app.project.titles.iter().enumerate() {
+        if !title.covers(t) {
+            continue;
+        }
+        let pos = pic.min + Vec2::new(title.x * pic.width(), title.y * pic.height());
+        let font = egui::FontId::proportional((title.size * pic.height()).max(7.0));
+        let colour = Color32::from_rgb(title.color[0], title.color[1], title.color[2]);
+        if title.outline {
+            let o = (crate::titles::OUTLINE_FRAC * pic.height()).max(1.0);
+            for (dx, dy) in [
+                (-1.0, 0.0), (1.0, 0.0), (0.0, -1.0), (0.0, 1.0),
+                (-0.7, -0.7), (0.7, 0.7), (-0.7, 0.7), (0.7, -0.7),
+            ] {
+                painter.text(
+                    pos + Vec2::new(dx * o, dy * o),
+                    egui::Align2::CENTER_CENTER,
+                    &title.text,
+                    font.clone(),
+                    Color32::BLACK,
+                );
+            }
+        }
+        let bold_pass: &[f32] = if title.bold { &[-0.35, 0.0, 0.35] } else { &[0.0] };
+        let weight = (title.size * pic.height() * 0.04).max(0.5);
+        for dx in bold_pass {
+            painter.text(
+                pos + Vec2::new(dx * weight, 0.0),
+                egui::Align2::CENTER_CENTER,
+                &title.text,
+                font.clone(),
+                colour,
+            );
+        }
+        // The selected title shows its box, so you can see what you're moving.
+        if app.editor.selected_title == Some(i) {
+            let galley = painter.layout_no_wrap(title.text.clone(), font, colour);
+            let box_rect = Rect::from_center_size(pos, galley.size() + Vec2::splat(8.0));
+            painter.rect_stroke(
+                box_rect,
+                4.0,
+                Stroke::new(1.0, theme::CYAN),
+                egui::StrokeKind::Outside,
+            );
+        }
+    }
+}
+
+/// Drag the selected title around the picture. Position is stored as
+/// fractions, so a title placed here lands in the same spot at any export
+/// resolution — the thing that makes this safe to do by eye.
+fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
+    if app.mode != Mode::Editor || pic.width() <= 0.0 {
+        return;
+    }
+    let Some(i) = app.editor.selected_title else { return };
+    if i >= app.project.titles.len() || !app.project.titles[i].covers(app.editor.playhead) {
+        return;
+    }
+    if response.dragged() {
+        if let Some(p) = response.interact_pointer_pos() {
+            let t = &mut app.project.titles[i];
+            t.x = ((p.x - pic.min.x) / pic.width()).clamp(0.02, 0.98);
+            t.y = ((p.y - pic.min.y) / pic.height()).clamp(0.02, 0.98);
+        }
+    }
+    if response.drag_stopped() {
+        app.editor.mark_changed();
     }
 }
 
@@ -1439,8 +1650,12 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     &app.export_out,
                     &app.export_settings,
                     (app.project.width, app.project.height, app.project.fps),
-                    &app.project.captions,
-                    app.project.caption_size,
+                    export::Overlays {
+                        captions: &app.project.captions,
+                        caption_size: app.project.caption_size,
+                        titles: &app.project.titles,
+                        music: app.project.music.as_ref(),
+                    },
                 ) {
                     Ok(job) => app.export = Some(job),
                     Err(e) => app.status = format!("Export: {e}"),
