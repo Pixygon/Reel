@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.26.0] — 2026-08-28
+
+### Fixed
+- Pasting a clip into the middle of another clip now correctly splits it and opens a gap across every track, instead of shoving the clip aside and leaving a hole in the timeline that could throw audio out of sync with picture. _(9b44ef3)_
+- Pasted clips no longer inherit the crossfade from the clip they were copied from, since a fade only makes sense next to the original neighbour. _(9b44ef3)_
+- Markers are now saved as part of your project, so a marker you drop stays put after closing and reopening the project instead of disappearing. _(9b44ef3)_
+- Replaced a few icons that rendered as empty boxes (missing glyphs in the app font) with characters that actually display, and updated on-screen shortcut hints to show "Left/Right" instead of arrow symbols. _(9b44ef3)_
+
+
 ## [0.25.0] — 2026-08-28
 
 ### Added
