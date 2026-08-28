@@ -4,6 +4,16 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.33.0] — 2026-08-28
+
+### Added
+- Roll, slip and slide edits have landed — the professional trims for adjusting a cut without moving the timeline (roll), changing what plays without moving when (slip), or sliding a clip between its neighbours. Use Ctrl+drag on an edge, Alt+drag on a clip body, or Ctrl+Alt+drag, or drive them from the CLI with `reel roll`, `reel slip` and `reel slide`. _(e9be24c)_
+- Built-in green screen: check "Green screen" on a clip, pick the key colour, and adjust reach/softness. The key previews live — including inside the picture-in-picture inset — and renders identically, with automatic spill removal for clean edges. Also available from the CLI via `--key-color`, `--key-similarity`, `--key-softness` and `--key-off`. _(e9be24c)_
+- A new scopes panel shows a live RGB histogram and luma waveform while grading, updating in real time during playback. _(e9be24c)_
+- Markers now become real chapter points in exported video (MP4/MKV chapter atoms), so long exports arrive with sections already named. _(e9be24c)_
+- You can now export the exact composed frame under the playhead — effects, overlays and animation included — as a PNG, either from a new editor button or via the `reel frame` CLI command, which also grabs frames from plain media files. _(e9be24c)_
+
+
 ## [0.32.0] — 2026-08-28
 
 ### Added
