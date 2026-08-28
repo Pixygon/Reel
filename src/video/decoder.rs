@@ -28,6 +28,25 @@ pub struct Frame {
 }
 
 /// Probe a media file for dimensions, frame rate and duration via ffprobe.
+/// The colour transfer curve of the first video stream, when tagged —
+/// "smpte2084" (PQ/HDR10), "arib-std-b67" (HLG), "bt709", etc. HDR phone
+/// footage is everywhere, and rendering it without tone-mapping is the
+/// washed-out-or-dim colour bug every editor forum complains about.
+pub fn probe_transfer(path: &str) -> Option<String> {
+    let out = Command::new("ffprobe")
+        .args([
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=color_transfer",
+            "-of", "csv=p=0",
+            path,
+        ])
+        .output()
+        .ok()?;
+    let t = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!t.is_empty() && t != "unknown").then_some(t)
+}
+
 pub fn probe(path: &str) -> Result<VideoInfo> {
     let out = Command::new("ffprobe")
         .args([

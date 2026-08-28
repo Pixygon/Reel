@@ -42,6 +42,10 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **HDR footage just looks right.** Phone clips in HLG or HDR10 (PQ) are
+  detected and tone-mapped to SDR through libplacebo at the industry's
+  203-nit reference — no washed-out grays, no murky darks, nothing to
+  configure.
 - **Reel's own render engine.** Timeline exports are drawn by Reel's GPU
   compositor frame by frame — ffmpeg only encodes — so what the preview
   shows is what renders, by construction. The old filter-graph renderer

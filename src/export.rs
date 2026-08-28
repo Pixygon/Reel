@@ -2069,6 +2069,104 @@ mod tests {
         }
     }
 
+    /// HDR in, correct SDR out. Two tagged PQ fixtures — 100-nit white and
+    /// 5-nit near-black — rendered through the frame server. Without
+    /// tone-mapping, PQ's curve reads the dim one at ~92/255 (washed) and
+    /// the white one at ~192 (dull); linearised and mapped, the white lands
+    /// bright and the dim one dark. This is the phone-footage bug every
+    /// editor forum complains about, pinned in pixels.
+    #[test]
+    fn hdr_sources_are_tone_mapped_not_washed_out() {
+        let dir = std::env::temp_dir();
+        let make_pq = |name: &str, colour: &str| -> std::path::PathBuf {
+            let f = dir.join(format!("reel-hdr-{name}-{}.mp4", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi",
+                       "-i", &format!("color=c={colour}:size=320x240:rate=25:duration=2"),
+                       "-vf",
+                       "format=yuv420p,setparams=range=tv:color_primaries=bt709:color_trc=bt709:colorspace=bt709,\
+                        zscale=transfer=linear:npl=100,zscale=primaries=bt2020,\
+                        zscale=transfer=smpte2084:matrix=bt2020nc,format=yuv420p10le",
+                       "-c:v", "libx264", "-color_primaries", "bt2020",
+                       "-color_trc", "smpte2084", "-colorspace", "bt2020nc",
+                       &f.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            f
+        };
+        let white = make_pq("white", "white");
+        // ~5 nits: 5% linear of the 100-nit reference.
+        let dim = make_pq("dim", "0x3B3B3B");
+
+        assert_eq!(
+            crate::video::decoder::probe_transfer(&white.to_string_lossy()).as_deref(),
+            Some("smpte2084"),
+            "the PQ tag must be detected"
+        );
+
+        let level_of = |src: &std::path::Path| -> f64 {
+            let out = dir.join(format!(
+                "reel-hdr-out-{}-{}.mp4",
+                src.file_stem().unwrap().to_string_lossy(),
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&out);
+            let segs = vec![seg(&src.to_string_lossy(), 0.0, 1.0)];
+            let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+            let job = match crate::engine::render::start_timeline(
+                &segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &Overlays::default(),
+            ) {
+                Ok(j) => j,
+                Err(e) => {
+                    eprintln!("no GPU — skipping HDR test ({e})");
+                    return -1.0;
+                }
+            };
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                let st = job.state();
+                if st.finished {
+                    assert!(st.error.is_none(), "HDR render failed: {:?}", st.error);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "HDR render timed out");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let png = dir.join(format!("reel-hdr-f-{}.png", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-ss", "0.5", "-i", &out.to_string_lossy(),
+                       "-frames:v", "1", &png.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            let img = image::open(&png).expect("read frame").to_luma8();
+            let _ = std::fs::remove_file(&png);
+            let _ = std::fs::remove_file(&out);
+            let sum: u64 = img.pixels().map(|p| p.0[0] as u64).sum();
+            sum as f64 / (img.width() * img.height()) as f64
+        };
+
+        if !crate::engine::sources::have_libplacebo() {
+            eprintln!("ffmpeg has no libplacebo — skipping HDR tone-map test");
+            return;
+        }
+        let w = level_of(&white);
+        if w < 0.0 {
+            return; // no GPU
+        }
+        let d = level_of(&dim);
+        // libplacebo maps against the BT.2408 203-nit reference: 100-nit
+        // white lands around 185, 5-nit gray around 48. Without tone-mapping
+        // both drift toward the murky middle (white ~158, dim ~92).
+        assert!(
+            (165.0..=215.0).contains(&w),
+            "100-nit PQ white should land bright (~185), got {w:.0}"
+        );
+        assert!(d < 80.0, "5-nit PQ gray should land dark (~48), got {d:.0} — PQ read as sRGB");
+        assert!(w / d.max(1.0) > 2.5, "the mapped contrast collapsed ({w:.0} vs {d:.0})");
+
+        for f in [&white, &dim] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// The decisive ramp test: the source's LUMINANCE encodes its own time
     /// (brightness = source seconds), so each output frame tells us exactly
     /// which source moment it shows. A 1→3 ramp over 4 s must consume 8 s of

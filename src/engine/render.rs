@@ -113,6 +113,19 @@ pub fn start_timeline(
         })
         .collect::<Result<_>>()?;
 
+    // Colour: any HDR source (PQ/HLG) gets tone-mapped to BT.709 before it
+    // is fitted — probed once per source here, on the calling thread.
+    let mut transfers: std::collections::HashMap<String, Option<String>> = Default::default();
+    for src in segments
+        .iter()
+        .map(|s| s.source.clone())
+        .chain(overlays.overlays.iter().map(|o| o.source.clone()))
+    {
+        transfers
+            .entry(src.clone())
+            .or_insert_with(|| crate::video::decoder::probe_transfer(&src));
+    }
+
     // Ramped segments decode at the source's own rate; probe it up front.
     let ramp_fps: Vec<Option<f64>> = segments
         .iter()
@@ -147,7 +160,7 @@ pub fn start_timeline(
     std::thread::spawn(move || {
         let result = run(
             comp, &segments, &output, &settings, target, total, planned_overlays, ramp_fps,
-            audio_args, burnin, &state, &cancel,
+            transfers, audio_args, burnin, &state, &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -169,6 +182,7 @@ fn run(
     total: f64,
     planned_overlays: Vec<(OverlaySegment, u32, u32)>,
     ramp_fps: Vec<Option<f64>>,
+    transfers: std::collections::HashMap<String, Option<String>>,
     audio_args: Option<Vec<String>>,
     burnin: Vec<String>,
     state: &std::sync::Arc<std::sync::Mutex<export::ExportState>>,
@@ -321,11 +335,15 @@ fn run(
                 let slot = &mut base_active[p.seg];
                 if slot.is_none() {
                     let fit = settings.fit.chain(tw, th, &p.seg.to_string());
+                    let tone = super::sources::hdr_tonemap_chain(
+                        transfers.get(&seg.source).and_then(|t| t.as_deref()),
+                    );
                     let feed = match ramp_fps[p.seg] {
                         Some(src_fps) => Feed::Ramped(NativeReader::open(
                             &seg.source,
                             seg.in_point,
                             seg.source_len(),
+                            tone.as_deref(),
                             &fit,
                             (tw, th),
                             src_fps,
@@ -335,6 +353,7 @@ fn run(
                             seg.in_point,
                             seg.duration,
                             seg.speed.clamp(0.05, 20.0) as f64,
+                            tone.as_deref(),
                             &fit,
                             (tw, th, tfps),
                         )?),
@@ -376,11 +395,15 @@ fn run(
                 let slot = &mut ov_active[i];
                 if slot.is_none() {
                     let fit = super::sources::overlay_fit_chain(*bw, *bh);
+                    let tone = super::sources::hdr_tonemap_chain(
+                        transfers.get(&o.source).and_then(|t| t.as_deref()),
+                    );
                     let feed = Feed::Conformed(SegmentReader::open(
                         &o.source,
                         o.in_point,
                         o.duration,
                         1.0,
+                        tone.as_deref(),
                         &fit,
                         (*bw, *bh, tfps),
                     )?);

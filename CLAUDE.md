@@ -306,6 +306,12 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   editor unmutes. Video stays the clock; the mixer chases the playhead,
   nudging only past 80 ms drift. It opens LAZILY on first entering the
   editor — an audio stream at app start would tax the cold-open budget.
+- HDR: `probe_transfer` + `hdr_tonemap_chain` (libplacebo) run in the
+  frame-server readers BEFORE fit. Do NOT use the zscale+tonemap recipe:
+  its final transfer encode silently no-ops on float RGB — verified
+  byte-by-byte at the rawvideo pipe (206 via PNG, 158 via rawvideo, same
+  chain). libplacebo maps at BT.2408's 203-nit reference: 100-nit PQ white
+  ≈ 185, not 255.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

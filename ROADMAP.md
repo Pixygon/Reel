@@ -190,12 +190,15 @@ ffmpeg graph. Neither can express "the timeline, mixed, live":
 
 ### 1.5 Color management
 
-- [ ] Tag every source with its transfer/primaries (probe: BT.709, BT.2020
-      PQ/HLG, sRGB); convert into the working space on decode; convert out
-      on export. Wrong-looking HDR→SDR footage is a Premiere complaint we
-      can simply not have.
-- [ ] Tone-mapped HDR→SDR (and pass-through HDR→HDR export for the codecs
-      that carry it).
+- [x] Sources probed for their transfer curve; PQ (HDR10) and HLG footage
+      is tone-mapped to BT.709 at decode through libplacebo (BT.2408
+      203-nit reference), before any scaling — pinned by a pixel test on
+      tagged PQ fixtures. The classic zscale+tonemap chain was rejected
+      after byte-level inspection showed its final transfer encode silently
+      no-ops on float RGB. Skipped gracefully on ffmpeg builds without
+      libplacebo.
+- [ ] Pass-through HDR→HDR export for the codecs that carry it; primaries-
+      aware working space beyond the decode-side mapping.
 - [ ] Display: detect/assume sRGB display initially; wide-gamut display
       support later — the seam (working space → display transform) exists
       from day one.

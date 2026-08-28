@@ -34,6 +34,7 @@ impl SegmentReader {
         in_point: f64,
         duration: f64,
         speed: f64,
+        pre_chain: Option<&str>,
         fit_chain: &str,
         (w, h, fps): (u32, u32, f64),
     ) -> Result<Self> {
@@ -43,9 +44,10 @@ impl SegmentReader {
         } else {
             String::new()
         };
+        let pre = pre_chain.map(|c| format!("{c},")).unwrap_or_default();
         // -ss before -i: keyframe-fast seek, then accurate trim in the graph.
         let vf = format!(
-            "trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{setpts}{fit_chain},fps={fps:.4}"
+            "trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{setpts}{pre}{fit_chain},fps={fps:.4}"
         );
         let mut child = Command::new("ffmpeg")
             .args([
@@ -121,11 +123,14 @@ impl NativeReader {
         source: &str,
         in_point: f64,
         src_len: f64,
+        pre_chain: Option<&str>,
         fit_chain: &str,
         (w, h): (u32, u32),
         src_fps: f64,
     ) -> Result<Self> {
-        let vf = format!("trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{fit_chain}");
+        let pre = pre_chain.map(|c| format!("{c},")).unwrap_or_default();
+        let vf =
+            format!("trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{pre}{fit_chain}");
         let mut child = Command::new("ffmpeg")
             .args([
                 "-v", "error",
@@ -181,6 +186,38 @@ impl Drop for NativeReader {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// The tone-mapping chain for an HDR source, or None for SDR (or when this
+/// ffmpeg has no libplacebo). Runs BEFORE any scaling — tone-mapping resized
+/// PQ pixels is wrong.
+///
+/// libplacebo, deliberately: the classic zscale+tonemap chain LOOKS right
+/// but its final transfer encode silently no-ops on float RGB, leaving
+/// linear values that read ~30% dark once quantized (found byte-by-byte at
+/// the rawvideo pipe). libplacebo does the whole conversion in one filter,
+/// mapped against the BT.2408 203-nit reference the industry grades by.
+pub fn hdr_tonemap_chain(transfer: Option<&str>) -> Option<String> {
+    match transfer {
+        Some("smpte2084") | Some("arib-std-b67") if have_libplacebo() => Some(
+            "libplacebo=colorspace=bt709:color_primaries=bt709:color_trc=bt709:tonemapping=hable:format=rgba"
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+/// Does this ffmpeg carry the libplacebo filter? Probed once per process.
+pub fn have_libplacebo() -> bool {
+    use std::sync::OnceLock;
+    static HAVE: OnceLock<bool> = OnceLock::new();
+    *HAVE.get_or_init(|| {
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-filters"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("libplacebo"))
+            .unwrap_or(false)
+    })
 }
 
 /// The scale/pad chain for overlay clips: fit the overlay's own frame into
