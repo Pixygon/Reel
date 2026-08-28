@@ -175,6 +175,21 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Colour, fades and reframing for one clip",
     },
     Cmd {
+        name: "keyframe",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (from `reel inspect`)" },
+            Flag { name: "param", value: Some("NAME"), help: "exposure, contrast, saturation, zoom, pan-x, pan-y, opacity, pip-x, pip-y, pip-scale" },
+            Flag { name: "at", value: Some("SECONDS"), help: "TIMELINE time of the keyframe" },
+            Flag { name: "value", value: Some("N"), help: "The value at that moment" },
+            Flag { name: "interp", value: Some("MODE"), help: "linear (default), hold or ease" },
+            Flag { name: "remove", value: None, help: "Remove the keyframe nearest --at instead" },
+            Flag { name: "list", value: None, help: "Show every keyframe on the clip" },
+            F_JSON,
+        ],
+        help: "Animate a parameter over time — evaluated per frame at render",
+    },
+    Cmd {
         name: "pip",
         args: &["PROJECT"],
         flags: &[
@@ -457,6 +472,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "gap" => cmd_gap(p),
         "gain" => cmd_gain(p),
         "effects" => cmd_effects(p),
+        "keyframe" => cmd_keyframe(p),
         "pip" => cmd_pip(p),
         "speed" => cmd_speed(p),
         "transition" => cmd_transition(p),
@@ -573,6 +589,7 @@ fn clip_json(c: &crate::edit::Clip, kind: TrackKind) -> serde_json::Value {
         "transition_in": c.transition_in,
         "speed": c.speed,
         "source_len": c.source_len(),
+        "keyframes": c.keys.iter().map(|(p, k)| (p.name(), k.len())).collect::<Vec<_>>(),
     })
 }
 
@@ -694,6 +711,12 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     if !std::path::Path::new(media).exists() {
         bail!("no such media file: {media}");
     }
+    // Store the absolute path: a project written in one directory must still
+    // find its media when opened from anywhere else.
+    let media = std::fs::canonicalize(media)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| media.to_string());
+    let media = media.as_str();
     let mut proj = load(path)?;
     let kind = match p.str("track").unwrap_or("video") {
         "video" | "v" => TrackKind::Video,
@@ -915,6 +938,88 @@ fn cmd_speed(p: &Parsed) -> Result<Output> {
     ))
 }
 
+fn cmd_keyframe(p: &Parsed) -> Result<Output> {
+    use crate::edit::{Interp, Param};
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let clip_start = proj
+        .clip(id)
+        .map(|c| c.start)
+        .ok_or_else(|| anyhow!("no clip with id {id} — run `reel inspect` to see the ids"))?;
+
+    if p.on("list") {
+        let c = proj.clip(id).unwrap();
+        let mut rows = Vec::new();
+        for (param, keys) in &c.keys {
+            for k in keys {
+                rows.push(serde_json::json!({
+                    "param": param.name(),
+                    "at": clip_start + k.t,
+                    "clip_time": k.t,
+                    "value": k.value,
+                    "interp": format!("{:?}", k.interp).to_lowercase(),
+                }));
+            }
+        }
+        let text = rows
+            .iter()
+            .map(|r| {
+                format!(
+                    "  {} @ {:.2}s = {}  ({})",
+                    r["param"].as_str().unwrap_or(""),
+                    r["at"].as_f64().unwrap_or(0.0),
+                    r["value"],
+                    r["interp"].as_str().unwrap_or("")
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(Output::new(text, serde_json::json!({ "clip": id, "keyframes": rows })));
+    }
+
+    let param = p
+        .str("param")
+        .and_then(Param::parse)
+        .ok_or_else(|| {
+            let names: Vec<&str> = Param::ALL.iter().map(|q| q.name()).collect();
+            anyhow!("--param must be one of: {}", names.join(", "))
+        })?;
+    let at: f64 = p.need_num("at")?;
+    let local = at - clip_start;
+    if local < -1e-6 {
+        bail!("--at {at:.2}s is before the clip (it starts at {clip_start:.2}s)");
+    }
+
+    if p.on("remove") {
+        let c = proj.clip_mut(id).unwrap();
+        if !c.clear_key(param, local) {
+            bail!("no {} keyframe near {at:.2}s", param.name());
+        }
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!("Removed the {} keyframe near {at:.2}s", param.name()),
+            serde_json::json!({ "clip": id, "param": param.name(), "removed_at": at }),
+        ));
+    }
+
+    let value: f32 = p.need_num("value")?;
+    let interp = match p.str("interp").unwrap_or("linear") {
+        "linear" => Interp::Linear,
+        "hold" | "step" => Interp::Hold,
+        "ease" | "smooth" => Interp::Ease,
+        other => bail!("--interp wants linear, hold or ease — got {other:?}"),
+    };
+    let c = proj.clip_mut(id).unwrap();
+    c.set_key(param, local, value, interp);
+    let n = c.key_track(param).map(|t| t.len()).unwrap_or(0);
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("{} = {value} at {at:.2}s ({n} key(s) on the track)", param.name()),
+        serde_json::json!({ "clip": id, "param": param.name(), "at": at, "value": value, "keys": n }),
+    ))
+}
+
 fn cmd_pip(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let id: u64 = p.need_num("clip")?;
@@ -1041,6 +1146,9 @@ fn cmd_music(p: &Parsed) -> Result<Output> {
             if !std::path::Path::new(audio).exists() {
                 bail!("no such audio file: {audio}");
             }
+            let audio = &std::fs::canonicalize(audio)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| audio.to_string());
             let m = Music {
                 source: audio.to_string(),
                 start: 0.0,

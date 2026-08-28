@@ -253,6 +253,37 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   texture — a timeline full of clips costs one texture per file. `Layout` is
   kept separate from the texture so the time→cell mapping is testable.
 
+- THE ENGINE (`src/engine/`): the compositor renders `Scene`s (placed,
+  effected, blended layers) into textures; the FRAME SERVER is the DEFAULT
+  timeline renderer (Reel composites every frame, pipes raw RGBA to ffmpeg
+  which only encodes; audio pre-rendered to WAV by the proven filter graph;
+  captions/titles burned by libass at the encode stage via the SHARED
+  `burnin_filters`). The compiled-graph path (`start_timeline_graph`)
+  remains the no-GPU fallback — `REEL_RENDER=graph` forces it — and cannot
+  animate keyframes (it warns).
+- `compose.wgsl` mirrors `effects::apply_reference` exactly, like video.wgsl;
+  uniform FIELD ORDER matters, and the compositor blends premultiplied in
+  linear light (a half-opacity mix meets at linear 0.5 ≈ sRGB 188 — the
+  test knows this).
+- Scene PLANNING is pure and unit-tested (`engine::render::plan`), and must
+  agree with `edit::render_duration` — one overlap arithmetic. Crossfade =
+  outgoing layer stays opaque, INCOMING ramps 0→1 (premultiplied over ≡
+  xfade's mix). wgpu readback rows are padded to 256 bytes — strip per row.
+- KEYFRAMES: clip-local time on `Clip.keys`; `Clip::animated(t)` /
+  `Segment::animated(t)` are the ONLY evaluation call sites — preview, frame
+  server, PiP and CLI all go through them, which is what keeps animation
+  honest. `eval_keys` clamps at both ends (no extrapolation).
+- Live PiP preview: `app.overlay_previews` — muted secondary Players chasing
+  the main clock (nudge only when drift > 0.3 s; chase, don't fight).
+  Frames drawn by egui's pipeline need alpha FORCED on upload (mpv's
+  padding byte again); the pool clears outside the editor.
+- Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
+  ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
+  `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for
+  watching the preview move without a keyboard.
+- CLI media paths are canonicalized at `add`/`music set` — a project must
+  find its media when opened from any directory.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

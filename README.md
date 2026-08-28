@@ -42,10 +42,18 @@ not the finished tool, but real, honest software you can build and run today.
   per-minute billing and nothing uploaded. Cues follow your edit — a line
   spanning a cut appears in both halves, and speech you trimmed away
   captions nowhere.
+- **Reel's own render engine.** Timeline exports are drawn by Reel's GPU
+  compositor frame by frame — ffmpeg only encodes — so what the preview
+  shows is what renders, by construction. The old filter-graph renderer
+  remains as the automatic no-GPU fallback.
+- **Keyframe animation.** Animate exposure, contrast, saturation, zoom/pan
+  and PiP position/size/opacity: set keys at the playhead (or with
+  `reel keyframe`), scrub the preview to watch the curve play, and the
+  render evaluates it per frame. Linear, hold and eased interpolation.
 - **A second video track — picture-in-picture.** Drop a clip on the overlay
-  track and drag it where you want it on the preview: a reaction cam, a logo,
-  a screen inset. Position and size are fractions of the frame, so what you
-  place is what renders at any resolution.
+  track; the inset **plays live in the preview**, and you drag it where you
+  want it. Position and size are fractions of the frame, so what you place
+  is what renders at any resolution.
 - **Speed.** Any clip, 0.25× to 4×, with the audio pitched to match. The
   clip's slot on the timeline resizes to suit, so the rest of the cut stays
   where you put it. (Constant speed per clip — *ramps* that accelerate

@@ -50,6 +50,105 @@ pub struct Clip {
     /// 720p preview lands identically in a 4K render — same rule as titles.
     #[serde(default)]
     pub pip: Pip,
+    /// Animated parameters: sorted keyframe tracks in clip-local time.
+    /// Empty for every clip that never touches animation.
+    #[serde(default)]
+    pub keys: Vec<(Param, Vec<Keyframe>)>,
+}
+
+/// A parameter that can be animated. The address half of the keyframe
+/// system: (clip id, Param) names every animatable number in a project,
+/// which is also how the CLI reads and writes them.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Param {
+    Exposure,
+    Contrast,
+    Saturation,
+    Zoom,
+    PanX,
+    PanY,
+    /// Whole-clip opacity, multiplied into fades.
+    Opacity,
+    PipX,
+    PipY,
+    PipScale,
+}
+
+impl Param {
+    pub const ALL: [Param; 10] = [
+        Param::Exposure,
+        Param::Contrast,
+        Param::Saturation,
+        Param::Zoom,
+        Param::PanX,
+        Param::PanY,
+        Param::Opacity,
+        Param::PipX,
+        Param::PipY,
+        Param::PipScale,
+    ];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Param::Exposure => "exposure",
+            Param::Contrast => "contrast",
+            Param::Saturation => "saturation",
+            Param::Zoom => "zoom",
+            Param::PanX => "pan-x",
+            Param::PanY => "pan-y",
+            Param::Opacity => "opacity",
+            Param::PipX => "pip-x",
+            Param::PipY => "pip-y",
+            Param::PipScale => "pip-scale",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Param> {
+        Param::ALL.into_iter().find(|p| p.name() == s)
+    }
+}
+
+/// How a keyframe reaches the next one.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub enum Interp {
+    Linear,
+    /// Step: hold this value until the next keyframe.
+    Hold,
+    /// Smooth in and out (smoothstep) — the "just make it nice" curve.
+    Ease,
+}
+
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+pub struct Keyframe {
+    /// Clip-local timeline seconds (0 = the clip's start on screen).
+    pub t: f64,
+    pub value: f32,
+    pub interp: Interp,
+}
+
+/// Evaluate a sorted keyframe track at clip-local time `t`. Before the first
+/// key it holds the first value; after the last, the last — an animation
+/// never extrapolates into nonsense.
+pub fn eval_keys(keys: &[Keyframe], t: f64) -> Option<f32> {
+    let first = keys.first()?;
+    if t <= first.t {
+        return Some(first.value);
+    }
+    let last = keys.last()?;
+    if t >= last.t {
+        return Some(last.value);
+    }
+    let idx = keys.iter().rposition(|k| k.t <= t)?;
+    let a = &keys[idx];
+    let b = &keys[idx + 1];
+    let span = (b.t - a.t).max(1e-9);
+    let p = ((t - a.t) / span).clamp(0.0, 1.0) as f32;
+    let p = match a.interp {
+        Interp::Hold => 0.0,
+        Interp::Linear => p,
+        Interp::Ease => p * p * (3.0 - 2.0 * p),
+    };
+    Some(a.value + (b.value - a.value) * p)
 }
 
 /// Placement of an overlay clip within the frame, in fractions.
@@ -70,6 +169,71 @@ impl Default for Pip {
 }
 
 impl Clip {
+    /// The keyframe track for one parameter, if any.
+    pub fn key_track(&self, p: Param) -> Option<&[Keyframe]> {
+        self.keys.iter().find(|(q, _)| *q == p).map(|(_, k)| k.as_slice())
+    }
+
+    /// This clip's animatable values at clip-local time `t`: base values
+    /// overridden by whatever is keyframed. ONE evaluation used by the
+    /// preview, the frame server and the CLI — that single call site is what
+    /// makes "the preview never lies" survive animation.
+    pub fn animated(&self, t: f64) -> (Effects, Pip, f32) {
+        let mut fx = self.effects;
+        let mut pip = self.pip;
+        let mut opacity = 1.0f32;
+        for (p, keys) in &self.keys {
+            let Some(v) = eval_keys(keys, t) else { continue };
+            match p {
+                Param::Exposure => fx.exposure = v,
+                Param::Contrast => fx.contrast = v,
+                Param::Saturation => fx.saturation = v,
+                Param::Zoom => fx.zoom = v.max(1.0),
+                Param::PanX => fx.pan_x = v.clamp(-1.0, 1.0),
+                Param::PanY => fx.pan_y = v.clamp(-1.0, 1.0),
+                Param::Opacity => opacity = v.clamp(0.0, 1.0),
+                Param::PipX => pip.x = v,
+                Param::PipY => pip.y = v,
+                Param::PipScale => pip.scale = v.clamp(0.02, 1.0),
+            }
+        }
+        (fx, pip, opacity)
+    }
+
+    /// Insert (or replace) a keyframe, keeping the track sorted.
+    pub fn set_key(&mut self, p: Param, t: f64, value: f32, interp: Interp) {
+        let track = match self.keys.iter_mut().find(|(q, _)| *q == p) {
+            Some((_, k)) => k,
+            None => {
+                self.keys.push((p, Vec::new()));
+                &mut self.keys.last_mut().unwrap().1
+            }
+        };
+        track.retain(|k| (k.t - t).abs() > 1e-4);
+        track.push(Keyframe { t, value, interp });
+        track.sort_by(|a, b| a.t.total_cmp(&b.t));
+    }
+
+    /// Remove the keyframe nearest `t` (within tolerance). True if one went.
+    pub fn clear_key(&mut self, p: Param, t: f64) -> bool {
+        let Some((_, track)) = self.keys.iter_mut().find(|(q, _)| *q == p) else {
+            return false;
+        };
+        let before = track.len();
+        if let Some(i) = track
+            .iter()
+            .enumerate()
+            .filter(|(_, k)| (k.t - t).abs() < 0.1)
+            .min_by(|a, b| (a.1.t - t).abs().total_cmp(&(b.1.t - t).abs()))
+            .map(|(i, _)| i)
+        {
+            track.remove(i);
+        }
+        let gone = track.len() < before;
+        self.keys.retain(|(_, k)| !k.is_empty());
+        gone
+    }
+
     /// How much of the SOURCE this clip consumes. Equal to `duration` at
     /// normal speed; twice that at 2×. Every place that reads a window out of
     /// the source file — trimming, waveforms, thumbnails, caption mapping —
@@ -123,6 +287,31 @@ pub struct Segment {
     pub gain_db: f32,
     /// Playback rate; `duration` is already the sped-up length.
     pub speed: f32,
+    /// Animated parameters, clip-local time — evaluated per frame by the
+    /// frame server.
+    pub keys: Vec<(Param, Vec<Keyframe>)>,
+}
+
+impl Segment {
+    /// Effects and opacity at segment-local time `t`, keyframes applied.
+    pub fn animated(&self, t: f64) -> (Effects, f32) {
+        let mut fx = self.effects;
+        let mut opacity = 1.0f32;
+        for (p, keys) in &self.keys {
+            let Some(v) = eval_keys(keys, t) else { continue };
+            match p {
+                Param::Exposure => fx.exposure = v,
+                Param::Contrast => fx.contrast = v,
+                Param::Saturation => fx.saturation = v,
+                Param::Zoom => fx.zoom = v.max(1.0),
+                Param::PanX => fx.pan_x = v.clamp(-1.0, 1.0),
+                Param::PanY => fx.pan_y = v.clamp(-1.0, 1.0),
+                Param::Opacity => opacity = v.clamp(0.0, 1.0),
+                _ => {}
+            }
+        }
+        (fx, opacity)
+    }
 }
 
 /// A music bed laid under the edit.
@@ -163,6 +352,27 @@ pub struct OverlaySegment {
     pub at: f64,
     pub pip: Pip,
     pub gain_db: f32,
+    /// Animated parameters (PipX/PipY/PipScale/Opacity), clip-local time.
+    pub keys: Vec<(Param, Vec<Keyframe>)>,
+}
+
+impl OverlaySegment {
+    /// Placement and opacity at overlay-local time `t`.
+    pub fn animated(&self, t: f64) -> (Pip, f32) {
+        let mut pip = self.pip;
+        let mut opacity = 1.0f32;
+        for (p, keys) in &self.keys {
+            let Some(v) = eval_keys(keys, t) else { continue };
+            match p {
+                Param::PipX => pip.x = v,
+                Param::PipY => pip.y = v,
+                Param::PipScale => pip.scale = v.clamp(0.02, 1.0),
+                Param::Opacity => opacity = v.clamp(0.0, 1.0),
+                _ => {}
+            }
+        }
+        (pip, opacity)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -295,6 +505,7 @@ impl Project {
                 gain_db: 0.0,
                 speed: 1.0,
                 pip: Pip::default(),
+                keys: Vec::new(),
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
@@ -339,6 +550,7 @@ impl Project {
                 at: c.start,
                 pip: c.pip,
                 gain_db: c.gain_db,
+                keys: c.keys.clone(),
             })
             .collect();
         out.sort_by(|a, b| a.at.total_cmp(&b.at));
@@ -729,6 +941,7 @@ impl Project {
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
                     gain_db: c.gain_db,
                     speed: c.speed,
+                    keys: c.keys.clone(),
                 })
             })
             .collect()
@@ -778,6 +991,8 @@ pub struct EditorState {
     pub selected_title: Option<usize>,
     /// The copied clip, and which kind of track it came from.
     pub clipboard: Option<(Clip, TrackKind)>,
+    /// The parameter the keyframe controls in the side panel operate on.
+    pub key_param: Param,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -810,6 +1025,7 @@ impl Default for EditorState {
             fx_gesture: None,
             selected_title: None,
             clipboard: None,
+            key_param: Param::Exposure,
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),
@@ -1067,6 +1283,59 @@ mod tests {
         p.delete_clip(left_id);
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 5.0), Some(5.0));
         assert_eq!(p.source_to_timeline("/tmp/a.mp4", 2.0), None); // trimmed away
+    }
+
+    /// Keyframe evaluation is the maths every animated render rests on:
+    /// clamped ends, linear and eased interpolation, holds.
+    #[test]
+    fn keyframes_interpolate_the_way_the_curve_says() {
+        let keys = vec![
+            Keyframe { t: 1.0, value: 10.0, interp: Interp::Linear },
+            Keyframe { t: 3.0, value: 20.0, interp: Interp::Linear },
+        ];
+        assert_eq!(eval_keys(&keys, 0.0), Some(10.0), "before the first key: hold");
+        assert_eq!(eval_keys(&keys, 5.0), Some(20.0), "after the last key: hold");
+        assert_eq!(eval_keys(&keys, 2.0), Some(15.0), "linear midpoint");
+        assert_eq!(eval_keys(&keys, 1.5), Some(12.5));
+
+        let hold = vec![
+            Keyframe { t: 0.0, value: 1.0, interp: Interp::Hold },
+            Keyframe { t: 2.0, value: 9.0, interp: Interp::Linear },
+        ];
+        assert_eq!(eval_keys(&hold, 1.999), Some(1.0), "hold steps, never ramps");
+        assert_eq!(eval_keys(&hold, 2.0), Some(9.0));
+
+        let ease = vec![
+            Keyframe { t: 0.0, value: 0.0, interp: Interp::Ease },
+            Keyframe { t: 1.0, value: 1.0, interp: Interp::Linear },
+        ];
+        assert_eq!(eval_keys(&ease, 0.5), Some(0.5), "smoothstep midpoint is half");
+        let q = eval_keys(&ease, 0.25).unwrap();
+        assert!(q < 0.25, "ease starts slower than linear, got {q}");
+
+        assert_eq!(eval_keys(&[], 1.0), None);
+    }
+
+    #[test]
+    fn set_and_clear_keys_keep_tracks_sorted_and_tidy() {
+        let mut p = one_clip_project();
+        let id = p.tracks[0].clips[0].id;
+        let c = p.clip_mut(id).unwrap();
+        c.set_key(Param::Exposure, 2.0, 1.5, Interp::Linear);
+        c.set_key(Param::Exposure, 0.5, 1.0, Interp::Linear);
+        c.set_key(Param::Exposure, 2.0, 1.8, Interp::Linear); // replace, not duplicate
+        let track = c.key_track(Param::Exposure).unwrap();
+        assert_eq!(track.len(), 2);
+        assert!(track[0].t < track[1].t, "track stays sorted");
+        assert_eq!(track[1].value, 1.8);
+
+        let (fx, _, _) = c.animated(1.25);
+        assert!((fx.exposure - 1.4).abs() < 1e-5, "midpoint of 1.0→1.8, got {}", fx.exposure);
+
+        assert!(c.clear_key(Param::Exposure, 0.5));
+        assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
+        assert!(c.clear_key(Param::Exposure, 2.0));
+        assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
     }
 
     /// Pasting inserts: it makes room instead of overwriting whatever was

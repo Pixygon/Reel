@@ -521,7 +521,10 @@ mod tests {
         // Wait for the seek to actually land — open is asynchronous, and a
         // seek issued before the demuxer is ready is simply dropped. Reverse
         // from 0.03s has nowhere to go, which is how this test used to flake.
-        let ready = Instant::now() + Duration::from_secs(8);
+        // Generous: this test shares the machine with GPU renders and real
+        // ffmpeg encodes when the whole suite runs; a genuine regression
+        // hangs forever, not for thirty seconds.
+        let ready = Instant::now() + Duration::from_secs(30);
         while Instant::now() < ready {
             p.seek(1.6);
             for _ in 0..10 {
@@ -541,7 +544,7 @@ mod tests {
 
         // Back into reverse, and confirm the clock actually moves backwards.
         p.shuttle(false);
-        let deadline = Instant::now() + Duration::from_secs(8);
+        let deadline = Instant::now() + Duration::from_secs(30);
         let mut moved_back = false;
         while Instant::now() < deadline {
             p.update();

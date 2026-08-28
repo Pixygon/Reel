@@ -12,6 +12,7 @@ mod capture;
 mod cli;
 mod edit;
 mod effects;
+mod engine;
 mod egui_backend;
 mod export;
 mod gpu;

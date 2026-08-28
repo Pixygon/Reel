@@ -144,6 +144,20 @@ Colour, fades and reframing for one clip
 | `--pan-y` | `N` | -1..1 |
 | `--reset` | — | Back to no effects |
 
+### `reel keyframe PROJECT`
+
+Animate a parameter over time — evaluated per frame at render
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id (from `reel inspect`) |
+| `--param` | `NAME` | exposure, contrast, saturation, zoom, pan-x, pan-y, opacity, pip-x, pip-y, pip-scale |
+| `--at` | `SECONDS` | TIMELINE time of the keyframe |
+| `--value` | `N` | The value at that moment |
+| `--interp` | `MODE` | linear (default), hold or ease |
+| `--remove` | — | Remove the keyframe nearest --at instead |
+| `--list` | — | Show every keyframe on the clip |
+
 ### `reel pip PROJECT`
 
 Place a picture-in-picture overlay in the frame

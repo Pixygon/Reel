@@ -116,13 +116,13 @@ from "replaces Premiere".
 The current `video_pass` draws *one* textured quad with an effect uniform.
 It becomes a real compositor:
 
-- [ ] A render graph: N layers → transform (position/scale/rotate/crop) →
-      effect stack per layer → blend (normal/add/multiply/screen/overlay,
-      opacity) → output frame. All wgpu; layers are textures whatever their
-      origin (video frame, image, title raster, generated).
-- [ ] Every parameter of every node addressable by (track, clip, param) —
-      this exact addressing is what keyframes (Phase 2) animate and what the
-      CLI reads/writes.
+- [x] The core (`engine/compositor.rs` + `compose.wgsl`): N layers → placed
+      rect → per-layer effects (the `apply_reference` formula, mirrored) →
+      opacity → premultiplied blend over black, rendered headless or on the
+      app's device, with 256-byte-aware readback. Blend modes beyond normal
+      (add/multiply/screen), rotation, and masks are still open.
+- [x] Every animatable parameter addressable by (clip id, `Param`) — the
+      addressing keyframes animate and `reel keyframe` reads/writes.
 - [ ] Masks as first-class layer inputs: rectangle/ellipse/bezier, feather,
       invert. (Drawn masks; tracked masks come with tracking in Phase 3.)
 - [ ] Scopes taps: the compositor can cheaply hand back histogram /
@@ -137,9 +137,10 @@ It becomes a real compositor:
 One mpv instance decodes one source. The editor needs frames from several
 sources at once (PiP live, transitions previewing both sides, multicam):
 
-- [ ] A decoder pool behind a `FrameSource` trait: give me source S at time
-      T → GPU texture. mpv instances and/or direct libav decode; pooled,
-      LRU-evicted, prefetching around each playhead consumer.
+- [x] The preview half: a pool of secondary decoders (`overlay_previews`,
+      muted mpv instances chasing the timeline clock) — **PiP plays live in
+      the preview**. The general `FrameSource` trait with LRU/prefetch is
+      still the fuller form of this.
 - [ ] Zero-copy where the platform allows (VA-API/dmabuf → Vulkan import;
       D3D11 shared textures on Windows), CPU upload as the universal
       fallback. The seam is the trait; the copies are an implementation
@@ -152,18 +153,20 @@ sources at once (PiP live, transitions previewing both sides, multicam):
 
 ### 1.3 The frame-server renderer
 
-- [ ] Export = the compositor rendering the timeline frame-by-frame at
-      render resolution, piping raw frames into ffmpeg **only to encode**
-      (`rawvideo → -c:v …`). Audio likewise (1.4).
-- [ ] The filter-graph compiler stays for `convert` (single-file transcode,
-      where it is the right tool) and as a compatibility fallback, then
-      retires from timeline duty.
-- [ ] The parity test suite flips its role: instead of proving preview ≈
-      ffmpeg-graph, it proves frame-server output ≈ the old graphs for
-      every existing feature (cuts, fades, effects, captions, titles, PiP,
-      speed) before the switch is thrown. No regression, then no ceiling.
-- [ ] Render stays cancellable, progress-reported, queueable — the existing
-      job plumbing survives; only the frame source changes.
+- [x] Export = the compositor rendering the timeline frame-by-frame, piping
+      raw frames into ffmpeg **only to encode**. Audio pre-renders through
+      the proven filter graph to a WAV the encoder muxes (the mixer takes
+      this over in 1.4). Captions/titles burn at the encode stage via the
+      shared `burnin_filters`. **The frame server is the default renderer**;
+      measured 1.47× realtime on 1080p30 H.264/NVENC.
+- [x] The filter-graph compiler stays for `convert` and as the no-GPU
+      fallback (`REEL_RENDER=graph` forces it; it warns when keyframes
+      would be dropped) — retired from default timeline duty.
+- [x] The parity flip: the whole pixel-measuring suite (cuts, stream order,
+      captions, titles, overlays, speed, crossfades, ducking) runs through
+      the frame server, plus an explicit both-paths-agree test.
+- [x] Render is cancellable, progress-reported, queueable — same `ExportJob`
+      plumbing.
 
 ### 1.4 The audio engine
 
@@ -192,10 +195,11 @@ ffmpeg graph. Neither can express "the timeline, mixed, live":
       support later — the seam (working space → display transform) exists
       from day one.
 
-**Exit criteria for Phase 1**: PiP plays live in the preview. A crossfade
-previews as a crossfade. A 4K HEVC file edits smoothly on modest hardware
-via proxies. Export runs through the frame server with the parity suite
-green. Multitrack audio mixes live under the preview.
+**Exit criteria for Phase 1**: ~~PiP plays live in the preview~~ ✓.
+~~Export runs through the frame server with the parity suite green~~ ✓.
+Still open: a crossfade previewing as a crossfade (needs the second base
+decoder in the preview), proxies for 4K-on-a-laptop, and multitrack audio
+mixing live under the preview (1.4).
 
 ---
 
@@ -203,12 +207,14 @@ green. Multitrack audio mixes live under the preview.
 
 The engine gives us addressable parameters; this phase makes them move.
 
-- [ ] **Keyframes on every numeric parameter** — effects, transform, PiP
-      geometry, gain, pan, title position/size/opacity — one system, not
-      per-feature hacks. Linear / hold / bezier interpolation with editable
-      handles.
-- [ ] Curve editor in the timeline (a lane that unfolds under a clip), plus
-      "diamond" affordances on sliders: add/step/clear keyframe at playhead.
+- [x] **Keyframes** on the effect stack, reframe and PiP geometry + opacity —
+      one system (`Clip.keys`, `eval_keys`), linear/hold/ease, evaluated per
+      frame by preview AND render through one call site, proven by a
+      rendered-ramp pixel test. Still to extend: gain/pan and title
+      parameters, and bezier handles beyond the ease curve.
+- [~] Keyframe UI v1: an Animate panel (param picker, key-at-playhead,
+      per-key list with remove) and painted diamonds on timeline clips.
+      The full curve-editor lane with draggable handles is still open.
 - [ ] **Speed ramps**: clip time remapped by a curve (the keyframe system
       applied to time itself). Frame-blend first; optical-flow interpolation
       later as a quality tier. Audio follows with chained tempo, or detaches
@@ -217,11 +223,12 @@ The engine gives us addressable parameters; this phase makes them move.
       of motion presets (fade, slide, pop, typewriter). Presets are just
       keyframe templates — no second system.
 - [ ] Ken Burns for stills (a transform preset over a still's duration).
-- [ ] CLI: `reel keyframe` verbs (set/list/clear, param addressed by the
-      Phase-1 naming); ramps and animations fully scriptable.
-- [ ] Tests: rendered-pixel checks that a keyframed parameter actually
-      changes mid-render and lands its bezier midpoints where the curve
-      says; ramp test proves duration and audio sync stay honest.
+- [x] CLI: `reel keyframe` (set/list/remove, `--interp linear|hold|ease`,
+      timeline-time addressing) — animations fully scriptable.
+- [x] Tests: `a_keyframed_ramp_lands_its_midpoints_in_the_render` measures
+      real output frames at three points of a ramp; eval unit tests pin
+      clamping, hold and ease. (The speed-ramp sync test arrives with
+      ramps.)
 
 ---
 

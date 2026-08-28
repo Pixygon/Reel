@@ -210,7 +210,7 @@ impl Fit {
 
     /// The filter chain that maps any input to exactly `w`×`h`.
     /// `tag` keeps labels unique when several of these appear in one graph.
-    fn chain(self, w: u32, h: u32, tag: &str) -> String {
+    pub(crate) fn chain(self, w: u32, h: u32, tag: &str) -> String {
         match self {
             Fit::Letterbox => format!(
                 "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,\
@@ -356,6 +356,20 @@ pub struct ExportJob {
 }
 
 impl ExportJob {
+    /// Build a job whose worker is driven elsewhere (the frame server).
+    /// Returns the job plus the shared state/cancel handles the worker owns.
+    pub(crate) fn manual(
+        output: &str,
+    ) -> (Self, Arc<Mutex<ExportState>>, Arc<AtomicBool>) {
+        let state = Arc::new(Mutex::new(ExportState::default()));
+        let cancel = Arc::new(AtomicBool::new(false));
+        (
+            Self { output: output.to_string(), state: state.clone(), cancel: cancel.clone() },
+            state,
+            cancel,
+        )
+    }
+
     pub fn state(&self) -> ExportState {
         self.state.lock().unwrap().clone()
     }
@@ -548,7 +562,7 @@ pub fn hw_encoder_for(codec: Codec) -> Option<HwEncoder> {
 }
 
 /// Video-encoder args: hardware when asked for and available, else software.
-fn video_encoder_args(codec: Codec, q: Quality, hw: bool) -> Vec<String> {
+pub(crate) fn video_encoder_args(codec: Codec, q: Quality, hw: bool) -> Vec<String> {
     if hw {
         if let Some(enc) = hw_encoder_for(codec) {
             return enc.args(codec, q);
@@ -773,55 +787,7 @@ pub fn build_timeline_args_full(
     // The music bed, laid under whatever the cut itself carries.
     let mut audio_out = if with_audio { Some("[acat]".to_string()) } else { None };
     if let (Some(idx), Some(m)) = (music_input, music) {
-        let total = crate::edit::render_duration(segments);
-        let delay_ms = (m.start.max(0.0) * 1000.0).round() as u64;
-        let delay = if delay_ms > 0 {
-            format!(",adelay={delay_ms}|{delay_ms}")
-        } else {
-            String::new()
-        };
-        // Trim to the cut's length so a long track can't extend the render,
-        // and fade so it never just stops dead.
-        let fade = if m.fade > 0.0 && total > m.fade * 2.0 {
-            format!(
-                ",afade=t=in:st=0:d={:.2},afade=t=out:st={:.2}:d={:.2}",
-                m.fade,
-                total - m.fade,
-                m.fade
-            )
-        } else {
-            String::new()
-        };
-        graph.push_str(&format!(
-            ";[{idx}:a]{anorm},volume={:.2}dB{delay},atrim=0:{total:.4},asetpts=PTS-STARTPTS{fade}[mus]",
-            m.gain_db
-        ));
-
-        match &audio_out {
-            // Speech present: duck the music under it if asked, then mix.
-            Some(cut) => {
-                let bed = if m.duck {
-                    // The cut's audio drives the compressor AND is kept — so
-                    // it is split first; a filter output can only be used once.
-                    graph.push_str(&format!(";{cut}asplit=2[sc_keep][sc_key]"));
-                    graph.push_str(
-                        ";[mus][sc_key]sidechaincompress=threshold=0.03:ratio=12:attack=20:release=400:makeup=1[mus_d]",
-                    );
-                    ("[sc_keep]", "[mus_d]")
-                } else {
-                    (cut.as_str(), "[mus]")
-                };
-                // normalize=0: amix otherwise divides every input by the
-                // number of inputs, quietly halving the dialogue.
-                graph.push_str(&format!(
-                    ";{}{}amix=inputs=2:duration=first:normalize=0:dropout_transition=0[amix]",
-                    bed.0, bed.1
-                ));
-                audio_out = Some("[amix]".into());
-            }
-            // Nothing but music: it becomes the soundtrack.
-            None => audio_out = Some("[mus]".into()),
-        }
+        push_music_mix(&mut graph, &mut audio_out, idx, m, crate::edit::render_duration(segments));
     }
 
     // No post-concat scale: `target` already carries the chosen resolution,
@@ -872,11 +838,73 @@ pub fn start_timeline_with_captions(
     project: (u32, u32, f64),
     overlays: Overlays<'_>,
 ) -> Result<ExportJob> {
+    // The frame server is the renderer (Reel's own compositor draws every
+    // frame; ffmpeg encodes). The compiled-filter-graph path remains as the
+    // fallback for machines with no GPU adapter, and REEL_RENDER=graph
+    // forces it for comparison.
+    if std::env::var("REEL_RENDER").as_deref() != Ok("graph") {
+        match crate::engine::render::start_timeline(segments, output, settings, project, &overlays)
+        {
+            Ok(job) => return Ok(job),
+            Err(e) => {
+                log::warn!("frame server unavailable ({e}); rendering via the ffmpeg graph");
+            }
+        }
+    }
+    start_timeline_graph(segments, output, settings, project, overlays)
+}
+
+/// The burn-in filters (captions, then titles) for a timeline render, with
+/// their sidecar files written next to `output`. Shared by both render paths
+/// so a caption looks the same whichever engine drew the picture.
+pub(crate) fn burnin_filters(
+    output: &str,
+    overlays: &Overlays<'_>,
+    target: (u32, u32, f64),
+) -> Result<Vec<String>> {
+    let mut chain: Vec<String> = Vec::new();
+    if !overlays.captions.is_empty() {
+        let srt = format!("{output}.srt");
+        std::fs::write(&srt, crate::captions::to_srt(overlays.captions))?;
+        // Font size is NOT scaled by the target height — see captions::PLAY_RES_Y.
+        chain.push(format!(
+            "subtitles='{}':force_style='{}'",
+            escape_filter_path(&srt),
+            crate::captions::force_style(overlays.caption_size)
+        ));
+    }
+    if !overlays.titles.is_empty() {
+        let ass = format!("{output}.titles.ass");
+        std::fs::write(&ass, crate::titles::to_ass(overlays.titles, target.0, target.1))?;
+        chain.push(format!("subtitles='{}'", escape_filter_path(&ass)));
+    }
+    Ok(chain)
+}
+
+/// The original renderer: the whole timeline compiled into one ffmpeg
+/// filter graph. Kept as the no-GPU fallback and as the reference the frame
+/// server was validated against.
+pub(crate) fn start_timeline_graph(
+    segments: &[Segment],
+    output: &str,
+    settings: &ExportSettings,
+    project: (u32, u32, f64),
+    overlays: Overlays<'_>,
+) -> Result<ExportJob> {
     if segments.is_empty() {
         return Err(anyhow!("the timeline is empty"));
     }
     if Path::new(output).exists() {
         return Err(anyhow!("output already exists: {output}"));
+    }
+    // A static filter graph has one value per parameter for the whole clip —
+    // it cannot animate. Say so out loud rather than quietly rendering the
+    // base values.
+    if segments.iter().any(|s| !s.keys.is_empty()) {
+        log::warn!(
+            "this edit has keyframes, which the graph fallback cannot animate — \
+             rendered with base values (a GPU enables the frame server)"
+        );
     }
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
     let total = crate::edit::render_duration(segments);
@@ -891,26 +919,7 @@ pub fn start_timeline_with_captions(
         overlays.overlays,
     );
 
-    let mut chain: Vec<String> = Vec::new();
-    if !overlays.captions.is_empty() {
-        let srt = format!("{output}.srt");
-        std::fs::write(&srt, crate::captions::to_srt(overlays.captions))?;
-        // Font size is NOT scaled by the target height — see captions::PLAY_RES_Y.
-        chain.push(format!(
-            "subtitles='{}':force_style='{}'",
-            escape_filter_path(&srt),
-            crate::captions::force_style(overlays.caption_size)
-        ));
-    }
-    if !overlays.titles.is_empty() {
-        let ass = format!("{output}.titles.ass");
-        std::fs::write(
-            &ass,
-            crate::titles::to_ass(overlays.titles, target.0, target.1),
-        )?;
-        chain.push(format!("subtitles='{}'", escape_filter_path(&ass)));
-    }
-
+    let chain = burnin_filters(output, &overlays, target)?;
     if !chain.is_empty() {
         // Attach to whatever the graph currently ends on — [vcat] for a plain
         // cut, but [voN] once overlays have been composited. Hardcoding
@@ -950,6 +959,165 @@ fn atempo_chain(rate: f64) -> String {
         .iter()
         .map(|r| format!(",atempo={r:.6}"))
         .collect::<String>()
+}
+
+
+/// Lay a music bed under (or as) the cut's audio: level, delay, trim to the
+/// cut, fades, optional sidechain ducking, and the normalize=0 mix. Shared by
+/// the graph renderer and the frame server's audio pass so the two can never
+/// disagree about what "add music" means.
+fn push_music_mix(
+    graph: &mut String,
+    audio_out: &mut Option<String>,
+    idx: usize,
+    m: &crate::edit::Music,
+    total: f64,
+) {
+    let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
+    let delay_ms = (m.start.max(0.0) * 1000.0).round() as u64;
+    let delay = if delay_ms > 0 {
+        format!(",adelay={delay_ms}|{delay_ms}")
+    } else {
+        String::new()
+    };
+    // Trim to the cut's length so a long track can't extend the render, and
+    // fade so it never just stops dead.
+    let fade = if m.fade > 0.0 && total > m.fade * 2.0 {
+        format!(
+            ",afade=t=in:st=0:d={:.2},afade=t=out:st={:.2}:d={:.2}",
+            m.fade,
+            total - m.fade,
+            m.fade
+        )
+    } else {
+        String::new()
+    };
+    graph.push_str(&format!(
+        ";[{idx}:a]{anorm},volume={:.2}dB{delay},atrim=0:{total:.4},asetpts=PTS-STARTPTS{fade}[mus]",
+        m.gain_db
+    ));
+
+    match &audio_out {
+        // Speech present: duck the music under it if asked, then mix.
+        Some(cut) => {
+            let bed = if m.duck {
+                // The cut's audio drives the compressor AND is kept — so it
+                // is split first; a filter output can only be consumed once.
+                graph.push_str(&format!(";{cut}asplit=2[sc_keep][sc_key]"));
+                graph.push_str(
+                    ";[mus][sc_key]sidechaincompress=threshold=0.03:ratio=12:attack=20:release=400:makeup=1[mus_d]",
+                );
+                ("[sc_keep]", "[mus_d]")
+            } else {
+                (cut.as_str(), "[mus]")
+            };
+            // normalize=0: amix otherwise divides every input by the number
+            // of inputs, quietly halving the dialogue.
+            graph.push_str(&format!(
+                ";{}{}amix=inputs=2:duration=first:normalize=0:dropout_transition=0[amix]",
+                bed.0, bed.1
+            ));
+            *audio_out = Some("[amix]".into());
+        }
+        // Nothing but music: it becomes the soundtrack.
+        None => *audio_out = Some("[mus]".into()),
+    }
+}
+
+/// The audio side of a timeline render, alone, written to a WAV: the same
+/// per-segment legs (trim, tempo, gain), the same concat/acrossfade chain,
+/// and the same music mix as the graph renderer. The frame server hands the
+/// result to its encoder. Returns None when the cut has no audio at all.
+pub(crate) fn build_timeline_audio_wav_args(
+    segments: &[Segment],
+    with_audio: bool,
+    music: Option<&crate::edit::Music>,
+    wav_out: &str,
+) -> Option<Vec<String>> {
+    let music = music.filter(|m| !m.source.is_empty());
+    if !with_audio && music.is_none() {
+        return None;
+    }
+    let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
+    let mut a: Vec<String> = Vec::new();
+    let mut sources: Vec<&str> = Vec::new();
+    if with_audio {
+        for seg in segments {
+            if !sources.contains(&seg.source.as_str()) {
+                sources.push(&seg.source);
+            }
+        }
+        for src in &sources {
+            a.extend(["-i".into(), (*src).into()]);
+        }
+    }
+    let music_input = music.map(|m| {
+        a.extend(["-i".into(), m.source.clone()]);
+        sources.len()
+    });
+
+    let mut graph = String::new();
+    let mut audio_out: Option<String> = None;
+    if with_audio {
+        for (k, seg) in segments.iter().enumerate() {
+            let rate = seg.speed.clamp(0.05, 20.0) as f64;
+            let src_len = seg.duration * rate;
+            let i = sources.iter().position(|s| *s == seg.source).unwrap();
+            let gain = if seg.gain_db.abs() > 0.01 {
+                format!(",volume={:.2}dB", seg.gain_db)
+            } else {
+                String::new()
+            };
+            graph.push_str(&format!(
+                "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}[a{k}];",
+                seg.in_point,
+                atempo_chain(rate)
+            ));
+        }
+        if segments.iter().any(|seg| seg.transition_in > 0.0) {
+            let mut aprev = "a0".to_string();
+            for k in 1..segments.len() {
+                let d = segments[k]
+                    .transition_in
+                    .min(segments[k - 1].duration)
+                    .min(segments[k].duration);
+                let ao = format!("ax{k}");
+                if d > 0.0 {
+                    graph.push_str(&format!("[{aprev}][a{k}]acrossfade=d={d:.4}[{ao}];"));
+                } else {
+                    graph.push_str(&format!("[{aprev}][a{k}]concat=n=2:v=0:a=1[{ao}];"));
+                }
+                aprev = ao;
+            }
+            graph.push_str(&format!("[{aprev}]anull[acat]"));
+        } else {
+            for k in 0..segments.len() {
+                graph.push_str(&format!("[a{k}]"));
+            }
+            graph.push_str(&format!("concat=n={}:v=0:a=1[acat]", segments.len()));
+        }
+        audio_out = Some("[acat]".into());
+    }
+    if let (Some(idx), Some(m)) = (music_input, music) {
+        if graph.is_empty() {
+            // push_music_mix writes ";[idx:a]…" — valid mid-graph, not at
+            // the very start.
+            graph.push_str("anullsrc=r=48000:cl=stereo:d=0.001[zz];[zz]anullsink");
+        }
+        push_music_mix(&mut graph, &mut audio_out, idx, m, crate::edit::render_duration(segments));
+    }
+    let out_label = audio_out?;
+    a.splice(0..0, ["-y".into()]);
+    a.extend([
+        "-filter_complex".into(),
+        graph,
+        "-map".into(),
+        out_label,
+        "-c:a".into(),
+        "pcm_s16le".into(),
+        wav_out.into(),
+    ]);
+    Some(a)
 }
 
 /// The geometry every segment is normalised to: the project's frame, or the
@@ -1202,6 +1370,7 @@ mod tests {
             transition_in: 0.0,
             gain_db: 0.0,
             speed: 1.0,
+            keys: Vec::new(),
         }
     }
 
@@ -1718,6 +1887,7 @@ mod tests {
             transition_in: 0.0,
             gain_db: 0.0,
             speed: 1.0,
+            keys: Vec::new(),
         }];
         let s = ExportSettings::default();
 
@@ -1780,6 +1950,139 @@ mod tests {
     /// Captions and titles are two separate libass passes chained onto the
     /// same graph. This is the check that they coexist — an earlier version
     /// overwrote one label with the other and silently dropped the titles.
+    /// The Phase-2 promise, measured in pixels: a keyframed exposure ramp
+    /// actually ramps in the rendered file, landing its midpoint where the
+    /// curve says. Only the frame server can do this — a static filter graph
+    /// has one exposure for the whole clip.
+    #[test]
+    fn a_keyframed_ramp_lands_its_midpoints_in_the_render() {
+        use crate::edit::{Interp, Keyframe, Param};
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-kf-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-kf-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // A flat mid-gray source: every brightness change is the keyframes'.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=0x808080:size=320x240:rate=25:duration=2",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let mut s0 = seg(&src.to_string_lossy(), 0.0, 2.0);
+        s0.keys = vec![(
+            Param::Exposure,
+            vec![
+                Keyframe { t: 0.0, value: 1.0, interp: Interp::Linear },
+                Keyframe { t: 2.0, value: 1.5, interp: Interp::Linear },
+            ],
+        )];
+        let segs = vec![s0];
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let job = match crate::engine::render::start_timeline(
+            &segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &Overlays::default(),
+        ) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("no GPU — skipping keyframe render test ({e})");
+                return;
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "keyframed render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "keyframed render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let level_at = |t: &str| -> f64 {
+            let png = dir.join(format!("reel-kf-f-{}.png", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-ss", t, "-i", &out.to_string_lossy(),
+                       "-frames:v", "1", &png.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            let img = image::open(&png).expect("read frame").to_luma8();
+            let _ = std::fs::remove_file(&png);
+            let sum: u64 = img.pixels().map(|p| p.0[0] as u64).sum();
+            sum as f64 / (img.width() * img.height()) as f64
+        };
+        // Exposure multiplies the sRGB-encoded value (the reference formula):
+        // 0x80 = 128 → ×1.0 = 128, ×1.25 = 160, ×1.5 = 192.
+        let start = level_at("0.05");
+        let mid = level_at("1.0");
+        let end = level_at("1.9");
+        assert!((start - 128.0).abs() < 8.0, "ramp start should be ~128, got {start:.1}");
+        assert!((mid - 160.0).abs() < 8.0, "ramp midpoint should be ~160, got {mid:.1}");
+        assert!((end - 192.0).abs() < 10.0, "ramp end should be ~192, got {end:.1}");
+        assert!(start < mid && mid < end, "brightness must rise monotonically");
+
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Both render paths — the frame server and the graph fallback — must
+    /// produce the same cut. This drives each EXPLICITLY (the dispatcher
+    /// picks the frame server wherever a GPU exists, so the graph would
+    /// otherwise silently lose its coverage) and compares the outputs.
+    #[test]
+    fn both_render_paths_agree_on_a_real_cut() {
+        let dir = std::env::temp_dir();
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let segs = vec![seg(&fixture(), 0.0, 0.4), seg(&fixture(), 1.4, 0.4)];
+        let mut done = Vec::new();
+        for (name, which) in [("fs", true), ("graph", false)] {
+            let out = dir.join(format!("reel-paths-{name}-{}.mp4", std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            let job = if which {
+                match crate::engine::render::start_timeline(
+                    &segs, &out.to_string_lossy(), &s, (320, 240, 30.0), &Overlays::default(),
+                ) {
+                    Ok(j) => j,
+                    Err(e) => {
+                        eprintln!("no GPU — skipping frame-server leg ({e})");
+                        continue;
+                    }
+                }
+            } else {
+                start_timeline_graph(
+                    &segs, &out.to_string_lossy(), &s, (320, 240, 30.0), Overlays::default(),
+                )
+                .expect("start graph render")
+            };
+            let deadline = Instant::now() + Duration::from_secs(120);
+            loop {
+                let st = job.state();
+                if st.finished {
+                    assert!(st.error.is_none(), "{name} render failed: {:?}", st.error);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "{name} render timed out");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe");
+            assert!(
+                (info.duration - 0.8).abs() < 0.3,
+                "{name}: expected the 0.8s cut, got {:.2}s",
+                info.duration
+            );
+            done.push((name, info.duration, out));
+        }
+        // When both ran, they must agree with each other, not just the spec.
+        if done.len() == 2 {
+            assert!(
+                (done[0].1 - done[1].1).abs() < 0.15,
+                "paths disagree on duration: {done:?}"
+            );
+        }
+        for (_, _, f) in done {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// A PiP has to appear in the right place, at the right size, only while
     /// it is meant to — and the base picture must survive underneath it. The
     /// geometry is stored as fractions, so this measures the rendered pixels
@@ -1812,6 +2115,7 @@ mod tests {
             at: 1.0,
             pip,
             gain_db: 0.0,
+            keys: Vec::new(),
         }];
         let job = start_timeline_with_captions(
             &segs,
@@ -1901,6 +2205,7 @@ mod tests {
             transition_in: 0.0,
             gain_db: 0.0,
             speed: 2.0,
+            keys: Vec::new(),
         }];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
         let job = start_timeline_with_captions(

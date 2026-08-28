@@ -641,6 +641,82 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     );
                 }
 
+                // ── Keyframes ───────────────────────────────────────────
+                // Animate any parameter: set a value at the playhead, and the
+                // render evaluates the curve per frame. The preview shows the
+                // same evaluation, so scrubbing plays the animation.
+                ui.add_space(6.0);
+                ui.label(RichText::new("Animate").color(theme::CYAN));
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt("keyparam")
+                        .selected_text(app.editor.key_param.name())
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for q in crate::edit::Param::ALL {
+                                ui.selectable_value(&mut app.editor.key_param, q, q.name());
+                            }
+                        });
+                    if ui
+                        .button("+ Key at playhead")
+                        .on_hover_text("Capture this parameter's current value as a keyframe here")
+                        .clicked()
+                    {
+                        let t = app.editor.playhead;
+                        app.editor.push_undo(&app.project);
+                        let param = app.editor.key_param;
+                        if let Some(c) = app.project.clip_mut(id) {
+                            let local = (t - c.start).clamp(0.0, c.duration);
+                            let (fx2, pip2, op) = c.animated(local);
+                            let v = match param {
+                                crate::edit::Param::Exposure => fx2.exposure,
+                                crate::edit::Param::Contrast => fx2.contrast,
+                                crate::edit::Param::Saturation => fx2.saturation,
+                                crate::edit::Param::Zoom => fx2.zoom,
+                                crate::edit::Param::PanX => fx2.pan_x,
+                                crate::edit::Param::PanY => fx2.pan_y,
+                                crate::edit::Param::Opacity => op,
+                                crate::edit::Param::PipX => pip2.x,
+                                crate::edit::Param::PipY => pip2.y,
+                                crate::edit::Param::PipScale => pip2.scale,
+                            };
+                            c.set_key(param, local, v, crate::edit::Interp::Linear);
+                        }
+                        app.editor.mark_changed();
+                    }
+                });
+                let key_rows: Vec<(crate::edit::Param, f64, f32)> = app
+                    .project
+                    .clip(id)
+                    .map(|c| {
+                        c.keys
+                            .iter()
+                            .flat_map(|(q, ks)| ks.iter().map(|k| (*q, k.t, k.value)))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                if !key_rows.is_empty() {
+                    let mut remove: Option<(crate::edit::Param, f64)> = None;
+                    for (q, t, v) in &key_rows {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("{} @ {t:.2}s = {v:.2}", q.name()))
+                                    .small()
+                                    .color(egui::Color32::from_gray(160)),
+                            );
+                            if ui.small_button("−").clicked() {
+                                remove = Some((*q, *t));
+                            }
+                        });
+                    }
+                    if let Some((q, t)) = remove {
+                        app.editor.push_undo(&app.project);
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.clear_key(q, t);
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+
                 // Playback rate. Changing it keeps the footage and resizes
                 // the clip's slot, which is what "speed this bit up" means.
                 let mut rate = app.project.clip(id).map(|c| c.speed).unwrap_or(1.0);
@@ -1052,8 +1128,9 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         .flat_map(|tr| tr.clips.iter())
         .filter(|c| t >= c.start && t < c.end())
         .map(|c| {
+            let (_, pip, _) = c.animated(t - c.start);
             (
-                c.pip,
+                pip,
                 c.source.clone(),
                 c.in_point + (t - c.start),
                 app.editor.selected == Some(c.id),
@@ -1074,10 +1151,25 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
         let box_rect = Rect::from_center_size(centre, Vec2::new(w, h));
 
         let mut drew = false;
-        if let Some(sheet) = app.thumbs.get(ctx, &source, src_t.max(0.1) + 1.0) {
-            if let Some(uv) = sheet.uv_at(src_t) {
-                painter.add(egui::Shape::image(sheet.tex.id(), box_rect, uv, Color32::WHITE));
+        // Live frames from the preview pool play in the inset; the thumbnail
+        // sheet is only the fallback for the instant before a player opens.
+        if let Some(ov) = app.overlay_previews.get(&source) {
+            if let Some(id) = ov.tex_id {
+                painter.add(egui::Shape::image(
+                    id,
+                    box_rect,
+                    Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                    Color32::WHITE,
+                ));
                 drew = true;
+            }
+        }
+        if !drew {
+            if let Some(sheet) = app.thumbs.get(ctx, &source, src_t.max(0.1) + 1.0) {
+                if let Some(uv) = sheet.uv_at(src_t) {
+                    painter.add(egui::Shape::image(sheet.tex.id(), box_rect, uv, Color32::WHITE));
+                    drew = true;
+                }
             }
         }
         if !drew {
@@ -2166,6 +2258,30 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                     theme::VOID.linear_multiply(0.65),
                 );
                 painter.galley(at, galley, theme::STAR);
+            }
+
+            // Keyframe diamonds along the clip's lower edge — painted, not
+            // glyphs (the bundled font has no ◆), so they render everywhere.
+            if !clip.keys.is_empty() {
+                let y = cr.bottom() - 6.0;
+                for (_, track) in &clip.keys {
+                    for k in track {
+                        let x = t_to_x(clip.start + k.t);
+                        if x < cr.left() - 4.0 || x > cr.right() + 4.0 {
+                            continue;
+                        }
+                        painter.add(egui::Shape::convex_polygon(
+                            vec![
+                                egui::pos2(x, y - 4.0),
+                                egui::pos2(x + 4.0, y),
+                                egui::pos2(x, y + 4.0),
+                                egui::pos2(x - 4.0, y),
+                            ],
+                            theme::STAR,
+                            Stroke::new(1.0, theme::VOID),
+                        ));
+                    }
+                }
             }
 
             // A crossfade marker at the clip's head: the wedge shows where

@@ -25,6 +25,14 @@ pub enum PickerTarget {
     Music,
 }
 
+/// A live PiP preview: its own muted player plus the texture its frames
+/// land on.
+pub struct OverlayPreview {
+    pub player: Player,
+    pub tex: Option<VideoTexture>,
+    pub tex_id: Option<egui::TextureId>,
+}
+
 pub struct ReelApp {
     pub mode: Mode,
     pub player: Option<Player>,
@@ -56,6 +64,10 @@ pub struct ReelApp {
     pub waveforms: crate::waveform::Cache,
     /// Tiled thumbnail sheets per source, for the timeline.
     pub thumbs: crate::thumbs::Cache,
+    /// Live preview players for overlay (PiP) clips, keyed by source — the
+    /// seed of the decoder pool: a second decode running under the preview
+    /// so the inset MOVES instead of showing a thumbnail.
+    pub overlay_previews: std::collections::HashMap<String, OverlayPreview>,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -94,6 +106,7 @@ pub struct ReelApp {
     pub tray_available: bool,
     /// REEL_DEBUG_OPEN=export — open the dialog once media is ready.
     debug_open_export: bool,
+    debug_autoplay: bool,
 }
 
 impl ReelApp {
@@ -118,6 +131,7 @@ impl ReelApp {
             captions_job: None,
             waveforms: crate::waveform::Cache::default(),
             thumbs: crate::thumbs::Cache::default(),
+            overlay_previews: std::collections::HashMap::new(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -139,6 +153,7 @@ impl ReelApp {
             quit_requested: false,
             tray_available: false,
             debug_open_export: false,
+            debug_autoplay: false,
         }
     }
 
@@ -159,6 +174,7 @@ impl ReelApp {
     pub fn init_integration(&mut self) {
         // Test hook: open a panel for visual verification once media lands.
         self.debug_open_export = std::env::var("REEL_DEBUG_OPEN").as_deref() == Ok("export");
+        self.debug_autoplay = std::env::var("REEL_DEBUG_PLAY").as_deref() == Ok("1");
         #[cfg(target_os = "linux")]
         {
             if let Err(e) = crate::integration::install_desktop_entry() {
@@ -408,6 +424,14 @@ impl ReelApp {
             self.debug_open_export = false;
             self.open_export();
         }
+        // REEL_DEBUG_PLAY=1 — start playback as soon as media lands, so a
+        // headless Xvfb check can watch the preview move without a keyboard.
+        if self.debug_autoplay && self.player.as_ref().is_some_and(|p| !p.playing) {
+            self.debug_autoplay = false;
+            if let Some(p) = self.player.as_mut() {
+                p.toggle_play();
+            }
+        }
         let Some(rx) = &self.opening else { return };
         match rx.try_recv() {
             Ok(Ok(p)) => {
@@ -568,7 +592,86 @@ impl ReelApp {
     /// Advance playback and, if a new frame arrived, push it to the GPU texture
     /// and (re)register it with egui so the viewport shows it. Still images
     /// upload once and stay put.
+    /// Keep the overlay (PiP) preview players in step with the timeline:
+    /// open them for the clips under the playhead, chase the main player's
+    /// play/pause, correct drift, and land their frames on GPU textures the
+    /// viewport draws. Always muted — the main player owns the audio.
+    fn sync_overlay_previews(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
+        if self.mode != Mode::Editor {
+            // Leaving the editor drops the pool; the player screen has no PiP.
+            self.overlay_previews.clear();
+            return;
+        }
+        let t = self.editor.playhead;
+        let want_playing = self.player.as_ref().is_some_and(|p| p.playing);
+        let active: Vec<(String, f64)> = self
+            .project
+            .tracks
+            .iter()
+            .filter(|tr| tr.kind == crate::edit::TrackKind::Overlay && !tr.muted)
+            .flat_map(|tr| tr.clips.iter())
+            .filter(|c| t >= c.start && t < c.end())
+            .map(|c| (c.source.clone(), c.in_point + (t - c.start) * c.speed.max(0.01) as f64))
+            .collect();
+
+        // Drop players whose clip has ended — their decoder goes with them.
+        let keep: std::collections::HashSet<&str> =
+            active.iter().map(|(s, _)| s.as_str()).collect();
+        self.overlay_previews.retain(|k, _| keep.contains(k.as_str()));
+
+        for (source, src_t) in active {
+            let entry = match self.overlay_previews.entry(source.clone()) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(v) => {
+                    let Ok(mut p) = Player::open(&source) else { continue };
+                    p.set_muted(true);
+                    p.seek(src_t);
+                    v.insert(OverlayPreview { player: p, tex: None, tex_id: None })
+                }
+            };
+            let p = &mut entry.player;
+            if p.playing != want_playing {
+                p.toggle_play();
+            }
+            // Chase, don't fight: nudge only when visibly out of step.
+            if (p.position - src_t).abs() > 0.3 {
+                p.seek(src_t);
+            }
+            p.update();
+            if p.take_dirty() {
+                if let Some(frame) = &p.current {
+                    if frame.data.len() >= (frame.width * frame.height * 4) as usize {
+                        let need_new = match &entry.tex {
+                            Some(tx) => tx.width != frame.width || tx.height != frame.height,
+                            None => true,
+                        };
+                        if need_new {
+                            entry.tex = Some(VideoTexture::new(&gpu.device, frame.width, frame.height));
+                            entry.tex_id = None;
+                        }
+                        let tex = entry.tex.as_ref().unwrap();
+                        // mpv writes a padding byte where alpha lives. The
+                        // main picture fixes that in its shader; this inset
+                        // is drawn by egui's own pipeline, which honours
+                        // alpha — so force it here. The inset is small, so
+                        // the CPU pass is a rounding error.
+                        let mut rgba = frame.data.clone();
+                        for px in rgba.chunks_exact_mut(4) {
+                            px[3] = 255;
+                        }
+                        tex.write(&gpu.queue, &rgba);
+                        match entry.tex_id {
+                            Some(id) => egui.update_registered(id, &gpu.device, &tex.view),
+                            None => entry.tex_id = Some(egui.register_texture(&gpu.device, &tex.view)),
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
+        self.sync_overlay_previews(gpu, egui);
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {
                 img.clamp_to(gpu.max_texture_dim);
@@ -1117,6 +1220,7 @@ impl ReelApp {
     /// picker is pending.
     pub fn wants_redraw(&self) -> bool {
         self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
+            || self.overlay_previews.values().any(|o| o.player.wants_redraw())
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
             || self.queue.is_busy()
             || self.captions_job.is_some()
@@ -1146,7 +1250,10 @@ impl ReelApp {
             return (None, 1.0);
         };
         let t = self.editor.playhead - clip.start;
-        (Some(clip.effects), clip.effects.fade_alpha(t, clip.duration))
+        // Keyframes evaluated HERE, in the same call the frame server makes —
+        // an animated exposure previews mid-ramp exactly as it renders.
+        let (fx, _, opacity) = clip.animated(t);
+        (Some(fx), fx.fade_alpha(t, clip.duration) * opacity)
     }
 
     /// A view of the current picture for Reel's own render pass.

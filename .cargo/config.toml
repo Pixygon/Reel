@@ -1,0 +1,7 @@
+# The test suite runs real work — ffmpeg encodes, GPU composites, live mpv
+# decodes. At one-thread-per-core all of that lands at once and the
+# timing-sensitive playback tests starve (reverse decode produced no frame
+# for 30 s under full contention). Eight ways keeps the wall-clock short and
+# the machine responsive enough to be fair.
+[env]
+RUST_TEST_THREADS = "8"
