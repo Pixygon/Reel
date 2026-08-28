@@ -321,7 +321,10 @@ fn run(
             "-f", &wav.to_string_lossy(),
             "-osrt",              // write <prefix>.srt
             "-of", &prefix,
-            "-nt",                // no timestamps printed to stdout
+            // NB: do NOT pass -nt here. It reads like "don't print
+            // timestamps to the console", but it also strips them from the
+            // SRT writer: every segment collapses into one 30-second cue,
+            // so the captions stop following the speech entirely.
         ])
         .output()
         .map_err(|e| anyhow!("caption engine failed to start: {e}"))?;
@@ -667,5 +670,21 @@ mod tests {
         for c in &st.cues {
             assert!(c.end > c.start, "zero-length cue: {c:?}");
         }
+
+        // The timings have to be REAL. Passing whisper `-nt` once collapsed
+        // every segment into a single cue running to 30 s — the words were
+        // still right, so a words-only assertion missed it completely, and
+        // captions sat on screen as one block for the whole video.
+        let fixture_len = 11.0;
+        let last = st.cues.iter().map(|c| c.end).fold(0.0, f64::max);
+        assert!(
+            last <= fixture_len + 1.0,
+            "captions run to {last:.1}s on a {fixture_len:.0}s recording — timings are not real"
+        );
+        assert!(
+            st.cues.len() > 1,
+            "expected the speech to break into several cues, got one: {:?}",
+            st.cues
+        );
     }
 }

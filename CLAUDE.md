@@ -221,6 +221,18 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   `ctx.wants_keyboard_input()`, which is what keeps typing a title from
   splitting clips — keep that guard first.
 
+- The CLI (`cli.rs`) is driven by ONE table, `COMMANDS`: it parses the
+  arguments, prints the help, and emits `reel commands --json`. Add a command
+  there and the manual updates itself — and `docs/CLI.md` is checked against
+  it by a test, so adding a verb means regenerating the reference.
+- `main` routes on argv[1]: a real FILE always wins over a verb name (so
+  `render.mp4` opens), a verb runs headless and exits, and anything else
+  errors with exit 2 — never falling through to a window, which used to hang
+  forever on a headless box.
+- CLI output discipline: results on stdout (JSON under `--json`), progress and
+  logs on stderr, so `--json 2>/dev/null | jq` is always safe. Print through
+  `say()`, which treats a closed pipe as a normal end instead of panicking.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

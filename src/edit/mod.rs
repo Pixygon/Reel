@@ -191,22 +191,51 @@ impl Project {
     }
 
     fn append(&mut self, kind: TrackKind, name: &str, source: &str, duration: f64) {
+        let at = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == kind)
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.end())
+            .fold(0.0, f64::max);
+        let id = self.add_clip(source, kind, at, 0.0, duration);
+        if let Some(c) = self.clip_mut(id) {
+            c.name = name.into();
+        }
+    }
+
+    /// Place a window of a source file on a track at an exact position, and
+    /// return the new clip's id. The general form the CLI drives; `append`
+    /// is the "put it after the last one" convenience over it.
+    pub fn add_clip(
+        &mut self,
+        source: &str,
+        kind: TrackKind,
+        at: f64,
+        in_point: f64,
+        duration: f64,
+    ) -> u64 {
+        let name = std::path::Path::new(source)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| source.to_string());
         let id = self.next_id;
         self.next_id += 1;
         if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
-            let start = track.clips.iter().map(|c| c.end()).fold(0.0, f64::max);
             track.clips.push(Clip {
                 id,
-                name: name.into(),
+                name,
                 source: source.into(),
-                start,
-                in_point: 0.0,
+                start: at.max(0.0),
+                in_point: in_point.max(0.0),
                 duration,
-                effects: Effects::default(),
+                effects: Default::default(),
                 transition_in: 0.0,
                 gain_db: 0.0,
             });
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
+        id
     }
 
     /// The caption showing at timeline time `t`, if any.

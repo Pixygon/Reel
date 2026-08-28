@@ -94,6 +94,29 @@ not the finished tool, but real, honest software you can build and run today.
 - **One binary, three platforms.** Builds to Linux + Windows via `pearl build`
   (macOS once the SDK is seeded), same as the rest of the estate's native apps.
 
+## Drive it from the command line
+
+Reel is two programs in one binary. `reel <file>` opens the player; the rest
+runs **headless** — no window, no display — so a script, a CI job or an agent
+can edit video with it:
+
+```bash
+reel new cut.reel --size 1080x1920 --fps 30
+reel add cut.reel a.mp4 --in 2 --duration 5     # 5s of a.mp4, from 0:02
+reel add cut.reel b.mp4
+reel captions cut.reel                          # transcribed on this machine
+reel title add cut.reel --text "Hello" --at 0 --duration 3
+reel music set cut.reel bed.mp3 --gain-db -14   # ducks under the speech
+reel render cut.reel out.mp4 --preset tiktok
+```
+
+Every command takes `--json` (one object on stdout, logs on stderr, non-zero
+exit on failure), and `reel commands --json` describes the whole interface —
+generated from the same table that parses the arguments, so it can't go stale.
+
+See [AGENTS.md](AGENTS.md) to get going in a minute, or
+[docs/CLI.md](docs/CLI.md) for the full reference.
+
 ## Build & run
 
 ```bash

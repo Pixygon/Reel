@@ -9,6 +9,7 @@
 mod app;
 mod captions;
 mod capture;
+mod cli;
 mod edit;
 mod effects;
 mod egui_backend;
@@ -246,31 +247,39 @@ fn main() {
         });
     }
 
-    let initial_open = std::env::args().nth(1);
-    // A media path is the only argument Reel takes — but a terminal user who
-    // types --help deserves an answer, not a window titled "--help".
-    if let Some(arg) = initial_open.as_deref() {
+    // Reel is two programs sharing one binary: a window you drop media into,
+    // and a headless tool an agent can drive. The first argument decides —
+    // and an argument that names a real file always means "open this",
+    // so a video called `render.mp4` never trips the command parser.
+    let argv: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(arg) = argv.first().map(String::as_str) {
         match arg {
-            "--help" | "-h" => {
-                println!(
-                    "Reel {} — a native media player, editor and capture tool.\n\n\
-                     Usage: reel [FILE]\n\n\
-                     FILE can be a video, an audio file, or an image (SVG included).\n\
-                     With no FILE, Reel opens ready for drag-and-drop.\n\n\
-                     Keys: Space play/pause · ←/→ seek · ,/. frame step · ↑/↓ volume\n\
-                     \x20     M mute · L loop · F fullscreen · V visualizer · E editor\n\n\
-                     Docs & downloads: https://reel.pixygon.io",
-                    env!("CARGO_PKG_VERSION")
-                );
+            "--help" | "-h" | "help" => {
+                cli::print_help();
                 return;
             }
             "--version" | "-V" => {
                 println!("reel {}", env!("CARGO_PKG_VERSION"));
                 return;
             }
+            _ if cli::is_command(arg) => {
+                std::process::exit(cli::run(&argv));
+            }
+            // Neither a command nor a file that exists. Opening a window here
+            // would mean a mistyped verb silently launches a GUI — and hangs
+            // forever on a headless machine, which is exactly where scripts
+            // and agents run.
+            _ if !std::path::Path::new(arg).exists() => {
+                eprintln!(
+                    "reel: no such file {arg:?}, and it isn't a command.\n\
+                     Try `reel help` for the command list."
+                );
+                std::process::exit(2);
+            }
             _ => {}
         }
     }
+    let initial_open = argv.into_iter().next();
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     event_loop.set_control_flow(ControlFlow::Wait);
 

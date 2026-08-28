@@ -1,0 +1,1408 @@
+//! Reel from a terminal — and, mostly, Reel from an agent.
+//!
+//! Everything the editor can do to a project, this can do without a window:
+//! build a cut, trim it, title it, caption it, score it, render it. A `.reel`
+//! project is plain JSON, so the natural way to automate Reel is to make a
+//! project and then operate on it, which is exactly what these verbs do.
+//!
+//! Two rules make it safe to drive blind:
+//!
+//! 1. **One table.** `COMMANDS` below is what parses the arguments, what
+//!    prints the help, and what `reel commands --json` emits. Documentation
+//!    cannot drift from behaviour, because they are the same data.
+//! 2. **Every verb speaks JSON.** `--json` turns any command's result — and
+//!    any failure — into one object on stdout, with a non-zero exit code on
+//!    error. Nothing has to be scraped out of prose.
+
+use crate::edit::{Music, Project, TrackKind};
+use crate::export::{self, AudioMode, Codec, Fit, Quality, Resolution};
+use anyhow::{anyhow, bail, Context, Result};
+use std::collections::{HashMap, HashSet};
+use std::io::Write;
+
+/// Print a line, treating a closed stdout as a normal end rather than a
+/// panic. `reel commands | head` is an obvious thing to type, and the
+/// default `println!` aborts with "failed printing to stdout: Broken pipe".
+fn say(s: &str) {
+    let mut out = std::io::stdout();
+    if writeln!(out, "{s}").is_err() {
+        std::process::exit(0);
+    }
+}
+
+// ── The one table ────────────────────────────────────────────────────────
+
+pub struct Flag {
+    pub name: &'static str,
+    /// `Some("SECONDS")` takes a value; `None` is a switch.
+    pub value: Option<&'static str>,
+    pub help: &'static str,
+}
+
+pub struct Cmd {
+    pub name: &'static str,
+    /// Positional arguments, in order. A trailing `?` marks it optional.
+    pub args: &'static [&'static str],
+    pub flags: &'static [Flag],
+    pub help: &'static str,
+}
+
+const F_JSON: Flag = Flag { name: "json", value: None, help: "Print the result as JSON" };
+
+/// Render options, shared by `render` and `convert`.
+const RENDER_FLAGS: &[Flag] = &[
+    Flag { name: "preset", value: Some("NAME"), help: "A social preset: see `reel presets`" },
+    Flag { name: "codec", value: Some("NAME"), help: "h264, h265, av1, vp9, remux, mp3, m4a, opus, flac, wav, png, jpeg, webp" },
+    Flag { name: "quality", value: Some("NAME"), help: "high, balanced, small, or a CRF number" },
+    Flag { name: "resolution", value: Some("HEIGHT"), help: "source, 2160, 1080, 720, 480" },
+    Flag { name: "fit", value: Some("MODE"), help: "letterbox, crop or blur (how a mismatched aspect is filled)" },
+    Flag { name: "audio", value: Some("MODE"), help: "copy (pass the source audio through) or encode" },
+    Flag { name: "no-hardware", value: None, help: "Force the software encoder" },
+    Flag { name: "overwrite", value: None, help: "Replace the output file if it exists" },
+    Flag { name: "quiet", value: None, help: "Don't print progress" },
+    F_JSON,
+];
+
+pub static COMMANDS: &[Cmd] = &[
+    Cmd {
+        name: "info",
+        args: &["MEDIA"],
+        flags: &[F_JSON],
+        help: "Duration, frame size and rate of a media file",
+    },
+    Cmd {
+        name: "new",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "name", value: Some("TEXT"), help: "Project name" },
+            Flag { name: "size", value: Some("WxH"), help: "Frame size, e.g. 1920x1080" },
+            Flag { name: "fps", value: Some("N"), help: "Frame rate" },
+            F_JSON,
+        ],
+        help: "Create an empty .reel project",
+    },
+    Cmd {
+        name: "inspect",
+        args: &["PROJECT"],
+        flags: &[F_JSON],
+        help: "The whole project — clips with their ids, titles, captions, music, markers",
+    },
+    Cmd {
+        name: "add",
+        args: &["PROJECT", "MEDIA"],
+        flags: &[
+            Flag { name: "at", value: Some("SECONDS"), help: "Timeline position (default: after the last clip)" },
+            Flag { name: "in", value: Some("SECONDS"), help: "Start point inside the source (default 0)" },
+            Flag { name: "duration", value: Some("SECONDS"), help: "How much of the source to use (default: all of it)" },
+            Flag { name: "track", value: Some("KIND"), help: "video or audio (default video)" },
+            F_JSON,
+        ],
+        help: "Append a piece of media to the timeline",
+    },
+    Cmd {
+        name: "split",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "at", value: Some("SECONDS"), help: "Where to cut" },
+            F_JSON,
+        ],
+        help: "Cut every clip that crosses a point in the timeline",
+    },
+    Cmd {
+        name: "trim",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (from `reel inspect`)" },
+            Flag { name: "in", value: Some("SECONDS"), help: "New start point inside the source" },
+            Flag { name: "duration", value: Some("SECONDS"), help: "New length" },
+            Flag { name: "start", value: Some("SECONDS"), help: "New timeline position" },
+            F_JSON,
+        ],
+        help: "Change a clip's source window or position",
+    },
+    Cmd {
+        name: "move",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "to", value: Some("SECONDS"), help: "New timeline position" },
+            F_JSON,
+        ],
+        help: "Move a clip along the timeline",
+    },
+    Cmd {
+        name: "remove",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "ripple", value: None, help: "Close the gap left behind" },
+            F_JSON,
+        ],
+        help: "Delete a clip",
+    },
+    Cmd {
+        name: "gap",
+        args: &["PROJECT"],
+        flags: &[F_JSON],
+        help: "Close every gap between clips",
+    },
+    Cmd {
+        name: "gain",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "db", value: Some("DECIBELS"), help: "Level change, e.g. -6 or 3" },
+            F_JSON,
+        ],
+        help: "Set a clip's audio level",
+    },
+    Cmd {
+        name: "effects",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "exposure", value: Some("N"), help: "1.0 = unchanged" },
+            Flag { name: "contrast", value: Some("N"), help: "1.0 = unchanged" },
+            Flag { name: "saturation", value: Some("N"), help: "1.0 = unchanged" },
+            Flag { name: "fade-in", value: Some("SECONDS"), help: "Fade up from black" },
+            Flag { name: "fade-out", value: Some("SECONDS"), help: "Fade down to black" },
+            Flag { name: "zoom", value: Some("N"), help: "1.0 = whole frame; used for reframing" },
+            Flag { name: "pan-x", value: Some("N"), help: "-1..1, where the zoom sits" },
+            Flag { name: "pan-y", value: Some("N"), help: "-1..1" },
+            Flag { name: "reset", value: None, help: "Back to no effects" },
+            F_JSON,
+        ],
+        help: "Colour, fades and reframing for one clip",
+    },
+    Cmd {
+        name: "transition",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id — the fade runs INTO this clip" },
+            Flag { name: "seconds", value: Some("SECONDS"), help: "Crossfade length (0 = hard cut)" },
+            F_JSON,
+        ],
+        help: "Crossfade from the previous clip into this one",
+    },
+    Cmd {
+        name: "title",
+        args: &["ACTION", "PROJECT"],
+        flags: &[
+            Flag { name: "text", value: Some("TEXT"), help: "The words" },
+            Flag { name: "at", value: Some("SECONDS"), help: "When it appears" },
+            Flag { name: "duration", value: Some("SECONDS"), help: "How long it stays" },
+            Flag { name: "x", value: Some("0..1"), help: "Horizontal centre, as a fraction of the frame" },
+            Flag { name: "y", value: Some("0..1"), help: "Vertical centre, as a fraction of the frame" },
+            Flag { name: "size", value: Some("0..1"), help: "Text height as a fraction of the frame" },
+            Flag { name: "color", value: Some("RRGGBB"), help: "Hex colour, e.g. ffcc00" },
+            Flag { name: "no-bold", value: None, help: "Regular weight" },
+            Flag { name: "no-outline", value: None, help: "No dark outline" },
+            Flag { name: "index", value: Some("N"), help: "Which title (for remove)" },
+            F_JSON,
+        ],
+        help: "ACTION is add, list or remove — text placed on the picture",
+    },
+    Cmd {
+        name: "music",
+        args: &["ACTION", "PROJECT", "AUDIO?"],
+        flags: &[
+            Flag { name: "gain-db", value: Some("DECIBELS"), help: "Level (default -12)" },
+            Flag { name: "no-duck", value: None, help: "Don't pull the music down under speech" },
+            Flag { name: "fade", value: Some("SECONDS"), help: "Fade in/out (default 1)" },
+            F_JSON,
+        ],
+        help: "ACTION is set or clear — a music bed under the whole edit",
+    },
+    Cmd {
+        name: "marker",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "at", value: Some("SECONDS"), help: "Where to put it" },
+            Flag { name: "remove", value: None, help: "Take it away instead" },
+            Flag { name: "list", value: None, help: "Show the markers" },
+            F_JSON,
+        ],
+        help: "Flag a position in the timeline",
+    },
+    Cmd {
+        name: "captions",
+        args: &["TARGET"],
+        flags: &[
+            Flag { name: "model", value: Some("NAME"), help: "tiny, base or small (default base)" },
+            Flag { name: "size", value: Some("N"), help: "Caption size (default 20)" },
+            Flag { name: "srt", value: Some("FILE"), help: "Also write the captions to this .srt" },
+            Flag { name: "source", value: Some("MEDIA"), help: "Transcribe this instead of the project's first clip" },
+            Flag { name: "quiet", value: None, help: "Don't print progress" },
+            F_JSON,
+        ],
+        help: "Transcribe speech locally. TARGET is a .reel project or a media file",
+    },
+    Cmd {
+        name: "render",
+        args: &["PROJECT", "OUTPUT"],
+        flags: RENDER_FLAGS,
+        help: "Render the edit — captions, titles and music included",
+    },
+    Cmd {
+        name: "convert",
+        args: &["MEDIA", "OUTPUT"],
+        flags: RENDER_FLAGS,
+        help: "Transcode one file, no project needed",
+    },
+    Cmd {
+        name: "presets",
+        args: &[],
+        flags: &[F_JSON],
+        help: "The one-click destinations (YouTube, TikTok, Reels…)",
+    },
+    Cmd {
+        name: "commands",
+        args: &[],
+        flags: &[F_JSON],
+        help: "Every command, argument and flag — the machine-readable manual",
+    },
+];
+
+// ── Parsing ──────────────────────────────────────────────────────────────
+
+/// Is this argument a command rather than a file to open?
+///
+/// Checked against a real file first, so `reel render` opens a video actually
+/// named "render" instead of complaining about missing arguments.
+pub fn is_command(arg: &str) -> bool {
+    if std::path::Path::new(arg).exists() {
+        return false;
+    }
+    COMMANDS.iter().any(|c| c.name == arg)
+}
+
+#[derive(Debug)]
+struct Parsed {
+    positional: Vec<String>,
+    values: HashMap<String, String>,
+    switches: HashSet<String>,
+}
+
+impl Parsed {
+    fn str(&self, name: &str) -> Option<&str> {
+        self.values.get(name).map(String::as_str)
+    }
+    fn on(&self, name: &str) -> bool {
+        self.switches.contains(name)
+    }
+    fn num<T: std::str::FromStr>(&self, name: &str) -> Result<Option<T>> {
+        match self.values.get(name) {
+            None => Ok(None),
+            Some(v) => v
+                .parse::<T>()
+                .map(Some)
+                .map_err(|_| anyhow!("--{name} expects a number, got {v:?}")),
+        }
+    }
+    fn need_num<T: std::str::FromStr>(&self, name: &str) -> Result<T> {
+        self.num(name)?.ok_or_else(|| anyhow!("--{name} is required"))
+    }
+    fn at(&self, i: usize) -> Result<&str> {
+        self.positional
+            .get(i)
+            .map(String::as_str)
+            .ok_or_else(|| anyhow!("missing argument"))
+    }
+}
+
+fn parse(cmd: &Cmd, args: &[String]) -> Result<Parsed> {
+    let mut p = Parsed {
+        positional: Vec::new(),
+        values: HashMap::new(),
+        switches: HashSet::new(),
+    };
+    let mut i = 0;
+    while i < args.len() {
+        let a = &args[i];
+        if let Some(name) = a.strip_prefix("--") {
+            // `--flag=value` is as valid as `--flag value`.
+            let (name, inline) = match name.split_once('=') {
+                Some((n, v)) => (n, Some(v.to_string())),
+                None => (name, None),
+            };
+            let Some(flag) = cmd.flags.iter().find(|f| f.name == name) else {
+                let known: Vec<&str> = cmd.flags.iter().map(|f| f.name).collect();
+                bail!("unknown flag --{name} for `reel {}`. Known: --{}", cmd.name, known.join(" --"));
+            };
+            match flag.value {
+                None => {
+                    if inline.is_some() {
+                        bail!("--{name} is a switch and takes no value");
+                    }
+                    p.switches.insert(name.to_string());
+                }
+                Some(_) => {
+                    let v = match inline {
+                        Some(v) => v,
+                        None => {
+                            i += 1;
+                            args.get(i)
+                                .cloned()
+                                .ok_or_else(|| anyhow!("--{name} needs a value"))?
+                        }
+                    };
+                    p.values.insert(name.to_string(), v);
+                }
+            }
+        } else {
+            p.positional.push(a.clone());
+        }
+        i += 1;
+    }
+    let required = cmd.args.iter().filter(|a| !a.ends_with('?')).count();
+    if p.positional.len() < required {
+        bail!(
+            "`reel {}` needs {}. Usage: reel {} {}",
+            cmd.name,
+            cmd.args.join(", "),
+            cmd.name,
+            cmd.args.join(" ")
+        );
+    }
+    Ok(p)
+}
+
+// ── Entry point ──────────────────────────────────────────────────────────
+
+/// Run a CLI command. Returns the process exit code.
+pub fn run(argv: &[String]) -> i32 {
+    let name = &argv[0];
+    let Some(cmd) = COMMANDS.iter().find(|c| c.name == name) else {
+        eprintln!("reel: unknown command {name:?}. Try `reel help`.");
+        return 2;
+    };
+    let rest = &argv[1..];
+    if rest.iter().any(|a| a == "--help" || a == "-h") {
+        print_command_help(cmd);
+        return 0;
+    }
+    let json = rest.iter().any(|a| a == "--json");
+
+    let result = parse(cmd, rest).and_then(|p| dispatch(cmd.name, &p));
+    match result {
+        Ok(out) => {
+            if json {
+                say(&serde_json::to_string_pretty(&out.data).unwrap_or_default());
+            } else if !out.text.is_empty() {
+                say(&out.text);
+            }
+            0
+        }
+        Err(e) => {
+            if json {
+                let obj = serde_json::json!({ "ok": false, "error": e.to_string() });
+                say(&serde_json::to_string_pretty(&obj).unwrap_or_default());
+            } else {
+                eprintln!("reel: {e}");
+            }
+            1
+        }
+    }
+}
+
+/// What a command produced: a line for a human, an object for a machine.
+struct Output {
+    text: String,
+    data: serde_json::Value,
+}
+
+impl Output {
+    fn new(text: impl Into<String>, data: serde_json::Value) -> Self {
+        let mut data = data;
+        if let Some(o) = data.as_object_mut() {
+            o.insert("ok".into(), serde_json::Value::Bool(true));
+        }
+        Self { text: text.into(), data }
+    }
+}
+
+fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
+    match name {
+        "info" => cmd_info(p),
+        "new" => cmd_new(p),
+        "inspect" => cmd_inspect(p),
+        "add" => cmd_add(p),
+        "split" => cmd_split(p),
+        "trim" => cmd_trim(p),
+        "move" => cmd_move(p),
+        "remove" => cmd_remove(p),
+        "gap" => cmd_gap(p),
+        "gain" => cmd_gain(p),
+        "effects" => cmd_effects(p),
+        "transition" => cmd_transition(p),
+        "title" => cmd_title(p),
+        "music" => cmd_music(p),
+        "marker" => cmd_marker(p),
+        "captions" => cmd_captions(p),
+        "render" => cmd_render(p),
+        "convert" => cmd_convert(p),
+        "presets" => cmd_presets(),
+        "commands" => Ok(cmd_commands()),
+        _ => bail!("unimplemented command {name}"),
+    }
+}
+
+// ── Help ─────────────────────────────────────────────────────────────────
+
+pub fn print_help() {
+    say(&format!(
+        "Reel {} — media player, editor and capture tool.\n\n\
+         Usage:\n  reel [FILE]              open it in the player\n  \
+         reel COMMAND [ARGS]      work without a window\n",
+        env!("CARGO_PKG_VERSION")
+    ));
+    let width = COMMANDS.iter().map(|c| c.name.len()).max().unwrap_or(8);
+    say("Commands:");
+    for c in COMMANDS {
+        say(&format!("  {:width$}  {}", c.name, c.help));
+    }
+    say(
+        "\nEvery command takes --json, which prints one object and exits\n\
+         non-zero on failure. `reel commands --json` describes them all.\n\n\
+         reel COMMAND --help    detail for one command\n\
+         Docs: https://reel.pixygon.io/cli",
+    );
+}
+
+fn print_command_help(c: &Cmd) {
+    say(&format!("reel {} {}\n\n{}\n", c.name, c.args.join(" "), c.help));
+    if !c.flags.is_empty() {
+        say("Options:");
+        let w = c
+            .flags
+            .iter()
+            .map(|f| f.name.len() + f.value.map(|v| v.len() + 1).unwrap_or(0))
+            .max()
+            .unwrap_or(8);
+        for f in c.flags {
+            let lhs = match f.value {
+                Some(v) => format!("{} {v}", f.name),
+                None => f.name.to_string(),
+            };
+            say(&format!("  --{lhs:w$}  {}", f.help));
+        }
+    }
+}
+
+fn cmd_commands() -> Output {
+    let cmds: Vec<serde_json::Value> = COMMANDS
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "help": c.help,
+                "args": c.args,
+                "flags": c.flags.iter().map(|f| serde_json::json!({
+                    "name": f.name,
+                    "takes_value": f.value.is_some(),
+                    "value": f.value,
+                    "help": f.help,
+                })).collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    let text = {
+        let mut s = String::new();
+        for c in COMMANDS {
+            s.push_str(&format!("reel {} {}\n    {}\n", c.name, c.args.join(" "), c.help));
+        }
+        s.trim_end().to_string()
+    };
+    Output::new(
+        text,
+        serde_json::json!({ "version": env!("CARGO_PKG_VERSION"), "commands": cmds }),
+    )
+}
+
+// ── Project helpers ──────────────────────────────────────────────────────
+
+fn load(path: &str) -> Result<Project> {
+    Project::load(path).with_context(|| format!("could not read the project {path}"))
+}
+
+fn save(p: &Project, path: &str) -> Result<()> {
+    p.save(path).with_context(|| format!("could not write the project {path}"))
+}
+
+fn clip_json(c: &crate::edit::Clip, kind: TrackKind) -> serde_json::Value {
+    serde_json::json!({
+        "id": c.id,
+        "name": c.name,
+        "source": c.source,
+        "track": if kind == TrackKind::Video { "video" } else { "audio" },
+        "start": c.start,
+        "duration": c.duration,
+        "in_point": c.in_point,
+        "end": c.end(),
+        "gain_db": c.gain_db,
+        "transition_in": c.transition_in,
+    })
+}
+
+fn find_clip_mut<'a>(p: &'a mut Project, id: u64) -> Result<&'a mut crate::edit::Clip> {
+    p.tracks
+        .iter_mut()
+        .flat_map(|t| t.clips.iter_mut())
+        .find(|c| c.id == id)
+        .ok_or_else(|| anyhow!("no clip with id {id} — run `reel inspect` to see the ids"))
+}
+
+// ── Commands ─────────────────────────────────────────────────────────────
+
+fn cmd_info(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let info = crate::video::decoder::probe(path)?;
+    Ok(Output::new(
+        format!(
+            "{path}\n  {}×{} @ {:.3} fps\n  {:.3}s",
+            info.width, info.height, info.fps, info.duration
+        ),
+        serde_json::json!({
+            "path": path,
+            "width": info.width,
+            "height": info.height,
+            "fps": info.fps,
+            "duration": info.duration,
+        }),
+    ))
+}
+
+fn cmd_new(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = Project::default();
+    if let Some(n) = p.str("name") {
+        proj.name = n.to_string();
+    }
+    if let Some(size) = p.str("size") {
+        let (w, h) = size
+            .split_once(['x', 'X'])
+            .ok_or_else(|| anyhow!("--size wants WxH, e.g. 1920x1080"))?;
+        proj.width = w.trim().parse().map_err(|_| anyhow!("bad width in --size"))?;
+        proj.height = h.trim().parse().map_err(|_| anyhow!("bad height in --size"))?;
+    }
+    if let Some(fps) = p.num::<f64>("fps")? {
+        proj.fps = fps;
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Created {path} — {}×{} @ {} fps", proj.width, proj.height, proj.fps),
+        serde_json::json!({ "project": path, "width": proj.width, "height": proj.height, "fps": proj.fps }),
+    ))
+}
+
+fn cmd_inspect(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let proj = load(path)?;
+    let clips: Vec<serde_json::Value> = proj
+        .tracks
+        .iter()
+        .flat_map(|t| t.clips.iter().map(move |c| clip_json(c, t.kind)))
+        .collect();
+    let duration = crate::edit::render_duration(&proj.export_segments());
+    let text = {
+        let mut s = format!(
+            "{} — {}×{} @ {} fps · {:.2}s\n",
+            proj.name, proj.width, proj.height, proj.fps, duration
+        );
+        for t in &proj.tracks {
+            for c in &t.clips {
+                s.push_str(&format!(
+                    "  [{}] {} {:.2}s–{:.2}s (source {:.2}s+) {}\n",
+                    c.id,
+                    c.name,
+                    c.start,
+                    c.end(),
+                    c.in_point,
+                    if t.kind == TrackKind::Video { "V" } else { "A" }
+                ));
+            }
+        }
+        if !proj.titles.is_empty() {
+            s.push_str(&format!("  {} title(s)\n", proj.titles.len()));
+        }
+        if !proj.captions.is_empty() {
+            s.push_str(&format!("  {} caption(s)\n", proj.captions.len()));
+        }
+        if proj.music.is_some() {
+            s.push_str("  music bed\n");
+        }
+        s.trim_end().to_string()
+    };
+    Ok(Output::new(
+        text,
+        serde_json::json!({
+            "project": path,
+            "name": proj.name,
+            "width": proj.width,
+            "height": proj.height,
+            "fps": proj.fps,
+            "duration": duration,
+            "clips": clips,
+            "titles": proj.titles,
+            "captions": proj.captions,
+            "caption_size": proj.caption_size,
+            "music": proj.music,
+            "markers": proj.markers,
+        }),
+    ))
+}
+
+fn cmd_add(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let media = p.at(1)?;
+    if !std::path::Path::new(media).exists() {
+        bail!("no such media file: {media}");
+    }
+    let mut proj = load(path)?;
+    let kind = match p.str("track").unwrap_or("video") {
+        "video" | "v" => TrackKind::Video,
+        "audio" | "a" => TrackKind::Audio,
+        other => bail!("--track wants video or audio, got {other:?}"),
+    };
+
+    // Default the length to the whole source, which needs a probe.
+    let src_duration = crate::video::decoder::probe(media).map(|i| i.duration).unwrap_or(0.0);
+    let in_point = p.num::<f64>("in")?.unwrap_or(0.0);
+    let duration = match p.num::<f64>("duration")? {
+        Some(d) => d,
+        None => (src_duration - in_point).max(0.0),
+    };
+    if duration <= 0.0 {
+        bail!("could not work out a duration for {media} — pass --duration");
+    }
+    // Default position: after whatever is already on that track.
+    let at = match p.num::<f64>("at")? {
+        Some(t) => t,
+        None => proj
+            .tracks
+            .iter()
+            .filter(|t| t.kind == kind)
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.end())
+            .fold(0.0, f64::max),
+    };
+
+    let id = proj.add_clip(media, kind, at, in_point, duration);
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Added clip {id} at {at:.2}s ({duration:.2}s of {media})"),
+        serde_json::json!({ "clip": id, "start": at, "duration": duration, "in_point": in_point }),
+    ))
+}
+
+fn cmd_split(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let at: f64 = p.need_num("at")?;
+    let mut proj = load(path)?;
+    let n = proj.split_at(at);
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Split {n} clip(s) at {at:.2}s"),
+        serde_json::json!({ "split": n, "at": at }),
+    ))
+}
+
+fn cmd_trim(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let (in_pt, dur, start) = (
+        p.num::<f64>("in")?,
+        p.num::<f64>("duration")?,
+        p.num::<f64>("start")?,
+    );
+    if in_pt.is_none() && dur.is_none() && start.is_none() {
+        bail!("nothing to change — pass --in, --duration or --start");
+    }
+    let mut proj = load(path)?;
+    {
+        let c = find_clip_mut(&mut proj, id)?;
+        if let Some(v) = in_pt {
+            c.in_point = v.max(0.0);
+        }
+        if let Some(v) = dur {
+            if v <= 0.0 {
+                bail!("--duration must be greater than zero");
+            }
+            c.duration = v;
+        }
+        if let Some(v) = start {
+            c.start = v.max(0.0);
+        }
+    }
+    let snapshot = proj
+        .tracks
+        .iter()
+        .flat_map(|t| t.clips.iter().map(move |c| clip_json(c, t.kind)))
+        .find(|c| c["id"] == id);
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Trimmed clip {id}"),
+        serde_json::json!({ "clip": snapshot }),
+    ))
+}
+
+fn cmd_move(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let to: f64 = p.need_num("to")?;
+    let mut proj = load(path)?;
+    find_clip_mut(&mut proj, id)?.start = to.max(0.0);
+    for t in &mut proj.tracks {
+        t.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Moved clip {id} to {to:.2}s"),
+        serde_json::json!({ "clip": id, "start": to }),
+    ))
+}
+
+fn cmd_remove(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let closed = if p.on("ripple") {
+        let secs = proj.ripple_delete(id);
+        if secs <= 0.0 {
+            bail!("no clip with id {id}");
+        }
+        secs
+    } else {
+        if !proj.delete_clip(id) {
+            bail!("no clip with id {id}");
+        }
+        0.0
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Removed clip {id}{}", if closed > 0.0 { format!(", closed {closed:.2}s") } else { String::new() }),
+        serde_json::json!({ "clip": id, "closed": closed }),
+    ))
+}
+
+fn cmd_gap(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    let closed = proj.close_all_gaps();
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Closed {closed:.2}s of gaps"),
+        serde_json::json!({ "closed": closed }),
+    ))
+}
+
+fn cmd_gain(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let db: f32 = p.need_num("db")?;
+    let mut proj = load(path)?;
+    find_clip_mut(&mut proj, id)?.gain_db = db;
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Clip {id} at {db:+.1} dB"),
+        serde_json::json!({ "clip": id, "gain_db": db }),
+    ))
+}
+
+fn cmd_effects(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let fx = {
+        let c = find_clip_mut(&mut proj, id)?;
+        if p.on("reset") {
+            c.effects = crate::effects::Effects::default();
+        }
+        if let Some(v) = p.num::<f32>("exposure")? {
+            c.effects.exposure = v;
+        }
+        if let Some(v) = p.num::<f32>("contrast")? {
+            c.effects.contrast = v;
+        }
+        if let Some(v) = p.num::<f32>("saturation")? {
+            c.effects.saturation = v;
+        }
+        if let Some(v) = p.num::<f32>("fade-in")? {
+            c.effects.fade_in = v as f64;
+        }
+        if let Some(v) = p.num::<f32>("fade-out")? {
+            c.effects.fade_out = v as f64;
+        }
+        if let Some(v) = p.num::<f32>("zoom")? {
+            c.effects.zoom = v;
+        }
+        if let Some(v) = p.num::<f32>("pan-x")? {
+            c.effects.pan_x = v;
+        }
+        if let Some(v) = p.num::<f32>("pan-y")? {
+            c.effects.pan_y = v;
+        }
+        c.effects
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Updated the look of clip {id}"),
+        serde_json::json!({ "clip": id, "effects": fx }),
+    ))
+}
+
+fn cmd_transition(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let secs: f64 = p.need_num("seconds")?;
+    if secs < 0.0 {
+        bail!("--seconds cannot be negative");
+    }
+    let mut proj = load(path)?;
+    find_clip_mut(&mut proj, id)?.transition_in = secs;
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Clip {id} now crossfades in over {secs:.2}s"),
+        serde_json::json!({ "clip": id, "transition_in": secs }),
+    ))
+}
+
+fn parse_hex(s: &str) -> Result<[u8; 3]> {
+    let s = s.trim_start_matches('#');
+    if s.len() != 6 {
+        bail!("--color wants six hex digits, e.g. ffcc00");
+    }
+    let byte = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).map_err(|_| anyhow!("bad hex in --color"));
+    Ok([byte(0)?, byte(2)?, byte(4)?])
+}
+
+fn cmd_title(p: &Parsed) -> Result<Output> {
+    let action = p.at(0)?.to_string();
+    let path = p.at(1)?;
+    let mut proj = load(path)?;
+    match action.as_str() {
+        "add" => {
+            let text = p.str("text").ok_or_else(|| anyhow!("--text is required"))?;
+            let at = p.num::<f64>("at")?.unwrap_or(0.0);
+            let dur = p.num::<f64>("duration")?.unwrap_or(3.0);
+            let t = crate::titles::Title {
+                text: text.to_string(),
+                start: at,
+                end: at + dur.max(0.05),
+                x: p.num::<f32>("x")?.unwrap_or(0.5),
+                y: p.num::<f32>("y")?.unwrap_or(0.5),
+                size: p.num::<f32>("size")?.unwrap_or(0.09),
+                color: match p.str("color") {
+                    Some(c) => parse_hex(c)?,
+                    None => [255, 255, 255],
+                },
+                bold: !p.on("no-bold"),
+                outline: !p.on("no-outline"),
+            };
+            proj.titles.push(t.clone());
+            let index = proj.titles.len() - 1;
+            save(&proj, path)?;
+            Ok(Output::new(
+                format!("Added title {index}: {:?} at {at:.2}s", t.text),
+                serde_json::json!({ "index": index, "title": t }),
+            ))
+        }
+        "list" => {
+            let text = proj
+                .titles
+                .iter()
+                .enumerate()
+                .map(|(i, t)| format!("  [{i}] {:?} {:.2}s–{:.2}s", t.text, t.start, t.end))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(Output::new(text, serde_json::json!({ "titles": proj.titles })))
+        }
+        "remove" => {
+            let i: usize = p.need_num("index")?;
+            if i >= proj.titles.len() {
+                bail!("no title at index {i} ({} titles)", proj.titles.len());
+            }
+            let gone = proj.titles.remove(i);
+            save(&proj, path)?;
+            Ok(Output::new(
+                format!("Removed title {i}: {:?}", gone.text),
+                serde_json::json!({ "removed": gone }),
+            ))
+        }
+        other => bail!("title ACTION is add, list or remove — got {other:?}"),
+    }
+}
+
+fn cmd_music(p: &Parsed) -> Result<Output> {
+    let action = p.at(0)?.to_string();
+    let path = p.at(1)?;
+    let mut proj = load(path)?;
+    match action.as_str() {
+        "set" => {
+            let audio = p.at(2).map_err(|_| anyhow!("`reel music set` needs an audio file"))?;
+            if !std::path::Path::new(audio).exists() {
+                bail!("no such audio file: {audio}");
+            }
+            let m = Music {
+                source: audio.to_string(),
+                start: 0.0,
+                gain_db: p.num::<f32>("gain-db")?.unwrap_or(-12.0),
+                duck: !p.on("no-duck"),
+                fade: p.num::<f64>("fade")?.unwrap_or(1.0),
+            };
+            proj.music = Some(m.clone());
+            save(&proj, path)?;
+            Ok(Output::new(
+                format!(
+                    "Music bed set: {audio} at {:+.1} dB{}",
+                    m.gain_db,
+                    if m.duck { ", ducking under speech" } else { "" }
+                ),
+                serde_json::json!({ "music": m }),
+            ))
+        }
+        "clear" => {
+            proj.music = None;
+            save(&proj, path)?;
+            Ok(Output::new("Music bed removed", serde_json::json!({ "music": null })))
+        }
+        other => bail!("music ACTION is set or clear — got {other:?}"),
+    }
+}
+
+fn cmd_marker(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    if p.on("list") {
+        let text = proj
+            .markers
+            .iter()
+            .map(|m| format!("  {m:.2}s"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Ok(Output::new(text, serde_json::json!({ "markers": proj.markers })));
+    }
+    let at: f64 = p.need_num("at")?;
+    if p.on("remove") {
+        let before = proj.markers.len();
+        proj.markers.retain(|m| (m - at).abs() > 0.05);
+        if proj.markers.len() == before {
+            bail!("no marker near {at:.2}s");
+        }
+    } else {
+        proj.markers.push(at);
+        proj.markers.sort_by(|a, b| a.total_cmp(b));
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("{} marker at {at:.2}s", if p.on("remove") { "Removed" } else { "Added" }),
+        serde_json::json!({ "markers": proj.markers }),
+    ))
+}
+
+fn cmd_captions(p: &Parsed) -> Result<Output> {
+    let target = p.at(0)?.to_string();
+    let quiet = p.on("quiet") || p.on("json");
+    let model = match p.str("model").unwrap_or("base") {
+        "tiny" => crate::captions::Model::TinyEn,
+        "base" => crate::captions::Model::BaseEn,
+        "small" => crate::captions::Model::SmallEn,
+        other => bail!("--model wants tiny, base or small — got {other:?}"),
+    };
+
+    // A project caption run transcribes a clip and maps the cues through the
+    // edit; a bare media file just gets transcribed.
+    let is_project = target.ends_with(".reel");
+    let mut proj = if is_project { Some(load(&target)?) } else { None };
+    let source = match p.str("source") {
+        Some(s) => s.to_string(),
+        None => match &proj {
+            Some(pr) => pr
+                .tracks
+                .iter()
+                .flat_map(|t| t.clips.iter())
+                .next()
+                .map(|c| c.source.clone())
+                .ok_or_else(|| anyhow!("the project has no clips — add one, or pass --source"))?,
+            None => target.clone(),
+        },
+    };
+
+    let job = crate::captions::start(&source, model);
+    let mut last = String::new();
+    let cues = loop {
+        let st = job.state();
+        if !quiet && st.stage != last {
+            eprintln!("{}", st.stage);
+            last = st.stage.clone();
+        }
+        if st.finished {
+            if let Some(e) = st.error {
+                bail!("{e}");
+            }
+            break st.cues;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    };
+
+    if let Some(srt) = p.str("srt") {
+        std::fs::write(srt, crate::captions::to_srt(&cues))
+            .with_context(|| format!("could not write {srt}"))?;
+    }
+
+    let applied = match proj.as_mut() {
+        Some(pr) => {
+            let mut mapped = Vec::new();
+            for cue in &cues {
+                for (start, end) in pr.map_source_window(&source, cue.start, cue.end) {
+                    mapped.push(crate::captions::Cue { start, end, text: cue.text.clone() });
+                }
+            }
+            mapped.sort_by(|a, b| a.start.total_cmp(&b.start));
+            let n = mapped.len();
+            pr.captions = mapped;
+            if let Some(sz) = p.num::<u32>("size")? {
+                pr.caption_size = sz;
+            }
+            save(pr, &target)?;
+            n
+        }
+        None => 0,
+    };
+
+    Ok(Output::new(
+        if is_project {
+            format!("{applied} caption(s) written into {target}")
+        } else {
+            format!("{} caption(s) transcribed", cues.len())
+        },
+        serde_json::json!({ "cues": cues, "applied": applied, "source": source }),
+    ))
+}
+
+// ── Rendering ────────────────────────────────────────────────────────────
+
+fn settings_from(p: &Parsed, default_codec: Codec) -> Result<export::ExportSettings> {
+    let mut s = export::ExportSettings {
+        codec: default_codec,
+        quality: Quality::Balanced,
+        resolution: Resolution::Source,
+        audio: AudioMode::Encode { kbps: 160 },
+        hardware: !p.on("no-hardware"),
+        target: None,
+        fit: Fit::Letterbox,
+    };
+    if let Some(name) = p.str("preset") {
+        let found = export::Preset::ALL
+            .iter()
+            .find(|pr| pr.name.eq_ignore_ascii_case(name) || pr.name.to_lowercase().replace([' ', '/'], "") == name.to_lowercase().replace([' ', '/', '-'], ""))
+            .ok_or_else(|| {
+                let names: Vec<&str> = export::Preset::ALL.iter().map(|p| p.name).collect();
+                anyhow!("unknown preset {name:?}. Try one of: {}", names.join(", "))
+            })?;
+        s.target = Some((found.w, found.h));
+        s.fit = found.fit;
+        s.codec = found.codec;
+        s.quality = found.quality;
+    }
+    if let Some(c) = p.str("codec") {
+        s.codec = match c.to_lowercase().as_str() {
+            "h264" | "x264" | "avc" => Codec::H264,
+            "h265" | "hevc" | "x265" => Codec::H265,
+            "av1" => Codec::Av1,
+            "vp9" | "webm" => Codec::Vp9,
+            "remux" | "copy" => Codec::Remux,
+            "mp3" => Codec::Mp3,
+            "m4a" | "aac" => Codec::M4a,
+            "opus" => Codec::OpusAudio,
+            "flac" => Codec::Flac,
+            "wav" => Codec::Wav,
+            "png" => Codec::Png,
+            "jpeg" | "jpg" => Codec::Jpeg,
+            "webp" => Codec::WebpImage,
+            other => bail!("unknown codec {other:?}"),
+        };
+    }
+    if let Some(q) = p.str("quality") {
+        s.quality = match q.to_lowercase().as_str() {
+            "high" | "best" => Quality::High,
+            "balanced" | "medium" => Quality::Balanced,
+            "small" | "low" => Quality::Small,
+            n => Quality::Custom(
+                n.parse::<u8>().map_err(|_| anyhow!("--quality wants high, balanced, small or a CRF number"))?,
+            ),
+        };
+    }
+    if let Some(r) = p.str("resolution") {
+        s.resolution = match r.to_lowercase().trim_end_matches('p') {
+            "source" | "native" => Resolution::Source,
+            "2160" | "4k" => Resolution::H2160,
+            "1080" => Resolution::H1080,
+            "720" => Resolution::H720,
+            "480" => Resolution::H480,
+            other => bail!("--resolution wants source, 2160, 1080, 720 or 480 — got {other:?}"),
+        };
+    }
+    if let Some(f) = p.str("fit") {
+        s.fit = match f.to_lowercase().as_str() {
+            "letterbox" | "fit" | "bars" => Fit::Letterbox,
+            "crop" | "fill" => Fit::Crop,
+            "blur" | "blurred" => Fit::Blur,
+            other => bail!("--fit wants letterbox, crop or blur — got {other:?}"),
+        };
+    }
+    if let Some(a) = p.str("audio") {
+        s.audio = match a.to_lowercase().as_str() {
+            "copy" | "keep" | "passthrough" => AudioMode::Copy,
+            "encode" | "convert" | "aac" => AudioMode::Encode { kbps: 160 },
+            other => bail!("--audio wants copy or encode — got {other:?}"),
+        };
+    }
+    Ok(s)
+}
+
+/// Drive an export job to completion, reporting progress on stderr so stdout
+/// stays clean for the result.
+fn await_job(job: export::ExportJob, quiet: bool) -> Result<()> {
+    let mut last = -1i32;
+    loop {
+        let st = job.state();
+        if st.finished {
+            if let Some(e) = st.error {
+                bail!("{e}");
+            }
+            if !quiet {
+                eprintln!("100%");
+            }
+            return Ok(());
+        }
+        let pct = (st.fraction * 100.0) as i32;
+        if !quiet && pct != last && pct % 5 == 0 {
+            eprintln!("{pct}%{}", if st.speed > 0.0 { format!("  ({:.1}× realtime)", st.speed) } else { String::new() });
+            last = pct;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+fn prepare_output(path: &str, overwrite: bool) -> Result<()> {
+    if std::path::Path::new(path).exists() {
+        if !overwrite {
+            bail!("{path} already exists — pass --overwrite to replace it");
+        }
+        std::fs::remove_file(path).with_context(|| format!("could not replace {path}"))?;
+    }
+    Ok(())
+}
+
+fn cmd_render(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let out = p.at(1)?;
+    let proj = load(path)?;
+    let segments = proj.export_segments();
+    if segments.is_empty() {
+        bail!("the timeline is empty — add a clip first");
+    }
+    let settings = settings_from(p, Codec::H264)?;
+    prepare_output(out, p.on("overwrite"))?;
+
+    let job = export::start_timeline_with_captions(
+        &segments,
+        out,
+        &settings,
+        (proj.width, proj.height, proj.fps),
+        export::Overlays {
+            captions: &proj.captions,
+            caption_size: proj.caption_size,
+            titles: &proj.titles,
+            music: proj.music.as_ref(),
+        },
+    )?;
+    await_job(job, p.on("quiet") || p.on("json"))?;
+    let duration = crate::edit::render_duration(&segments);
+    Ok(Output::new(
+        format!("Rendered {out} — {:.2}s from {} clip(s)", duration, segments.len()),
+        serde_json::json!({
+            "output": out,
+            "duration": duration,
+            "clips": segments.len(),
+            "captions": proj.captions.len(),
+            "titles": proj.titles.len(),
+        }),
+    ))
+}
+
+fn cmd_convert(p: &Parsed) -> Result<Output> {
+    let input = p.at(0)?;
+    let out = p.at(1)?;
+    if !std::path::Path::new(input).exists() {
+        bail!("no such file: {input}");
+    }
+    let duration = crate::video::decoder::probe(input).map(|i| i.duration).unwrap_or(0.0);
+    let settings = settings_from(p, Codec::H264)?;
+    prepare_output(out, p.on("overwrite"))?;
+    let job = export::start(input, out, &settings, duration)?;
+    await_job(job, p.on("quiet") || p.on("json"))?;
+    Ok(Output::new(
+        format!("Wrote {out}"),
+        serde_json::json!({ "output": out, "input": input, "duration": duration }),
+    ))
+}
+
+fn cmd_presets() -> Result<Output> {
+    let text = export::Preset::ALL
+        .iter()
+        .map(|p| format!("  {:16} {}", p.name, p.note))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let data: Vec<serde_json::Value> = export::Preset::ALL
+        .iter()
+        .map(|p| {
+            serde_json::json!({
+                "name": p.name,
+                "note": p.note,
+                "width": p.w,
+                "height": p.h,
+            })
+        })
+        .collect();
+    Ok(Output::new(text, serde_json::json!({ "presets": data })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse_for(name: &str, args: &[&str]) -> Result<Parsed> {
+        let cmd = COMMANDS.iter().find(|c| c.name == name).unwrap();
+        let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
+        parse(cmd, &owned)
+    }
+
+    #[test]
+    fn flags_parse_in_both_spellings() {
+        let p = parse_for("add", &["p.reel", "a.mp4", "--at", "3", "--duration=2.5"]).unwrap();
+        assert_eq!(p.positional, vec!["p.reel", "a.mp4"]);
+        assert_eq!(p.num::<f64>("at").unwrap(), Some(3.0));
+        assert_eq!(p.num::<f64>("duration").unwrap(), Some(2.5));
+    }
+
+    #[test]
+    fn bad_input_is_refused_rather_than_guessed() {
+        // An unknown flag is a typo, and silently ignoring it would render
+        // something other than what was asked for.
+        let e = parse_for("add", &["p.reel", "a.mp4", "--start", "3"]).unwrap_err();
+        assert!(e.to_string().contains("unknown flag --start"), "{e}");
+
+        // A missing positional names what it wanted.
+        let e = parse_for("add", &["p.reel"]).unwrap_err();
+        assert!(e.to_string().contains("MEDIA"), "{e}");
+
+        // A value flag with nothing after it.
+        let e = parse_for("add", &["p.reel", "a.mp4", "--at"]).unwrap_err();
+        assert!(e.to_string().contains("needs a value"), "{e}");
+
+        // A switch given a value.
+        let e = parse_for("remove", &["p.reel", "--ripple=yes"]).unwrap_err();
+        assert!(e.to_string().contains("takes no value"), "{e}");
+
+        // Numbers are validated, not silently zeroed.
+        let p = parse_for("split", &["p.reel", "--at", "abc"]).unwrap();
+        assert!(p.num::<f64>("at").is_err());
+    }
+
+    /// A file is not a command, even when it is named like one — otherwise
+    /// double-clicking a video called "render.mp4" would print help.
+    #[test]
+    fn an_existing_file_always_wins_over_a_verb_name() {
+        assert!(is_command("render"));
+        let dir = std::env::temp_dir().join(format!("reel-cli-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("render");
+        std::fs::write(&f, b"x").unwrap();
+        assert!(!is_command(&f.to_string_lossy()));
+        let _ = std::fs::remove_file(&f);
+        assert!(!is_command("definitely-not-a-command"));
+    }
+
+    /// The manual is generated from the parser's own table, so every command
+    /// it advertises must actually dispatch.
+    #[test]
+    fn every_documented_command_is_implemented() {
+        for c in COMMANDS {
+            let p = Parsed {
+                positional: Vec::new(),
+                values: HashMap::new(),
+                switches: HashSet::new(),
+            };
+            let e = dispatch(c.name, &p);
+            if let Err(e) = e {
+                assert!(
+                    !e.to_string().starts_with("unimplemented"),
+                    "`reel {}` is documented but not implemented",
+                    c.name
+                );
+            }
+        }
+        // And no command is missing its help text or duplicated.
+        let mut seen = HashSet::new();
+        for c in COMMANDS {
+            assert!(!c.help.is_empty(), "{} has no help", c.name);
+            assert!(seen.insert(c.name), "{} is listed twice", c.name);
+        }
+    }
+
+    #[test]
+    fn presets_and_codecs_resolve_by_the_names_people_type() {
+        let p = parse_for("render", &["p.reel", "o.mp4", "--preset", "tiktok"]).unwrap();
+        let s = settings_from(&p, Codec::H264).unwrap();
+        assert_eq!(s.target, Some((1080, 1920)));
+
+        let p = parse_for("convert", &["a.mp4", "b.webm", "--codec", "vp9", "--quality", "18"]).unwrap();
+        let s = settings_from(&p, Codec::H264).unwrap();
+        assert_eq!(s.codec, Codec::Vp9);
+        assert_eq!(s.quality, Quality::Custom(18));
+
+        let p = parse_for("convert", &["a.mp4", "b.mp4", "--preset", "nope"]).unwrap();
+        assert!(settings_from(&p, Codec::H264).is_err());
+    }
+
+    /// The whole CLI exists so a machine can drive Reel. That breaks the
+    /// moment a command can block on a window, so every verb must be
+    /// answerable without a display — and anything that ISN'T a verb must be
+    /// refused rather than falling through to the GUI (a mistyped command
+    /// used to open a window and hang forever on a headless box).
+    #[test]
+    fn nothing_here_can_fall_through_to_a_window() {
+        for c in COMMANDS {
+            assert!(is_command(c.name), "`{}` is not routed to the CLI", c.name);
+        }
+        for typo in ["rendr", "bogus", "--nope", "inspec"] {
+            assert!(!is_command(typo), "{typo:?} must not be treated as a command");
+        }
+    }
+
+    /// The docs are for agents, so a command that exists but is undocumented
+    /// is worse than useless — it's a capability nobody can find. Adding a
+    /// command therefore has to mean adding it to the reference.
+    #[test]
+    fn every_command_appears_in_the_written_docs() {
+        let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/CLI.md"))
+            .expect("docs/CLI.md should exist");
+        for c in COMMANDS {
+            assert!(
+                docs.contains(&format!("### `reel {}", c.name)),
+                "`reel {}` is missing from docs/CLI.md — regenerate it",
+                c.name
+            );
+        }
+    }
+
+    #[test]
+    fn colours_are_read_as_hex() {
+        assert_eq!(parse_hex("ffcc00").unwrap(), [255, 204, 0]);
+        assert_eq!(parse_hex("#000000").unwrap(), [0, 0, 0]);
+        assert!(parse_hex("fff").is_err());
+        assert!(parse_hex("gggggg").is_err());
+    }
+}
