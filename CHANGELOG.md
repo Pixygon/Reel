@@ -4,6 +4,14 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.19.0] — 2026-08-28
+
+### Added
+- Added a render queue: line up exports for multiple platforms with different settings, hit "Queue", and keep going — Reel renders them one after another while you walk away. The export dialog shows the currently rendering job, what's waiting, and a result for each finished export, with options to cancel everything or clear finished jobs.
+- Added clip crossfades: set a crossfade duration on any clip to smoothly transition from the one before it. The timeline shows a visual wedge marking the overlap, and the exported video's duration correctly reflects the shortened, overlapped edit.
+- Added reframing (zoom and pan) to clip effects, making it easy to punch into a landscape shot and pan the visible window so it fills a vertical or square frame without blurred bars on the sides. Adjustments are visible live in the preview and match exactly what's rendered on export.
+
+
 ## [0.18.0] — 2026-08-27
 
 ### Added
