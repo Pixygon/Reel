@@ -4,6 +4,13 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.34.0] — 2026-08-28
+
+### Added
+- New Tighten feature (the ✂ Tighten silence button, or `reel tighten` on the CLI) cuts the dead air out of your edit in one click — the classic podcast jump-cut pass. It scans each clip's own audio to find quiet spans, trims them out while keeping a little breathing room around your words so nothing clips, and closes the timeline up behind every cut. Fully undoable, with `--threshold`, `--min-gap`, and `--pad` flags on the CLI for fine control. _(2469c91)_
+- Multi-select on the timeline: shift-click to build a selection of clips. Dragging or deleting the selection now acts on the whole group at once — a group move keeps every clip's relative position, and delete removes them all together. _(2469c91)_
+
+
 ## [0.33.0] — 2026-08-28
 
 ### Added
