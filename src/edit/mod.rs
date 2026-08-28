@@ -137,6 +137,10 @@ pub struct Project {
     /// An optional music bed under the whole edit.
     #[serde(default)]
     pub music: Option<Music>,
+    /// Timeline positions flagged by the user. Part of the document: a
+    /// marker you dropped yesterday should still be there today.
+    #[serde(default)]
+    pub markers: Vec<f64>,
     #[serde(skip)]
     next_id: u64,
 }
@@ -160,6 +164,7 @@ impl Default for Project {
             caption_size: default_caption_size(),
             titles: Vec::new(),
             music: None,
+            markers: Vec::new(),
             next_id: 100,
         }
     }
@@ -410,28 +415,31 @@ impl Project {
     /// footage you already placed. Rippling keeps the rest of the cut
     /// intact — the same behaviour as pasting a word into a sentence.
     pub fn paste_clip(&mut self, clip: &Clip, at: f64, kind: TrackKind) -> u64 {
+        let at = at.max(0.0);
+        // An insert edit, the way every NLE does it: split whatever straddles
+        // the insertion point first, so no clip is left half-covered, then
+        // open a gap on EVERY track. Shifting only the pasted clip's own
+        // track would slide the audio out of sync with the picture.
+        self.split_at(at);
+        for track in &mut self.tracks {
+            for c in &mut track.clips {
+                if c.start >= at - 1e-6 {
+                    c.start += clip.duration;
+                }
+            }
+        }
+
         let id = self.next_id;
         self.next_id += 1;
-        let at = at.max(0.0);
         let mut placed = clip.clone();
         placed.id = id;
         placed.start = at;
-
-        // Anything starting at or after the insertion point slides along by
-        // the pasted length — on the matching track only, so an audio clip
-        // pasted on A1 doesn't shove the video around.
+        // A crossfade describes a join with a particular neighbour; carrying
+        // it to a new position would fade into whatever happens to be there.
+        placed.transition_in = 0.0;
         if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
-            for c in &mut track.clips {
-                if c.start >= at - 1e-9 {
-                    c.start += placed.duration;
-                } else if c.end() > at {
-                    // The insertion lands mid-clip: push that clip too rather
-                    // than leaving it overlapping the pasted one.
-                    c.start += placed.duration;
-                }
-            }
             track.clips.push(placed);
-            track.clips.sort_by(|a, b| a.start.partial_cmp(&b.start).unwrap_or(std::cmp::Ordering::Equal));
+            track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
         id
     }
@@ -630,8 +638,6 @@ pub struct EditorState {
     pub selected_title: Option<usize>,
     /// The copied clip, and which kind of track it came from.
     pub clipboard: Option<(Clip, TrackKind)>,
-    /// Timeline positions the user has flagged, for jumping between.
-    pub markers: Vec<f64>,
     /// When the project last changed — autosave waits for a quiet moment.
     pub changed_at: std::time::Instant,
     /// Have we told the user where the project is being saved? (Once only.)
@@ -664,7 +670,6 @@ impl Default for EditorState {
             fx_gesture: None,
             selected_title: None,
             clipboard: None,
-            markers: Vec::new(),
             changed_at: std::time::Instant::now(),
             announced_path: false,
             undo: Vec::new(),
@@ -955,6 +960,26 @@ mod tests {
         assert!((pasted.start - 4.0).abs() < 1e-6);
         assert_eq!(pasted.source, first.source);
         assert!((pasted.in_point - first.in_point).abs() < 1e-6);
+    }
+
+    /// Pasting into the MIDDLE of a clip has to split it, not shove it aside
+    /// and leave a hole where it used to be.
+    #[test]
+    fn pasting_mid_clip_splits_it_rather_than_leaving_a_hole() {
+        let mut p = one_clip_project();
+        let src = p.tracks[0].clips[0].clone(); // 0..10
+        p.paste_clip(&src, 3.0, TrackKind::Video);
+
+        let mut clips = p.tracks[0].clips.clone();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        // 0..3, the 10s paste at 3..13, then the old tail at 13..20.
+        assert_eq!(clips.len(), 3);
+        for w in clips.windows(2) {
+            let gap = w[1].start - w[0].end();
+            assert!(gap.abs() < 1e-6, "paste left a {gap:.3}s hole in the timeline");
+        }
+        let end = clips.last().unwrap().end();
+        assert!((end - 20.0).abs() < 1e-6, "expected 10s + a 10s paste, got {end}");
     }
 
     #[test]

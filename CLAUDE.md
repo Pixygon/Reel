@@ -211,6 +211,10 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   decoding again. The pipe read must carry an odd trailing byte into the
   next read; dropping it shifts every later sample and turns the envelope
   into noise.
+- The bundled egui font has a NARROW glyph set. ✦ ● ○ ← → ⧏ ⧐ ↶ ↷ all render
+  as empty boxes; ✂ ⬇ ▶ ◀ ⏭ ⏺ ☰ ⚙ ♪ 🗑 • · − + ↔ are known good. Never add a
+  symbol without seeing it under Xvfb first — a missing glyph looks like a
+  rendering bug, not a font gap.
 - Shortcut conflicts are real and easy to miss: `M` was already mute, and
   `.`/`,` are frame-step, so markers live on Ctrl+M and Ctrl+←/→ with the
   colliding keys explicitly excluding ctrl. `shortcuts()` returns early on

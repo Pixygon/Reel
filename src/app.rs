@@ -800,29 +800,29 @@ impl ReelApp {
     /// Drop a marker at the playhead, or lift the one already there.
     pub fn editor_toggle_marker(&mut self) {
         let t = self.editor.playhead;
+        self.editor.push_undo(&self.project);
         // "Already there" has to mean visibly there, not bit-identical.
-        let near = self.editor.markers.iter().position(|m| (m - t).abs() < 0.05);
+        let near = self.project.markers.iter().position(|m| (m - t).abs() < 0.05);
         match near {
             Some(i) => {
-                self.editor.markers.remove(i);
+                self.project.markers.remove(i);
                 self.status = "Marker removed.".into();
             }
             None => {
-                self.editor.markers.push(t);
-                self.editor
-                    .markers
-                    .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-                self.status = format!("Marker at {t:.2}s (Ctrl+←/→ to jump).");
+                self.project.markers.push(t);
+                self.project.markers.sort_by(|a, b| a.total_cmp(b));
+                self.status = format!("Marker at {t:.2}s (Ctrl+Left/Right to jump).");
             }
         }
+        self.editor.mark_changed();
     }
 
     pub fn editor_jump_marker(&mut self, forward: bool) {
         let t = self.editor.playhead;
         let target = if forward {
-            self.editor.markers.iter().copied().find(|m| *m > t + 0.01)
+            self.project.markers.iter().copied().find(|m| *m > t + 0.01)
         } else {
-            self.editor.markers.iter().copied().rev().find(|m| *m < t - 0.01)
+            self.project.markers.iter().copied().rev().find(|m| *m < t - 0.01)
         };
         if let Some(m) = target {
             self.seek_timeline(m);

@@ -650,7 +650,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         fx = crate::effects::Effects::default();
                     }
                     if !fx.is_identity() {
-                        ui.label(RichText::new("● applied on export").small().color(theme::EMBER));
+                        ui.label(RichText::new("• applied on export").small().color(theme::EMBER));
                     }
                 });
                 if fx != before {
@@ -700,7 +700,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             });
         } else {
-            let btn = egui::Button::new(RichText::new("✦ Generate captions").color(theme::VOID))
+            let btn = egui::Button::new(RichText::new("Generate captions").color(theme::VOID))
                 .fill(theme::CYAN)
                 .corner_radius(8.0);
             if ui.add_sized([ui.available_width(), 30.0], btn)
@@ -788,7 +788,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 } else {
                     t.text.clone()
                 };
-                format!("{} {}", if t.covers(head) { "●" } else { "○" }, shown)
+                format!("{} {}", if t.covers(head) { "•" } else { "·" }, shown)
             };
             if ui.selectable_label(selected, label).clicked() {
                 app.editor.selected_title = if selected { None } else { Some(i) };
@@ -843,7 +843,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new(
             "J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\n\
              Del delete · Shift+Del ripple delete · right-click to close gaps\n\
-             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+←/→ jump",
+             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+Left/Right jump",
         ).small().color(egui::Color32::from_gray(120)));
     }
 }
@@ -1355,7 +1355,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 if app.export_timeline && !app.project.captions.is_empty() {
                     ui.label(
                         RichText::new(format!(
-                            "✦ {} captions will be burned in",
+                            "• {} captions will be burned in",
                             app.project.captions.len()
                         ))
                         .small()
@@ -2155,7 +2155,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     }
 
     // Markers: places you flagged to come back to (M).
-    for m in &app.editor.markers {
+    for m in &app.project.markers {
         let x = t_to_x(*m);
         if x < full.left() - 8.0 || x > full.right() + 8.0 {
             continue;
