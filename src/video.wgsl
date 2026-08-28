@@ -20,6 +20,9 @@ struct Uniforms {
     // zw: reserved. Kept as one vec4 so the Rust and WGSL layouts can't drift
     //     (vec3 padding rules are a trap).
     params: vec4<f32>,
+    // Reframe: x = zoom, y = pan_x, z = pan_y, w unused. Mirrors
+    // Effects::reframe_filter — pan ±1 lands the window exactly on an edge.
+    reframe: vec4<f32>,
     // Per-clip effects: x = exposure, y = contrast, z = saturation, w unused.
     // These MUST match effects::Effects::apply_reference — that formula is
     // also what the ffmpeg render performs, and a test holds the two together.
@@ -77,7 +80,12 @@ fn apply_effects(rgb: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
-    let s = textureSample(frame_tex, frame_sampler, in.uv);
+    // Reframe first: sample a zoomed, panned window of the picture.
+    let z = max(u.reframe.x, 1.0);
+    let uv = (in.uv - vec2<f32>(0.5)) / z
+        + vec2<f32>(0.5)
+        + vec2<f32>(u.reframe.y, u.reframe.z) * (1.0 - 1.0 / z) * 0.5;
+    let s = textureSample(frame_tex, frame_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
     // Images arrive premultiplied (see app::sync_frame); video is opaque.
     let a_src = mix(1.0, s.a, u.params.x);
     var rgb = s.rgb;

@@ -35,6 +35,15 @@ pub struct Effects {
     /// Seconds of fade to black at the clip's end.
     #[serde(default)]
     pub fade_out: f64,
+    /// Reframing: zoom into the fitted frame (1.0 = whole frame).
+    #[serde(default = "one")]
+    pub zoom: f32,
+    /// Where the zoomed window sits, -1..1 (0 = centred). Only meaningful
+    /// when `zoom` > 1 — at 1.0 there is nothing to pan within.
+    #[serde(default)]
+    pub pan_x: f32,
+    #[serde(default)]
+    pub pan_y: f32,
 }
 
 fn one() -> f32 {
@@ -43,7 +52,16 @@ fn one() -> f32 {
 
 impl Default for Effects {
     fn default() -> Self {
-        Self { exposure: 1.0, contrast: 1.0, saturation: 1.0, fade_in: 0.0, fade_out: 0.0 }
+        Self {
+            exposure: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            fade_in: 0.0,
+            fade_out: 0.0,
+            zoom: 1.0,
+            pan_x: 0.0,
+            pan_y: 0.0,
+        }
     }
 }
 
@@ -57,6 +75,30 @@ impl Effects {
             && (self.saturation - 1.0).abs() < 1e-4
             && self.fade_in <= 0.0
             && self.fade_out <= 0.0
+            && !self.has_reframe()
+    }
+
+    pub fn has_reframe(&self) -> bool {
+        self.zoom > 1.0001
+    }
+
+    /// The reframe filter, applied AFTER the frame has been fitted to the
+    /// target: blow the frame up by `zoom`, then crop the window back to
+    /// size, offset by the pan. `w`/`h` are the target frame.
+    ///
+    /// The preview shader samples with the same geometry:
+    ///   uv_src = (uv - 0.5) / zoom + 0.5 + pan * (1 - 1/zoom) / 2
+    /// (pan = ±1 puts the window exactly on an edge in both paths.)
+    pub fn reframe_filter(&self, w: u32, h: u32) -> Option<String> {
+        if !self.has_reframe() {
+            return None;
+        }
+        let z = self.zoom.max(1.0);
+        let (px, py) = (self.pan_x.clamp(-1.0, 1.0), self.pan_y.clamp(-1.0, 1.0));
+        Some(format!(
+            "scale=iw*{z:.6}:ih*{z:.6}:flags=lanczos,\
+             crop={w}:{h}:(iw-ow)/2*(1+{px:.6}):(ih-oh)/2*(1+{py:.6})"
+        ))
     }
 
     pub fn has_colour(&self) -> bool {
@@ -66,11 +108,11 @@ impl Effects {
     }
 
     /// THE formula. sRGB-encoded rgb in 0..1 → adjusted rgb in 0..1.
+    /// Order matters and is mirrored exactly in video.wgsl and `filters()`:
+    /// exposure (gain), then contrast about 0.5, then saturation about luma.
     /// Only the parity test calls this — it exists as the executable
     /// statement of what `video.wgsl` and `filters()` must both do.
     #[allow(dead_code)]
-    /// Order matters and is mirrored exactly in video.wgsl and `filters()`:
-    /// exposure (gain), then contrast about 0.5, then saturation about luma.
     pub fn apply_reference(&self, rgb: [f32; 3]) -> [f32; 3] {
         let mut c = [
             rgb[0] * self.exposure,
@@ -209,6 +251,54 @@ mod tests {
                     );
                 }
             }
+        }
+    }
+
+    /// Reframe geometry: at 2× zoom panned fully right, the visible window is
+    /// the source's right half — and the shader's UV maths agrees with the
+    /// crop ffmpeg performs.
+    #[test]
+    fn reframe_pans_to_the_expected_window() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-reframe-src-{}.png", std::process::id()));
+        let out = dir.join(format!("reel-reframe-out-{}.png", std::process::id()));
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        // Left half red, right half blue.
+        let mut img = image::RgbImage::new(200, 100);
+        for (x, _y, px) in img.enumerate_pixels_mut() {
+            *px = if x < 100 { image::Rgb([255, 0, 0]) } else { image::Rgb([0, 0, 255]) };
+        }
+        img.save(&src).expect("write split fixture");
+
+        let fx = Effects { zoom: 2.0, pan_x: 1.0, ..Default::default() };
+        let filter = fx.reframe_filter(200, 100).expect("reframe filter");
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-i", &src.to_string_lossy(), "-vf", &filter,
+                   "-frames:v", "1", &out.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false), "ffmpeg reframe failed: {filter}");
+
+        let got = image::open(&out).expect("read reframed").to_rgb8();
+        assert_eq!(got.dimensions(), (200, 100), "reframe keeps the target frame");
+        // Fully panned right at 2× → every pixel comes from the blue half.
+        for probe_x in [5u32, 100, 195] {
+            let px = got.get_pixel(probe_x, 50).0;
+            assert!(px[2] > 200 && px[0] < 60, "expected blue at x={probe_x}, got {px:?}");
+        }
+
+        // The shader samples with the same geometry — check the centre and
+        // both edges land inside the source's right half (u >= 0.5).
+        let (z, pan) = (fx.zoom, fx.pan_x);
+        for uv_x in [0.0f32, 0.5, 1.0] {
+            let u_src = (uv_x - 0.5) / z + 0.5 + pan * (1.0 - 1.0 / z) * 0.5;
+            assert!(
+                (0.499..=1.001).contains(&u_src),
+                "shader UV {u_src} should sit in the right half for uv {uv_x}"
+            );
+        }
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
         }
     }
 

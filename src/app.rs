@@ -40,6 +40,8 @@ pub struct ReelApp {
     pub export: Option<ExportJob>,
     /// Export the edited timeline rather than the source file.
     pub export_timeline: bool,
+    /// Queued exports — line up every platform, then walk away.
+    pub queue: export::Queue,
 
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
@@ -95,6 +97,7 @@ impl ReelApp {
             export_out: String::new(),
             export: None,
             export_timeline: false,
+            queue: export::Queue::default(),
             picker: None,
             opening: None,
             shot_rx: None,
@@ -572,6 +575,39 @@ impl ReelApp {
         self.export_open = true;
     }
 
+    /// Turn the dialog's current settings into a queued job.
+    pub fn queue_current_export(&mut self, label: String) {
+        let job = if self.export_timeline {
+            let segments = self
+                .project
+                .export_segments_range(self.editor.range_in, self.editor.range_out);
+            if segments.is_empty() {
+                self.status = "Nothing on the timeline to queue.".into();
+                return;
+            }
+            export::Job::Timeline {
+                segments,
+                project: (self.project.width, self.project.height, self.project.fps),
+            }
+        } else {
+            let Some(path) = self.media_path() else { return };
+            let duration = self.player.as_ref().map(|p| p.info.duration).unwrap_or(0.0);
+            export::Job::Source { path, duration }
+        };
+        let output = self.export_out.clone();
+        if std::path::Path::new(&output).exists() {
+            self.status = format!("{output} already exists — change the name first.");
+            return;
+        }
+        self.queue.push(export::Queued { label: label.clone(), output, settings: self.export_settings.clone(), job });
+        self.status = format!("Queued {label} ({} waiting).", self.queue.len_pending());
+    }
+
+    /// Advance the render queue; keeps the UI repainting while it works.
+    pub fn poll_queue(&mut self) {
+        self.queue.poll();
+    }
+
     /// Output path for a preset export: `<name>-<platform>.mp4`, so the
     /// TikTok cut and the YouTube cut sit side by side without clobbering.
     pub fn preset_output(&self, p: &export::Preset) -> String {
@@ -811,6 +847,7 @@ impl ReelApp {
     pub fn wants_redraw(&self) -> bool {
         self.player.as_ref().map(|p| p.wants_redraw()).unwrap_or(false)
             || self.export.as_ref().map(|j| !j.state().finished).unwrap_or(false)
+            || self.queue.is_busy()
             || self.picker.is_some()
             || self.opening.is_some()
             || self.shot_rx.is_some()

@@ -12,6 +12,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_picker();
     app.poll_opening();
     app.poll_captures();
+    app.poll_queue();
     app.update_editor_playback();
     app.track_status();
     dropped_files(ctx, app);
@@ -471,6 +472,38 @@ fn editor_view(ctx: &egui::Context, app: &mut ReelApp) {
                 ui.add(egui::Slider::new(&mut fx.saturation, 0.0..=2.5).text("Saturation"));
                 ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).text("Fade in (s)"));
                 ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
+                // Reframe — how you put a landscape shot into a vertical
+                // frame without blurred sides.
+                ui.add(egui::Slider::new(&mut fx.zoom, 1.0..=3.0).text("Zoom"));
+                if fx.zoom > 1.0001 {
+                    ui.add(egui::Slider::new(&mut fx.pan_x, -1.0..=1.0).text("Pan ↔"));
+                    ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).text("Pan ↕"));
+                }
+
+                // Crossfade from the previous clip. Only meaningful when
+                // there IS a previous clip on the same track.
+                let has_prev = app
+                    .project
+                    .clip_before(crate::edit::TrackKind::Video, start)
+                    .is_some();
+                if has_prev {
+                    let mut xf = app.project.clip(id).map(|c| c.transition_in).unwrap_or(0.0);
+                    let before_xf = xf;
+                    ui.add(egui::Slider::new(&mut xf, 0.0..=duration.min(3.0)).text("Crossfade in (s)"));
+                    if (xf - before_xf).abs() > 1e-6 {
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.transition_in = xf;
+                        }
+                        app.editor.dirty = true;
+                    }
+                    if xf > 0.0 {
+                        ui.label(
+                            RichText::new("Crossfades render into the export; the preview still shows the cut.")
+                                .small()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                    }
+                }
                 ui.horizontal(|ui| {
                     if ui.button("Reset look").clicked() {
                         fx = crate::effects::Effects::default();
@@ -815,7 +848,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             let segments = app
                 .project
                 .export_segments_range(app.editor.range_in, app.editor.range_out);
-            let cut_len: f64 = segments.iter().map(|seg| seg.duration).sum();
+            let cut_len = crate::edit::render_duration(&segments);
             let ranged = app.editor.range_in.is_some() || app.editor.range_out.is_some();
             let can_timeline = kind != crate::media::MediaKind::Image && !segments.is_empty();
             if can_timeline && app.export.is_none() {
@@ -846,6 +879,48 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 app.export_timeline = false;
             }
             ui.add_space(6.0);
+
+            // The render queue, whenever it has anything to say.
+            if app.queue.is_busy() || !app.queue.done.is_empty() {
+                egui::Frame::NONE
+                    .fill(theme::VOID_2)
+                    .corner_radius(6.0)
+                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .show(ui, |ui| {
+                        ui.label(RichText::new("Render queue").color(theme::CYAN).small());
+                        if let Some((label, st)) = app.queue.current() {
+                            ui.label(format!("⏵ {label}"));
+                            ui.add(egui::ProgressBar::new(st.fraction).show_percentage().animate(true));
+                        }
+                        let waiting = app.queue.labels_pending();
+                        if !waiting.is_empty() {
+                            ui.label(
+                                RichText::new(format!("waiting: {}", waiting.join(", ")))
+                                    .small()
+                                    .color(egui::Color32::from_gray(150)),
+                            );
+                        }
+                        for (label, outcome) in &app.queue.done {
+                            match outcome {
+                                export::Outcome::Ok(path) => {
+                                    ui.label(RichText::new(format!("✓ {label} → {path}")).small().color(theme::CYAN));
+                                }
+                                export::Outcome::Failed(e) => {
+                                    ui.label(RichText::new(format!("✗ {label}: {e}")).small().color(theme::EMBER));
+                                }
+                            }
+                        }
+                        ui.horizontal(|ui| {
+                            if app.queue.is_busy() && ui.button("Cancel all").clicked() {
+                                app.queue.cancel_all();
+                            }
+                            if !app.queue.done.is_empty() && ui.button("Clear finished").clicked() {
+                                app.queue.clear_done();
+                            }
+                        });
+                    });
+                ui.add_space(8.0);
+            }
 
             // A job in flight (or just finished) owns the dialog.
             if let Some(job) = &app.export {
@@ -1057,6 +1132,36 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             }
 
             ui.add_space(8.0);
+            // Queueing is how you get every platform in one go: pick a
+            // destination, queue it, pick the next, queue it, walk away.
+            let mut queue_clicked = false;
+            ui.horizontal(|ui| {
+                let label = export::Preset::ALL
+                    .iter()
+                    .find(|p| p.is_active(&app.export_settings))
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_else(|| "Custom".to_string());
+                if ui
+                    .button(RichText::new(format!("＋ Queue {label}")).color(theme::CYAN))
+                    .on_hover_text("Add this to the render queue and keep choosing")
+                    .clicked()
+                {
+                    queue_clicked = true;
+                }
+            });
+            if queue_clicked {
+                let label = export::Preset::ALL
+                    .iter()
+                    .find(|p| p.is_active(&app.export_settings))
+                    .map(|p| p.name.to_string())
+                    .unwrap_or_else(|| "Custom".to_string());
+                app.queue_current_export(label);
+                // Suggest a fresh name so the next queue entry can't collide.
+                if let Some(p) = export::Preset::ALL.iter().find(|p| p.is_active(&app.export_settings)) {
+                    app.export_out = app.preset_output(p);
+                }
+            }
+            ui.add_space(4.0);
             let start = ui.add_sized(
                 [ui.available_width(), 28.0],
                 egui::Button::new(RichText::new("Start export").color(theme::STAR).strong()),
@@ -1299,6 +1404,18 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                     format!("{}  {:.1}s", clip.name, clip.duration),
                     egui::FontId::proportional(11.0),
                     theme::STAR,
+                );
+            }
+
+            // A crossfade marker at the clip's head: the wedge shows where
+            // the two clips overlap in the render.
+            if clip.transition_in > 0.0 && *kind == TrackKind::Video {
+                let w = (clip.transition_in as f32 * pps).min(cr.width());
+                let wedge = Rect::from_min_max(cr.left_top(), egui::pos2(cr.left() + w, cr.bottom()));
+                painter.rect_filled(wedge, 5.0, theme::STAR.linear_multiply(0.18));
+                painter.line_segment(
+                    [wedge.left_bottom(), wedge.right_top()],
+                    Stroke::new(1.0, theme::STAR),
                 );
             }
 

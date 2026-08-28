@@ -614,7 +614,12 @@ pub fn build_timeline_args(
         // fades and colour behave the same whatever the output shape is.
         let fx = seg.effects.filters(duration);
         let fx = if fx.is_empty() { String::new() } else { format!("{},", fx.join(",")) };
-        let vnorm = format!("{},fps={tfps:.4}", s.fit.chain(tw, th, &k.to_string()));
+        let reframe = seg
+            .effects
+            .reframe_filter(tw, th)
+            .map(|f| format!(",{f}"))
+            .unwrap_or_default();
+        let vnorm = format!("{}{reframe},fps={tfps:.4}", s.fit.chain(tw, th, &k.to_string()));
         graph.push_str(&format!(
             "[{i}:v]trim=start={in_point:.4}:duration={duration:.4},setpts=PTS-STARTPTS,{fx}{vnorm}[v{k}];"
         ));
@@ -624,17 +629,54 @@ pub fn build_timeline_args(
             ));
         }
     }
-    for k in 0..segments.len() {
-        graph.push_str(&format!("[v{k}]"));
-        if with_audio {
-            graph.push_str(&format!("[a{k}]"));
+    if segments.iter().any(|seg| seg.transition_in > 0.0) {
+        // Crossfades: chain xfade/acrossfade instead of a plain concat. Each
+        // transition OVERLAPS its two clips, so the running offset (where the
+        // next fade starts) subtracts every fade consumed so far — the same
+        // arithmetic `Project::timeline_duration_with_transitions` does, so
+        // the preview's playhead and the rendered file agree.
+        let mut vprev = "v0".to_string();
+        let mut aprev = "a0".to_string();
+        let mut offset = segments[0].duration;
+        for k in 1..segments.len() {
+            let d = segments[k].transition_in.min(segments[k - 1].duration).min(segments[k].duration);
+            let (vo, ao) = (format!("vx{k}"), format!("ax{k}"));
+            if d > 0.0 {
+                let start = (offset - d).max(0.0);
+                graph.push_str(&format!(
+                    "[{vprev}][v{k}]xfade=transition=fade:duration={d:.4}:offset={start:.4}[{vo}];"
+                ));
+                if with_audio {
+                    graph.push_str(&format!("[{aprev}][a{k}]acrossfade=d={d:.4}[{ao}];"));
+                }
+                offset += segments[k].duration - d;
+            } else {
+                graph.push_str(&format!("[{vprev}][v{k}]concat=n=2:v=1:a=0[{vo}];"));
+                if with_audio {
+                    graph.push_str(&format!("[{aprev}][a{k}]concat=n=2:v=0:a=1[{ao}];"));
+                }
+                offset += segments[k].duration;
+            }
+            vprev = vo;
+            aprev = ao;
         }
+        graph.push_str(&format!("[{vprev}]null[vcat]"));
+        if with_audio {
+            graph.push_str(&format!(";[{aprev}]anull[acat]"));
+        }
+    } else {
+        for k in 0..segments.len() {
+            graph.push_str(&format!("[v{k}]"));
+            if with_audio {
+                graph.push_str(&format!("[a{k}]"));
+            }
+        }
+        graph.push_str(&format!(
+            "concat=n={}:v=1:a={}[vcat]",
+            segments.len(),
+            if with_audio { "1[acat]" } else { "0" }
+        ));
     }
-    graph.push_str(&format!(
-        "concat=n={}:v=1:a={}[vcat]",
-        segments.len(),
-        if with_audio { "1[acat]" } else { "0" }
-    ));
     // No post-concat scale: `target` already carries the chosen resolution,
     // and every segment was normalised to it above.
     a.extend(["-filter_complex".into(), graph, "-map".into(), "[vcat]".into()]);
@@ -672,7 +714,7 @@ pub fn start_timeline(
         return Err(anyhow!("output already exists: {output}"));
     }
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));
-    let total: f64 = segments.iter().map(|seg| seg.duration).sum();
+    let total = crate::edit::render_duration(segments);
     let args = build_timeline_args(segments, output, settings, with_audio, render_target(project, settings));
     spawn_job(args, output, total)
 }
@@ -774,6 +816,115 @@ fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob
     Ok(ExportJob { output: output.to_string(), state, cancel })
 }
 
+/// What a queued export will render when its turn comes.
+#[derive(Clone, Debug)]
+pub enum Job {
+    /// Convert a source file (`path`, its duration).
+    Source { path: String, duration: f64 },
+    /// Render the edit: flattened segments + the project's frame/rate.
+    Timeline { segments: Vec<Segment>, project: (u32, u32, f64) },
+}
+
+/// One export waiting its turn.
+#[derive(Clone, Debug)]
+pub struct Queued {
+    /// What the user called it — the platform name, usually.
+    pub label: String,
+    pub output: String,
+    pub settings: ExportSettings,
+    pub job: Job,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub enum Outcome {
+    Ok(String),
+    Failed(String),
+}
+
+/// A render queue: line up every platform you need, then walk away. Jobs run
+/// one at a time — parallel encodes just fight over the same CPU/GPU.
+#[derive(Default)]
+pub struct Queue {
+    pending: std::collections::VecDeque<Queued>,
+    running: Option<(Queued, ExportJob)>,
+    pub done: Vec<(String, Outcome)>,
+    /// Stop starting new jobs (the current one is cancelled too).
+    stopped: bool,
+}
+
+impl Queue {
+    pub fn push(&mut self, item: Queued) {
+        self.pending.push_back(item);
+        self.stopped = false;
+    }
+
+    pub fn len_pending(&self) -> usize {
+        self.pending.len()
+    }
+
+    pub fn is_busy(&self) -> bool {
+        self.running.is_some() || !self.pending.is_empty()
+    }
+
+    /// The running job's label and progress, for the UI.
+    pub fn current(&self) -> Option<(String, ExportState)> {
+        self.running.as_ref().map(|(q, job)| (q.label.clone(), job.state()))
+    }
+
+    pub fn labels_pending(&self) -> Vec<String> {
+        self.pending.iter().map(|q| q.label.clone()).collect()
+    }
+
+    /// Cancel everything: the running encode and the whole waiting list.
+    pub fn cancel_all(&mut self) {
+        self.stopped = true;
+        self.pending.clear();
+        if let Some((_, job)) = &self.running {
+            job.cancel();
+        }
+    }
+
+    pub fn clear_done(&mut self) {
+        self.done.clear();
+    }
+
+    /// Advance the queue: collect a finished job, start the next one.
+    /// Call every frame; returns true when something changed.
+    pub fn poll(&mut self) -> bool {
+        let mut changed = false;
+        if let Some((q, job)) = &self.running {
+            let st = job.state();
+            if st.finished {
+                let outcome = match st.error {
+                    None => Outcome::Ok(q.output.clone()),
+                    Some(e) => Outcome::Failed(e),
+                };
+                self.done.push((q.label.clone(), outcome));
+                self.running = None;
+                changed = true;
+            }
+        }
+        if self.running.is_none() && !self.stopped {
+            if let Some(next) = self.pending.pop_front() {
+                let started = match &next.job {
+                    Job::Source { path, duration } => {
+                        start(path, &next.output, &next.settings, *duration)
+                    }
+                    Job::Timeline { segments, project } => {
+                        start_timeline(segments, &next.output, &next.settings, *project)
+                    }
+                };
+                match started {
+                    Ok(job) => self.running = Some((next, job)),
+                    Err(e) => self.done.push((next.label.clone(), Outcome::Failed(e.to_string()))),
+                }
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
 /// Parse ffmpeg's `HH:MM:SS.cc` progress time into seconds.
 fn parse_ffmpeg_time(t: &str) -> Option<f64> {
     let mut parts = t.split(':');
@@ -794,6 +945,7 @@ mod tests {
             in_point,
             duration,
             effects: crate::effects::Effects::default(),
+            transition_in: 0.0,
         }
     }
 
@@ -1121,6 +1273,92 @@ mod tests {
         }
         let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe preset output");
         assert_eq!((info.width, info.height), (1080, 1920), "landscape source → vertical frame");
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// The queue runs jobs one at a time, in order, and reports each result.
+    #[test]
+    fn queue_runs_every_job_in_order() {
+        let dir = std::env::temp_dir();
+        let outs: Vec<_> = (0..3)
+            .map(|i| dir.join(format!("reel-queue-{}-{i}.mp4", std::process::id())))
+            .collect();
+        for o in &outs {
+            let _ = std::fs::remove_file(o);
+        }
+        let mut q = Queue::default();
+        for (i, o) in outs.iter().enumerate() {
+            q.push(Queued {
+                label: format!("job{i}"),
+                output: o.to_string_lossy().into_owned(),
+                settings: ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() },
+                job: Job::Source { path: fixture(), duration: 2.0 },
+            });
+        }
+        let deadline = Instant::now() + Duration::from_secs(120);
+        while q.is_busy() {
+            q.poll();
+            // Never more than one encode in flight.
+            assert!(q.len_pending() + q.current().iter().count() <= 3);
+            assert!(Instant::now() < deadline, "queue stalled");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert_eq!(q.done.len(), 3, "every job reported");
+        for (i, (label, outcome)) in q.done.iter().enumerate() {
+            assert_eq!(label, &format!("job{i}"), "results keep queue order");
+            assert!(matches!(outcome, Outcome::Ok(_)), "job{i} failed: {outcome:?}");
+        }
+        for o in &outs {
+            assert!(o.exists(), "queued export produced its file");
+            let _ = std::fs::remove_file(o);
+        }
+    }
+
+    /// A crossfade OVERLAPS its two clips, so the rendered file is shorter
+    /// than the sum of the pieces by exactly the fade length.
+    #[test]
+    fn crossfade_overlaps_and_shortens_the_render() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-xf-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-xf-out-{}.mp4", std::process::id()));
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=25:duration=4",
+                   "-c:v", "libx264", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+
+        // 1.5s + 1.5s with a 0.5s crossfade → 2.5s, not 3.0s.
+        let mut a = seg(&src.to_string_lossy(), 0.0, 1.5);
+        let mut b = seg(&src.to_string_lossy(), 2.0, 1.5);
+        a.transition_in = 0.0;
+        b.transition_in = 0.5;
+        let segs = vec![a, b];
+        let graph_args = build_timeline_args(&segs, "x.mp4", &ExportSettings::default(), false, (320, 240, 25.0));
+        let graph = &graph_args[graph_args.iter().position(|x| x == "-filter_complex").unwrap() + 1];
+        assert!(graph.contains("xfade=transition=fade:duration=0.5000:offset=1.0000"), "{graph}");
+
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let job = start_timeline(&segs, &out.to_string_lossy(), &s, (320, 240, 25.0)).expect("start xfade");
+        let deadline = Instant::now() + Duration::from_secs(90);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "crossfade export error: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "crossfade export timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe xfade output");
+        assert!(
+            info.duration > 2.3 && info.duration < 2.75,
+            "1.5+1.5 with a 0.5s crossfade should be ≈2.5s, got {}",
+            info.duration
+        );
         for f in [&src, &out] {
             let _ = std::fs::remove_file(f);
         }

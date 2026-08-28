@@ -28,6 +28,8 @@ struct Uniforms {
     /// x = use the texture's alpha (1.0) or force opaque (0.0);
     /// y = apply the effects block (1.0) or skip it (0.0); zw reserved.
     params: [f32; 4],
+    /// zoom, pan_x, pan_y, unused — see Effects::reframe_filter.
+    reframe: [f32; 4],
     /// exposure, contrast, saturation, unused — see effects::Effects.
     fx: [f32; 4],
 }
@@ -154,6 +156,10 @@ impl CallbackTrait for VideoDraw {
                     0.0,
                     0.0,
                 ],
+                reframe: self
+                    .effects
+                    .map(|e| [e.zoom, e.pan_x, e.pan_y, 0.0])
+                    .unwrap_or([1.0, 0.0, 0.0, 0.0]),
                 fx: self
                     .effects
                     .map(|e| [e.exposure, e.contrast, e.saturation, 0.0])

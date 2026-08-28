@@ -26,12 +26,31 @@ pub struct Clip {
     /// is `serde(default)` so `.reel` files written before effects still load.
     #[serde(default)]
     pub effects: Effects,
+    /// Seconds of crossfade FROM the previous clip into this one. The two
+    /// clips overlap by this much, so the edit gets shorter — exactly what
+    /// ffmpeg's `xfade` does at render time.
+    #[serde(default)]
+    pub transition_in: f64,
 }
 
 impl Clip {
     pub fn end(&self) -> f64 {
         self.start + self.duration
     }
+}
+
+/// How long the flattened edit actually renders to: crossfades overlap their
+/// two clips, so each one shortens the result by its own length. The export
+/// dialog and the progress bar both use this, so the duration a user sees is
+/// the duration they get.
+pub fn render_duration(segments: &[Segment]) -> f64 {
+    let total: f64 = segments.iter().map(|s| s.duration).sum();
+    let overlap: f64 = segments
+        .iter()
+        .enumerate()
+        .map(|(i, s)| if i == 0 { 0.0 } else { s.transition_in.min(segments[i - 1].duration).min(s.duration) })
+        .sum();
+    (total - overlap).max(0.0)
 }
 
 /// One piece of the flattened edit, ready to render: a window of a source
@@ -42,6 +61,8 @@ pub struct Segment {
     pub in_point: f64,
     pub duration: f64,
     pub effects: Effects,
+    /// Crossfade from the previous segment, in seconds (0 = hard cut).
+    pub transition_in: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,6 +134,7 @@ impl Project {
                 in_point: 0.0,
                 duration,
                 effects: Effects::default(),
+                transition_in: 0.0,
             });
         }
     }
@@ -132,6 +154,17 @@ impl Project {
             .filter(|tr| tr.kind == kind)
             .flat_map(|tr| tr.clips.iter())
             .find(|c| c.start <= t && t < c.end())
+    }
+
+    /// The clip that ends at or before `t` on this track — the one a
+    /// crossfade would come from.
+    pub fn clip_before(&self, kind: TrackKind, t: f64) -> Option<&Clip> {
+        self.tracks
+            .iter()
+            .filter(|tr| tr.kind == kind)
+            .flat_map(|tr| tr.clips.iter())
+            .filter(|c| c.end() <= t + 1e-6)
+            .max_by(|a, b| a.end().total_cmp(&b.end()))
     }
 
     /// The next clip (by start) on the given track kind strictly after `t`.
@@ -273,6 +306,9 @@ impl Project {
                     in_point: c.in_point + head,
                     duration: end - start,
                     effects: c.effects,
+                    // A clip cut into by the range marker loses its
+                    // transition — there's no longer a clip to fade from.
+                    transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
                 })
             })
             .collect()
