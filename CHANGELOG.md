@@ -4,6 +4,13 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.30.0] — 2026-08-28
+
+### Added
+- Speed ramps: add a `speed` keyframe track to a clip to accelerate or slow down playback over time while the clip's position on the timeline stays put. Video is decoded at its native rate to follow the ramp exactly, and audio tempo is adjusted piecewise to keep sound in sync with the changing pace. _(289643f)_
+- New curve editor for keyframes: see the animated curve for the selected parameter drawn live inside the clip panel. Drag keyframes to change their time and value, double-click to add a new key, and right-click a key to remove it — all synced to the preview's playhead. _(289643f)_
+
+
 ## [0.29.0] — 2026-08-28
 
 ### Added
