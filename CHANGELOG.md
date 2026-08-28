@@ -4,6 +4,18 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.31.0] — 2026-08-28
+
+### Added
+- Editor playback now mixes the entire timeline live, not just the main clip's own audio: every sounding clip's gain and fades, A1 clips, and the full music bed — including automatic ducking under speech — now play while you cut, the same way they'll sound in the exported video. _(e647513)_
+
+### Changed
+- On Linux, editor audio now plays through a dedicated native PipeWire stream instead of the player, which is muted while the mixer speaks for the timeline; leaving the editor hands audio back to the player and restores your mute preference. _(e647513)_
+
+### Fixed
+- Muting now consistently reflects your intent across the player and the editor's live mix, instead of being tied only to the player's own mute state. _(e647513)_
+
+
 ## [0.30.0] — 2026-08-28
 
 ### Added
