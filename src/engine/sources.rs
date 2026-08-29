@@ -45,9 +45,10 @@ impl SegmentReader {
             String::new()
         };
         let pre = pre_chain.map(|c| format!("{c},")).unwrap_or_default();
-        // -ss before -i: keyframe-fast seek, then accurate trim in the graph.
+        // format=rgba BEFORE the fit, so a transparent letterbox pad keeps
+        // its alpha all the way down the pipe.
         let vf = format!(
-            "trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{setpts}{pre}{fit_chain},fps={fps:.4}"
+            "trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{setpts}{pre}format=rgba,{fit_chain},fps={fps:.4}"
         );
         let mut child = Command::new("ffmpeg")
             .args([
@@ -129,8 +130,9 @@ impl NativeReader {
         src_fps: f64,
     ) -> Result<Self> {
         let pre = pre_chain.map(|c| format!("{c},")).unwrap_or_default();
-        let vf =
-            format!("trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{pre}{fit_chain}");
+        let vf = format!(
+            "trim=start=0:duration={src_len:.4},setpts=PTS-STARTPTS,{pre}format=rgba,{fit_chain}"
+        );
         let mut child = Command::new("ffmpeg")
             .args([
                 "-v", "error",
@@ -186,6 +188,59 @@ impl Drop for NativeReader {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Two-pass stabilisation: run vidstabdetect over exactly the segment's
+/// window once (cached by content+window), and return the transform chain
+/// the reader splices in BEFORE fitting. The preview deliberately shows the
+/// raw footage — this pass costs a full decode, so it belongs to export.
+pub fn stab_chain(source: &str, in_point: f64, src_len: f64) -> Result<String> {
+    let dir = {
+        let base = std::env::var("XDG_CACHE_HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache")
+            });
+        base.join("reel/stab")
+    };
+    std::fs::create_dir_all(&dir).ok();
+    // Key on the file identity and the exact window.
+    let meta = std::fs::metadata(source).ok();
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in source
+        .as_bytes()
+        .iter()
+        .copied()
+        .chain(meta.as_ref().map(|m| m.len()).unwrap_or(0).to_le_bytes())
+        .chain(((in_point * 1000.0) as u64).to_le_bytes())
+        .chain(((src_len * 1000.0) as u64).to_le_bytes())
+    {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    let trf = dir.join(format!("{h:016x}.trf"));
+    if !trf.exists() {
+        log::info!("stabilise: analysing {source} ({src_len:.1}s window)");
+        let ok = Command::new("ffmpeg")
+            .args([
+                "-y", "-v", "error",
+                "-ss", &format!("{in_point:.4}"),
+                "-i", source,
+                "-t", &format!("{src_len:.4}"),
+                "-vf", &format!("vidstabdetect=result={}", trf.to_string_lossy()),
+                "-f", "null", "-",
+            ])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok || !trf.exists() {
+            anyhow::bail!("stabilisation analysis failed for {source}");
+        }
+    }
+    Ok(format!(
+        "vidstabtransform=input={}:smoothing=30:crop=black,unsharp=5:5:0.8:3:3:0.4",
+        trf.to_string_lossy()
+    ))
 }
 
 /// The tone-mapping chain for an HDR source, or None for SDR (or when this

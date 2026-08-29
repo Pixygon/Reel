@@ -738,6 +738,55 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 }
 
+                // ── LUT ─────────────────────────────────────────────────
+                ui.horizontal(|ui| {
+                    let lut_idx = app.project.clip(id).and_then(|c| c.effects.lut);
+                    match lut_idx.and_then(|i| app.project.lut_path(i)).map(String::from) {
+                        Some(path) => {
+                            let name = std::path::Path::new(&path)
+                                .file_name()
+                                .map(|s| s.to_string_lossy().to_string())
+                                .unwrap_or(path);
+                            ui.label(RichText::new(format!("LUT: {name}")).small());
+                            if ui.small_button("−").on_hover_text("Remove the LUT").clicked() {
+                                app.editor.push_undo(&app.project);
+                                if let Some(c) = app.project.clip_mut(id) {
+                                    c.effects.lut = None;
+                                }
+                                app.editor.mark_changed();
+                            }
+                        }
+                        None => {
+                            if ui
+                                .button("LUT…")
+                                .on_hover_text("Grade through a .cube 3D LUT — applied before the sliders above")
+                                .clicked()
+                            {
+                                app.pick_lut(id);
+                            }
+                        }
+                    }
+                });
+
+                // ── Stabilise ───────────────────────────────────────────
+                {
+                    let mut st = app.project.clip(id).map(|c| c.stabilize).unwrap_or(false);
+                    if ui
+                        .checkbox(&mut st, "Stabilize on export")
+                        .on_hover_text(
+                            "Two-pass camera-shake smoothing at render time. The preview \
+                             shows the raw footage — the analysis costs a full decode.",
+                        )
+                        .changed()
+                    {
+                        app.editor.push_undo(&app.project);
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.stabilize = st;
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+
                 // ── Green screen ────────────────────────────────────────
                 {
                     let mut fx2 = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
@@ -1162,6 +1211,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     tint: [1.0, 1.0, 1.0, fade],
                     use_src_alpha: app.image.is_some(),
                     effects,
+                    lut: app.lut_view(effects.and_then(|e| e.lut)),
                 },
             ));
             // The incoming half of a crossfade, blended over the outgoing
@@ -1216,6 +1266,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                                     tint: [1.0, 1.0, 1.0, in_mul],
                                     use_src_alpha: false,
                                     effects: fx,
+                                    lut: app.lut_view(fx.and_then(|e| e.lut)),
                                 },
                             ));
                         }
@@ -1367,6 +1418,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
                         tint: [1.0, 1.0, 1.0, 1.0],
                         use_src_alpha: false,
                         effects: fx,
+                        lut: app.lut_view(fx.and_then(|e| e.lut)),
                     },
                 ));
                 drew = true;
@@ -2386,6 +2438,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         music: app.project.music.as_ref(),
                         overlays: &app.project.overlay_segments(),
                         markers: &app.project.markers,
+                        luts: &app.project.luts,
                     },
                 ) {
                     Ok(job) => app.export = Some(job),

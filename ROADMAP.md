@@ -282,9 +282,11 @@ within the phase by editor-workflow importance:
       correlation 1.00). Live angle-cutting UI still open.
 
 ### 3.3 The look
-- [ ] Curves (master + per-channel), levels, HSL qualifiers, white balance,
-      LUT loading (.cube) — all as frame-graph effect nodes, all keyframable
-      by construction.
+- [~] Grading: **.cube 3D LUTs** land — parsed and cached, sampled
+      trilinearly on the GPU in both pipelines (GPU-vs-reference parity
+      test), applied before the trims, with a transparent letterbox pad so
+      grades never colour the bars. Curves, levels, HSL qualifiers and
+      white balance still open.
 - [x] Scopes v1: live RGB histogram + luma waveform from the preview
       frame. Vectorscope and full RGB-parade waveform still open.
 - [x] **Chroma key**: chroma-weighted distance + despill + soft edge, one
@@ -295,7 +297,11 @@ within the phase by editor-workflow importance:
 - [ ] Masks on any effect (from 1.1) + **point tracking** to drive them
       (track a region, attach a mask/PiP/title to the track). Classic
       template matching first; optical flow upgrade later.
-- [ ] Stabilization (vidstab two-pass or own path through the tracker).
+- [x] Stabilization: vidstab two-pass with the analysis cached per
+      source-window, spliced ahead of tone/fit in the frame server. The
+      test MEASURES it: a synthetically shaky clip's inter-frame shake
+      energy drops by half (9.2 → 4.2). Preview stays raw, stated in the
+      UI.
 - [ ] Blur/sharpen/glow/vignette/grain — the bread-and-butter stack.
 - [x] Transition library: crossfade, dip-to-black, four wipes, two slides —
       ONE pure geometry function (`transition_mods`) executed by the frame

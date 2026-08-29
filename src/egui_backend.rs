@@ -33,6 +33,7 @@ impl EguiBackend {
         // video_pass.rs. Registered once; every frame's draw reuses it.
         renderer.callback_resources.insert(crate::video_pass::VideoPass::new(
             &gpu.device,
+            &gpu.queue,
             gpu.surface_format,
         ));
         Self { state, renderer, ctx }

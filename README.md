@@ -89,6 +89,12 @@ not the finished tool, but real, honest software you can build and run today.
 - **Scopes, chapters, stills.** A live histogram and waveform while you
   grade; markers become real MP4 chapters on export; and one button saves
   the composed frame under the playhead as a PNG.
+- **Grade through LUTs.** Load any .cube 3D LUT per clip — sampled on the
+  GPU, previewed exactly as rendered, applied before your trims, and never
+  colouring the letterbox bars.
+- **Stabilization that provably works.** One checkbox (or
+  `reel stabilize`): two-pass camera-shake smoothing, analysis cached, and
+  a test that measures the shake energy actually halving.
 - **A real transition library.** Crossfade, dip-to-black, wipes and slides —
   picked per cut, previewed live with the same geometry the render uses.
 - **Delivered at the platform's loudness.** Social presets normalize the

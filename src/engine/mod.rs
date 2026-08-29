@@ -35,6 +35,9 @@ pub struct Layer {
     /// Honour the texture's alpha (stills) or force opaque (video frames,
     /// where the decoder leaves a padding byte in the alpha channel).
     pub use_src_alpha: bool,
+    /// A 3D LUT texture on the compositor's device, when the clip grades
+    /// through one (`Effects.lut` resolved via the project's table).
+    pub lut: Option<wgpu::TextureView>,
 }
 
 /// A frame to be composed: layers back-to-front over opaque black.

@@ -34,6 +34,8 @@ fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
 @group(0) @binding(0) var layer_tex: texture_2d<f32>;
 @group(0) @binding(1) var layer_sampler: sampler;
 @group(0) @binding(2) var<uniform> u: Uniforms;
+// The clip's 3D LUT (identity when none). reframe.w = 1 enables it.
+@group(0) @binding(3) var lut_tex: texture_3d<f32>;
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -104,6 +106,14 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         }
         rgb = srgb_to_linear(mix(enc, spilled, 1.0 - alpha * alpha));
         a_src = a_src * alpha;
+    }
+    if (u.reframe.w > 0.5) {
+        // LUTs address sRGB-encoded colour; sample at texel centres so the
+        // lattice's ends land exactly on 0 and 1.
+        let enc = linear_to_srgb(rgb);
+        let n = f32(textureDimensions(lut_tex).x);
+        let coord = enc * (n - 1.0) / n + 0.5 / n;
+        rgb = srgb_to_linear(textureSampleLevel(lut_tex, layer_sampler, coord, 0.0).rgb);
     }
     if (u.params.y > 0.5) {
         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));

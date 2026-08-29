@@ -19,6 +19,7 @@ mod export;
 mod gpu;
 #[cfg(target_os = "linux")]
 mod integration;
+mod lut;
 mod media;
 mod perf;
 #[cfg(target_os = "linux")]

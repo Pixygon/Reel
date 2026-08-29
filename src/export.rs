@@ -213,8 +213,12 @@ impl Fit {
     pub(crate) fn chain(self, w: u32, h: u32, tag: &str) -> String {
         match self {
             Fit::Letterbox => format!(
+                // The pad is TRANSPARENT: in the frame server the bars keep
+                // alpha 0, so per-clip grading (LUTs, keys) colours the
+                // picture and never the bars. In the yuv graph path alpha
+                // drops and the pad is plain black — identical look.
                 "scale={w}:{h}:force_original_aspect_ratio=decrease:flags=lanczos,\
-                 pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1"
+                 pad={w}:{h}:(ow-iw)/2:(oh-ih)/2:color=black@0,setsar=1"
             ),
             Fit::Crop => format!(
                 "scale={w}:{h}:force_original_aspect_ratio=increase:flags=lanczos,\
@@ -836,6 +840,8 @@ pub struct Overlays<'a> {
     /// Timeline markers — written into the output as CHAPTERS, so a long
     /// export lands on YouTube with its sections already named.
     pub markers: &'a [f64],
+    /// The project's LUT table — `Effects.lut` indexes into it.
+    pub luts: &'a [String],
 }
 
 /// Start a timeline (edit) export, burning any captions and titles into the
@@ -1301,6 +1307,7 @@ pub enum Job {
         music: Option<crate::edit::Music>,
         overlays: Vec<crate::edit::OverlaySegment>,
         markers: Vec<f64>,
+        luts: Vec<String>,
     },
 }
 
@@ -1390,7 +1397,8 @@ impl Queue {
                         start(path, &next.output, &next.settings, *duration)
                     }
                     Job::Timeline {
-                        segments, project, captions, caption_size, titles, music, overlays, markers,
+                        segments, project, captions, caption_size, titles, music, overlays,
+                        markers, luts,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1403,6 +1411,7 @@ impl Queue {
                             music: music.as_ref(),
                             overlays,
                             markers,
+                            luts,
                         },
                     ),
                 };
@@ -1439,6 +1448,7 @@ mod tests {
             effects: crate::effects::Effects::default(),
             transition_in: 0.0,
             transition_kind: Default::default(),
+            stabilize: false,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -1961,6 +1971,7 @@ mod tests {
             effects: Default::default(),
             transition_in: 0.0,
             transition_kind: Default::default(),
+            stabilize: false,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2098,6 +2109,88 @@ mod tests {
         for f in [&src, &out] {
             let _ = std::fs::remove_file(f);
         }
+    }
+
+    /// Stabilisation, measured: a synthetically shaky clip rendered with and
+    /// without the flag; the stabilised output's mean inter-frame difference
+    /// (shake energy) must drop by at least a third. Not "the filter ran" —
+    /// the shake actually went away.
+    #[test]
+    fn stabilisation_measurably_reduces_shake() {
+        if !std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-filters"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("vidstabtransform"))
+            .unwrap_or(false)
+        {
+            eprintln!("ffmpeg has no vidstab — skipping stabilisation test");
+            return;
+        }
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-stab-src-{}.mp4", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=960x720:rate=25:duration=4",
+                   "-vf", "crop=640:480:x='160+50*sin(n/3.1)':y='120+40*cos(n/2.3)'",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let shake_of = |stabilize: bool| -> f64 {
+            let out = dir.join(format!(
+                "reel-stab-{}-{}.mp4",
+                stabilize as u8,
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&out);
+            let mut s0 = seg(&src.to_string_lossy(), 0.0, 4.0);
+            s0.stabilize = stabilize;
+            let segs = vec![s0];
+            let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+            let job = match crate::engine::render::start_timeline(
+                &segs, &out.to_string_lossy(), &s, (640, 480, 25.0), &Overlays::default(),
+            ) {
+                Ok(j) => j,
+                Err(_) => return -1.0, // no GPU
+            };
+            let deadline = Instant::now() + Duration::from_secs(180);
+            loop {
+                let st = job.state();
+                if st.finished {
+                    assert!(st.error.is_none(), "stab render failed: {:?}", st.error);
+                    break;
+                }
+                assert!(Instant::now() < deadline, "stab render timed out");
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            let probe = std::process::Command::new("ffmpeg")
+                .args(["-i", &out.to_string_lossy(),
+                       "-vf", "tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG",
+                       "-f", "null", "-"])
+                .output()
+                .expect("measure shake");
+            let text = String::from_utf8_lossy(&probe.stderr);
+            let vals: Vec<f64> = text
+                .lines()
+                .filter_map(|l| l.split("YAVG=").nth(1))
+                .filter_map(|v| v.trim().parse().ok())
+                .collect();
+            let _ = std::fs::remove_file(&out);
+            assert!(!vals.is_empty(), "no YAVG values from signalstats");
+            vals.iter().sum::<f64>() / vals.len() as f64
+        };
+
+        let raw = shake_of(false);
+        if raw < 0.0 {
+            eprintln!("no GPU — skipping stabilisation test");
+            return;
+        }
+        let stab = shake_of(true);
+        assert!(
+            stab < raw * 0.67,
+            "stabilisation barely helped: shake {raw:.2} → {stab:.2}"
+        );
+        let _ = std::fs::remove_file(&src);
     }
 
     /// Loudness delivery: ask for −16 LUFS and the finished file must
@@ -2695,6 +2788,7 @@ mod tests {
             effects: Default::default(),
             transition_in: 0.0,
             transition_kind: Default::default(),
+            stabilize: false,
             gain_db: 0.0,
             speed: 2.0,
             keys: Vec::new(),
@@ -2792,7 +2886,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], luts: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);

@@ -41,10 +41,11 @@ pub struct VideoPass {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    identity_lut: wgpu::TextureView,
 }
 
 impl VideoPass {
-    pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
+    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reel-video-shader"),
             source: wgpu::ShaderSource::Wgsl(include_str!("video.wgsl").into()),
@@ -75,6 +76,16 @@ impl VideoPass {
                         ty: wgpu::BufferBindingType::Uniform,
                         has_dynamic_offset: false,
                         min_binding_size: None,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
                     },
                     count: None,
                 },
@@ -119,7 +130,8 @@ impl VideoPass {
             mipmap_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Self { pipeline, layout, sampler }
+        let identity_lut = crate::lut::to_texture(&crate::lut::identity(), device, queue);
+        Self { pipeline, layout, sampler, identity_lut }
     }
 }
 
@@ -132,6 +144,8 @@ pub struct VideoDraw {
     /// The active clip's colour adjustments, previewed live. `None` = show
     /// the picture untouched.
     pub effects: Option<crate::effects::Effects>,
+    /// The clip's LUT, already resolved to a texture on this device.
+    pub lut: Option<wgpu::TextureView>,
 }
 
 /// Bind groups built during `prepare`, consumed in `paint` — a QUEUE, not a
@@ -168,6 +182,10 @@ impl CallbackTrait for VideoDraw {
                 reframe: self
                     .effects
                     .map(|e| [e.zoom, e.pan_x, e.pan_y, 0.0])
+                    .map(|mut r| {
+                        r[3] = if self.lut.is_some() { 1.0 } else { 0.0 };
+                        r
+                    })
                     .unwrap_or([1.0, 0.0, 0.0, 0.0]),
                 fx: self
                     .effects
@@ -187,6 +205,12 @@ impl CallbackTrait for VideoDraw {
                 wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&self.view) },
                 wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&pass.sampler) },
                 wgpu::BindGroupEntry { binding: 2, resource: ubo.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(
+                        self.lut.as_ref().unwrap_or(&pass.identity_lut),
+                    ),
+                },
             ],
         });
         if resources.get::<Prepared>().is_none() {

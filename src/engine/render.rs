@@ -214,6 +214,7 @@ pub fn start_timeline(
     };
 
     let (job, state, cancel) = ExportJob::manual(output);
+    let lut_table: Vec<String> = overlays.luts.to_vec();
     let segments = segments.to_vec();
     let settings = settings.clone();
     let output = output.to_string();
@@ -221,7 +222,7 @@ pub fn start_timeline(
     std::thread::spawn(move || {
         let result = run(
             comp, &segments, &output, &settings, target, total, planned_overlays, ramp_fps,
-            transfers, audio_args, chapters, burnin, &state, &cancel,
+            transfers, lut_table, audio_args, chapters, burnin, &state, &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -281,7 +282,12 @@ pub fn render_still(
                     uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: base_opacity(p, seg, t) * key_op,
                     effects: fx,
-                    use_src_alpha: false,
+                    use_src_alpha: true,
+                    lut: fx
+                        .lut
+                        .and_then(|i| overlays.luts.get(i as usize))
+                        .and_then(|p| crate::lut::load(p).ok())
+                        .map(|l| comp.lut_texture(&l)),
                 },
             ));
         }
@@ -318,6 +324,12 @@ pub fn render_still(
                     opacity: op,
                     effects: o.effects,
                     use_src_alpha: false,
+                    lut: o
+                        .effects
+                        .lut
+                        .and_then(|i| overlays.luts.get(i as usize))
+                        .and_then(|p| crate::lut::load(p).ok())
+                        .map(|l| comp.lut_texture(&l)),
                 },
             ));
         }
@@ -345,6 +357,7 @@ fn run(
     planned_overlays: Vec<(OverlaySegment, u32, u32)>,
     ramp_fps: Vec<Option<f64>>,
     transfers: std::collections::HashMap<String, Option<String>>,
+    lut_table: Vec<String>,
     audio_args: Option<Vec<String>>,
     chapters: Option<String>,
     burnin: Vec<String>,
@@ -480,6 +493,21 @@ fn run(
         );
     };
 
+    // LUT textures on this device, resolved once per index.
+    let mut lut_views: std::collections::HashMap<u32, Option<wgpu::TextureView>> =
+        Default::default();
+    let mut lut_for = |idx: Option<u32>, comp: &Compositor| -> Option<wgpu::TextureView> {
+        let idx = idx?;
+        lut_views
+            .entry(idx)
+            .or_insert_with(|| {
+                lut_table
+                    .get(idx as usize)
+                    .and_then(|p| crate::lut::load(p).ok())
+                    .map(|l| comp.lut_texture(&l))
+            })
+            .clone()
+    };
     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
     let mut ov_active: Vec<Option<Active>> = (0..planned_overlays.len()).map(|_| None).collect();
     let out_tex = comp.target(tw, th);
@@ -506,9 +534,22 @@ fn run(
                 let slot = &mut base_active[p.seg];
                 if slot.is_none() {
                     let fit = settings.fit.chain(tw, th, &p.seg.to_string());
-                    let tone = super::sources::hdr_tonemap_chain(
+                    let mut tone = super::sources::hdr_tonemap_chain(
                         transfers.get(&seg.source).and_then(|t| t.as_deref()),
                     );
+                    // Stabilisation splices in front of the tone/fit chain —
+                    // the detect pass ran (or was cached) at render start.
+                    if seg.stabilize {
+                        let stab = super::sources::stab_chain(
+                            &seg.source,
+                            seg.in_point,
+                            seg.source_len(),
+                        )?;
+                        tone = Some(match tone {
+                            Some(t) => format!("{stab},{t}"),
+                            None => stab,
+                        });
+                    }
                     let feed = match ramp_fps[p.seg] {
                         Some(src_fps) => Feed::Ramped(NativeReader::open(
                             &seg.source,
@@ -577,7 +618,10 @@ fn run(
                     uv,
                     opacity,
                     effects: fx,
-                    use_src_alpha: false,
+                    // Honour alpha: the letterbox pad is transparent, so
+                    // grading colours the picture and never the bars.
+                    use_src_alpha: true,
+                    lut: lut_for(fx.lut, &comp),
                 });
             }
 
@@ -640,6 +684,7 @@ fn run(
                     // is what makes a green-screen inset composite.
                     effects: o.effects,
                     use_src_alpha: false,
+                    lut: lut_for(o.effects.lut, &comp),
                 });
             }
 
@@ -691,6 +736,7 @@ mod tests {
             effects: Effects::default(),
             transition_in: fade,
             transition_kind: Default::default(),
+            stabilize: false,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),

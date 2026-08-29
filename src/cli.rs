@@ -200,6 +200,8 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "zoom", value: Some("N"), help: "1.0 = whole frame; used for reframing" },
             Flag { name: "pan-x", value: Some("N"), help: "-1..1, where the zoom sits" },
             Flag { name: "pan-y", value: Some("N"), help: "-1..1" },
+            Flag { name: "lut", value: Some("FILE.cube"), help: "Grade through a 3D LUT (applied before the trims)" },
+            Flag { name: "lut-off", value: None, help: "Remove the LUT" },
             Flag { name: "key-color", value: Some("RRGGBB"), help: "Chroma key: knock this colour out (e.g. 00b140)" },
             Flag { name: "key-similarity", value: Some("0..1"), help: "How far from the key colour still counts (default 0.3)" },
             Flag { name: "key-softness", value: Some("0..1"), help: "Soft edge width beyond similarity (default 0.1)" },
@@ -297,6 +299,16 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Flag a position in the timeline",
+    },
+    Cmd {
+        name: "stabilize",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "off", value: None, help: "Stop stabilising this clip" },
+            F_JSON,
+        ],
+        help: "Smooth a clip's camera shake at render time (two-pass, cached)",
     },
     Cmd {
         name: "align",
@@ -551,6 +563,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "title" => cmd_title(p),
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
+        "stabilize" => cmd_stabilize(p),
         "align" => cmd_align(p),
         "tighten" => cmd_tighten(p),
         "captions" => cmd_captions(p),
@@ -1027,8 +1040,21 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         if p.on("key-off") {
             c.effects.key_color = None;
         }
+        if p.on("lut-off") {
+            c.effects.lut = None;
+        }
         c.effects
     };
+    if let Some(lut) = p.str("lut").map(String::from) {
+        let abs = std::fs::canonicalize(&lut)
+            .map(|q| q.to_string_lossy().into_owned())
+            .unwrap_or(lut);
+        crate::lut::load(&abs)?; // refuse a broken cube before saving it
+        let idx = proj.add_lut(&abs);
+        if let Some(c) = proj.clip_mut(id) {
+            c.effects.lut = Some(idx);
+        }
+    }
     save(&proj, path)?;
     Ok(Output::new(
         format!("Updated the look of clip {id}"),
@@ -1343,6 +1369,23 @@ fn cmd_marker(p: &Parsed) -> Result<Output> {
     ))
 }
 
+fn cmd_stabilize(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let on = !p.on("off");
+    let mut proj = load(path)?;
+    find_clip_mut(&mut proj, id)?.stabilize = on;
+    save(&proj, path)?;
+    Ok(Output::new(
+        if on {
+            format!("Clip {id} will be stabilised on export (the preview stays raw).")
+        } else {
+            format!("Clip {id} renders unstabilised.")
+        },
+        serde_json::json!({ "clip": id, "stabilize": on }),
+    ))
+}
+
 fn cmd_align(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let id: u64 = p.need_num("clip")?;
@@ -1651,6 +1694,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             music: None,
             overlays: &proj.overlay_segments(),
             markers: &[],
+            luts: &proj.luts,
         };
         let (rgba, w, h) = crate::engine::render::render_still(
             &segments,
@@ -1714,6 +1758,7 @@ fn cmd_render(p: &Parsed) -> Result<Output> {
             music: proj.music.as_ref(),
             overlays: &proj.overlay_segments(),
             markers: &proj.markers,
+            luts: &proj.luts,
         },
     )?;
     await_job(job, p.on("quiet") || p.on("json"))?;

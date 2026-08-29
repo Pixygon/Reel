@@ -169,6 +169,8 @@ Colour, fades and reframing for one clip
 | `--zoom` | `N` | 1.0 = whole frame; used for reframing |
 | `--pan-x` | `N` | -1..1, where the zoom sits |
 | `--pan-y` | `N` | -1..1 |
+| `--lut` | `FILE.cube` | Grade through a 3D LUT (applied before the trims) |
+| `--lut-off` | — | Remove the LUT |
 | `--key-color` | `RRGGBB` | Chroma key: knock this colour out (e.g. 00b140) |
 | `--key-similarity` | `0..1` | How far from the key colour still counts (default 0.3) |
 | `--key-softness` | `0..1` | Soft edge width beyond similarity (default 0.1) |
@@ -256,6 +258,15 @@ Flag a position in the timeline
 | `--at` | `SECONDS` | Where to put it |
 | `--remove` | — | Take it away instead |
 | `--list` | — | Show the markers |
+
+### `reel stabilize PROJECT`
+
+Smooth a clip's camera shake at render time (two-pass, cached)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id |
+| `--off` | — | Stop stabilising this clip |
 
 ### `reel align PROJECT`
 

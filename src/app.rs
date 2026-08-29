@@ -23,6 +23,8 @@ pub enum PickerTarget {
     #[default]
     Media,
     Music,
+    /// A .cube LUT for this clip.
+    Lut(u64),
 }
 
 /// A live PiP preview: its own muted player plus the texture its frames
@@ -92,6 +94,8 @@ pub struct ReelApp {
     pub user_muted: bool,
     /// Scopes panel visibility (histogram + waveform).
     pub show_scopes: bool,
+    /// LUT textures on the preview device, keyed by the project's LUT index.
+    lut_previews: std::collections::HashMap<u32, Option<wgpu::TextureView>>,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -165,6 +169,7 @@ impl ReelApp {
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
+            lut_previews: std::collections::HashMap::new(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
             picker_target: PickerTarget::Media,
@@ -288,6 +293,15 @@ impl ReelApp {
         self.open_picker_inner(true);
     }
 
+    /// Pick a .cube LUT for a clip.
+    pub fn pick_lut(&mut self, clip: u64) {
+        if self.picker.is_some() {
+            return;
+        }
+        self.picker_target = PickerTarget::Lut(clip);
+        self.open_picker_inner(false);
+    }
+
     pub fn open_picker(&mut self) {
         if self.picker.is_some() {
             return; // one picker at a time
@@ -358,6 +372,23 @@ impl ReelApp {
                 self.picker = None;
                 match self.picker_target {
                     PickerTarget::Media => self.open(&path),
+                    PickerTarget::Lut(clip) => {
+                        let abs = std::fs::canonicalize(&path)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or(path);
+                        match crate::lut::load(&abs) {
+                            Ok(_) => {
+                                self.editor.push_undo(&self.project);
+                                let idx = self.project.add_lut(&abs);
+                                if let Some(c) = self.project.clip_mut(clip) {
+                                    c.effects.lut = Some(idx);
+                                }
+                                self.editor.mark_changed();
+                                self.status = "LUT applied — previewed and rendered alike.".into();
+                            }
+                            Err(e) => self.status = format!("Not a usable LUT: {e}"),
+                        }
+                    }
                     PickerTarget::Music => {
                         self.editor.push_undo(&self.project);
                         let keep = self.project.music.clone().unwrap_or_default();
@@ -845,8 +876,37 @@ impl ReelApp {
         }
     }
 
+    /// The preview-device texture for a project LUT index, uploaded lazily.
+    pub fn lut_view(&self, idx: Option<u32>) -> Option<wgpu::TextureView> {
+        idx.and_then(|i| self.lut_previews.get(&i).cloned().flatten())
+    }
+
+    fn sync_lut_previews(&mut self, gpu: &Gpu) {
+        // Resolve every LUT the project references; cheap after the first
+        // frame (the map remembers failures too).
+        let wanted: Vec<u32> = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .filter_map(|c| c.effects.lut)
+            .collect();
+        for idx in wanted {
+            if self.lut_previews.contains_key(&idx) {
+                continue;
+            }
+            let view = self
+                .project
+                .lut_path(idx)
+                .and_then(|p| crate::lut::load(p).ok())
+                .map(|l| crate::lut::to_texture(&l, &gpu.device, &gpu.queue));
+            self.lut_previews.insert(idx, view);
+        }
+    }
+
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
         self.sync_overlay_previews(gpu, egui);
+        self.sync_lut_previews(gpu);
         #[cfg(target_os = "linux")]
         self.sync_mixer();
         if let Some(img) = &mut self.image {
@@ -938,6 +998,7 @@ impl ReelApp {
                 music: self.project.music.clone(),
                 overlays: self.project.overlay_segments(),
                 markers: self.project.markers.clone(),
+                luts: self.project.luts.clone(),
             }
         } else {
             let Some(path) = self.media_path() else { return };
@@ -1142,6 +1203,7 @@ impl ReelApp {
             music: None,
             overlays: &overlays_owned,
             markers: &[],
+            luts: &self.project.luts,
         };
         match crate::engine::render::render_still(
             &segments,

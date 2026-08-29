@@ -34,6 +34,8 @@ pub struct Compositor {
     pipeline: wgpu::RenderPipeline,
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    /// Bound for every layer without a LUT, so the shader samples freely.
+    identity_lut: wgpu::TextureView,
 }
 
 /// The output format. sRGB so the shader samples linear and writes linear,
@@ -101,6 +103,16 @@ impl Compositor {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D3,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -139,7 +151,13 @@ impl Compositor {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Self { device, queue, pipeline, layout, sampler }
+        let identity_lut = crate::lut::to_texture(&crate::lut::identity(), &device, &queue);
+        Self { device, queue, pipeline, layout, sampler, identity_lut }
+    }
+
+    /// Upload a lattice for use on this compositor's device.
+    pub fn lut_texture(&self, lut: &crate::lut::Lut) -> wgpu::TextureView {
+        crate::lut::to_texture(lut, &self.device, &self.queue)
     }
 
     /// Upload straight-alpha RGBA pixels as a compositor input texture.
@@ -206,6 +224,12 @@ impl Compositor {
                             resource: wgpu::BindingResource::Sampler(&self.sampler),
                         },
                         wgpu::BindGroupEntry { binding: 2, resource: ubo.as_entire_binding() },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::TextureView(
+                                l.lut.as_ref().unwrap_or(&self.identity_lut),
+                            ),
+                        },
                     ],
                 })
             })
@@ -247,7 +271,12 @@ impl Compositor {
                 l.opacity.clamp(0.0, 1.0),
                 l.effects.key_softness,
             ],
-            reframe: [l.effects.zoom, l.effects.pan_x, l.effects.pan_y, 0.0],
+            reframe: [
+                l.effects.zoom,
+                l.effects.pan_x,
+                l.effects.pan_y,
+                if l.lut.is_some() { 1.0 } else { 0.0 },
+            ],
             fx: [
                 l.effects.exposure,
                 l.effects.contrast,
@@ -348,6 +377,7 @@ mod tests {
                 opacity: 1.0,
                 effects: Effects::default(),
                 use_src_alpha: false,
+                lut: None,
             }],
         };
         let target = c.target(200, 100);
@@ -379,6 +409,7 @@ mod tests {
                     opacity: 1.0,
                     effects: Effects::default(),
                     use_src_alpha: false,
+                    lut: None,
                 },
                 Layer {
                     view: solid(&c, [255, 0, 0, 255], 4, 4),
@@ -387,6 +418,7 @@ mod tests {
                     opacity: 0.5,
                     effects: Effects::default(),
                     use_src_alpha: false,
+                    lut: None,
                 },
             ],
         };
@@ -405,6 +437,49 @@ mod tests {
             mixed[0] > 170 && mixed[0] < 205 && mixed[2] > 170 && mixed[2] < 205,
             "half-opacity red over blue should meet in linear light, got {mixed:?}"
         );
+    }
+
+    /// The LUT sampled on the GPU must match the CPU reference lattice walk
+    /// — that reference is also what the parity story hangs on.
+    #[test]
+    fn the_gpu_lut_matches_the_reference_lattice() {
+        let Some(c) = comp() else { return };
+        // A channel-rotating, slightly-dimming LUT — obviously not identity.
+        let mut text = String::from("LUT_3D_SIZE 4\n");
+        let n = 3.0f32;
+        for b in 0..4 {
+            for g in 0..4 {
+                for r in 0..4 {
+                    let (rf, gf, bf) = (r as f32 / n, g as f32 / n, b as f32 / n);
+                    text.push_str(&format!("{} {} {}\n", bf * 0.9, rf * 0.9, gf * 0.9));
+                }
+            }
+        }
+        let lut = crate::lut::parse_cube(&text).unwrap();
+        let input = [200u8, 120, 40];
+        let scene = Scene {
+            layers: vec![Layer {
+                view: solid(&c, [input[0], input[1], input[2], 255], 4, 4),
+                rect: [0.0, 0.0, 1.0, 1.0],
+                uv: [0.0, 0.0, 1.0, 1.0],
+                opacity: 1.0,
+                effects: Effects { lut: Some(0), ..Default::default() },
+                use_src_alpha: false,
+                lut: Some(c.lut_texture(&lut)),
+            }],
+        };
+        let target = c.target(16, 16);
+        c.render(&scene, &target);
+        let px = c.read_back(&target);
+        let got = [px[4 * (8 * 16 + 8)], px[4 * (8 * 16 + 8) + 1], px[4 * (8 * 16 + 8) + 2]];
+        let srgb = [input[0] as f32 / 255.0, input[1] as f32 / 255.0, input[2] as f32 / 255.0];
+        let want = crate::lut::apply_reference(&lut, srgb).map(|v| (v * 255.0).round() as i32);
+        for ch in 0..3 {
+            assert!(
+                (got[ch] as i32 - want[ch]).abs() <= 4,
+                "channel {ch}: GPU {got:?} vs reference {want:?}"
+            );
+        }
     }
 
     /// The effects formula on the GPU is the same one ffmpeg renders and the
@@ -429,6 +504,7 @@ mod tests {
                     opacity: 1.0,
                     effects: fx,
                     use_src_alpha: false,
+                    lut: None,
                 }],
             };
             let target = c.target(16, 16);

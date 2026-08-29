@@ -344,6 +344,18 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   pass (measures the finished mix); presets carry Some(-14.0).
 - `waveform::best_lag` = zero-mean NCC over envelopes (min 40-bucket
   overlap, or slivers win by luck) — the sync engine behind `reel align`.
+- LUTs: `Effects.lut` is an INDEX into `Project.luts` (Effects must stay
+  Copy). `lut.rs` parses/caches .cube, uploads Rgba16Float 3D textures
+  (32F isn't filterable), and `apply_reference` is the CPU lattice walk
+  the GPU is tested against. Both pipelines bind the LUT at binding 3
+  (identity when none); enable flag rides reframe.w. Applied on ENCODED
+  values BEFORE the trims. The letterbox pad is TRANSPARENT (black@0 +
+  format=rgba before the pad, use_src_alpha on base layers) so grades
+  never colour the bars.
+- Stabilisation: `Clip.stabilize` → vidstab two-pass; detect results cached
+  in ~/.cache/reel/stab keyed by file+window; the transform splices BEFORE
+  tone/fit. Preview stays raw (a full decode per analysis) — the UI says
+  so. The test measures shake energy (tblend=difference + signalstats).
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

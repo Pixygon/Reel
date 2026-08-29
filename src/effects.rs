@@ -55,6 +55,12 @@ pub struct Effects {
     /// Width of the soft edge beyond `similarity` (0..1).
     #[serde(default = "default_key_softness")]
     pub key_softness: f32,
+    /// Index into the project's LUT table (`Project.luts`) — an index, not
+    /// a path, so Effects stays `Copy` and identical LUTs are shared. The
+    /// LUT applies (on encoded values) before the trims above: conform the
+    /// look first, adjust after.
+    #[serde(default)]
+    pub lut: Option<u32>,
 }
 
 fn default_key_similarity() -> f32 {
@@ -83,6 +89,7 @@ impl Default for Effects {
             key_color: None,
             key_similarity: default_key_similarity(),
             key_softness: default_key_softness(),
+            lut: None,
         }
     }
 }
@@ -99,6 +106,7 @@ impl Effects {
             && self.fade_out <= 0.0
             && !self.has_reframe()
             && self.key_color.is_none()
+            && self.lut.is_none()
     }
 
     pub fn has_reframe(&self) -> bool {

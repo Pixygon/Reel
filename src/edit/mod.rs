@@ -57,6 +57,10 @@ pub struct Clip {
     /// Empty for every clip that never touches animation.
     #[serde(default)]
     pub keys: Vec<(Param, Vec<Keyframe>)>,
+    /// Smooth this clip's camera shake at render time (vidstab two-pass).
+    /// The preview shows the raw footage — stabilisation happens on export.
+    #[serde(default)]
+    pub stabilize: bool,
 }
 
 /// A parameter that can be animated. The address half of the keyframe
@@ -487,6 +491,7 @@ pub struct Segment {
     /// Animated parameters, clip-local time — evaluated per frame by the
     /// frame server.
     pub keys: Vec<(Param, Vec<Keyframe>)>,
+    pub stabilize: bool,
 }
 
 impl Segment {
@@ -627,6 +632,10 @@ pub struct Project {
     /// marker you dropped yesterday should still be there today.
     #[serde(default)]
     pub markers: Vec<f64>,
+    /// The .cube files this project grades with; clips reference them by
+    /// index (`Effects.lut`).
+    #[serde(default)]
+    pub luts: Vec<String>,
     #[serde(skip)]
     next_id: u64,
 }
@@ -655,6 +664,7 @@ impl Default for Project {
             titles: Vec::new(),
             music: None,
             markers: Vec::new(),
+            luts: Vec::new(),
             next_id: 100,
         }
     }
@@ -727,6 +737,7 @@ impl Project {
                 speed: 1.0,
                 pip: Pip::default(),
                 keys: Vec::new(),
+                stabilize: false,
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
@@ -925,6 +936,19 @@ impl Project {
             let _ = span;
         }
         (cuts, removed)
+    }
+
+    /// Register a LUT file (deduplicated) and return its index.
+    pub fn add_lut(&mut self, path: &str) -> u32 {
+        if let Some(i) = self.luts.iter().position(|p| p == path) {
+            return i as u32;
+        }
+        self.luts.push(path.to_string());
+        (self.luts.len() - 1) as u32
+    }
+
+    pub fn lut_path(&self, idx: u32) -> Option<&str> {
+        self.luts.get(idx as usize).map(String::as_str)
     }
 
     /// Make sure a track of this kind exists, creating it if not. Overlay
@@ -1361,6 +1385,7 @@ impl Project {
                     gain_db: c.gain_db,
                     speed: c.speed,
                     keys: c.keys.clone(),
+                    stabilize: c.stabilize,
                 })
             })
             .collect()
