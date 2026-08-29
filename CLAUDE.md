@@ -371,6 +371,11 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   silenced) which export_segments folds into segment gains (-120 dB floor
   when soloed out). The LIVE plan applies the same rules — routing must
   never diverge between preview and render.
+- CURVES: five points at FIXED inputs (0,¼,½,¾,1), Catmull-Rom with
+  MIRRORED phantom ends (2·p0−p1) — clamping them sags identity into a
+  curve, which the test catches. `bake_grade` composes LUT∘curves into one
+  33³ lattice; `grade_key` (lut idx + curve bits) keys per-device texture
+  caches in BOTH pipelines — never resolve a lattice by LUT index alone.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

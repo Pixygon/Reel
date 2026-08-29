@@ -282,11 +282,12 @@ within the phase by editor-workflow importance:
       correlation 1.00). Live angle-cutting UI still open.
 
 ### 3.3 The look
-- [~] Grading: **.cube 3D LUTs** land — parsed and cached, sampled
-      trilinearly on the GPU in both pipelines (GPU-vs-reference parity
-      test), applied before the trims, with a transparent letterbox pad so
-      grades never colour the bars. Curves, levels, HSL qualifiers and
-      white balance still open.
+- [~] Grading: **.cube 3D LUTs** and **tone curves** (master + R/G/B,
+      five-point Catmull-Rom with mirrored ends so identity stays a line) —
+      baked together into ONE 33³ lattice per distinct grade, so a full
+      grade costs one GPU texture sample, shared across clips with the same
+      look, identical in preview and render (GPU-vs-reference tests both).
+      Levels, HSL qualifiers and white balance still open.
 - [x] Scopes v1: live RGB histogram + luma waveform from the preview
       frame. Vectorscope and full RGB-parade waveform still open.
 - [x] **Chroma key**: chroma-weighted distance + despill + soft edge, one
@@ -327,8 +328,9 @@ within the phase by editor-workflow importance:
 ### 3.5 Captions, matured
 - [ ] Word-level timestamps (whisper supports it) → karaoke/word-pop styles
       and exact text-based editing (Phase 4.4).
-- [ ] Caption editor: click a cue to fix wording/timing; styles (font,
-      color, background pill, position presets); per-cue overrides.
+- [x] Caption editor: the cue list is editable in place — fix a word, jump
+      the playhead to a line, delete a cue — with the active cue
+      highlighted while playing. Styles and per-cue overrides still open.
 - [ ] Import/export SRT/VTT/ASS; translation-ready structure (cue text is
       data, styles are separate).
 

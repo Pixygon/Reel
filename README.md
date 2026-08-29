@@ -92,6 +92,15 @@ not the finished tool, but real, honest software you can build and run today.
 - **Power windows.** Limit any grade to an ellipse or rectangle — feathered,
   invertible, and keyframable, so the window can follow a face across the
   shot. Pixel-tested inside, outside and inverted.
+- **Tone curves.** Master and per-channel five-point curves, dragged
+  directly on the widget — baked with your LUT into a single lattice, so a
+  full grade costs one GPU texture sample and previews exactly as it
+  renders.
+- **Publish everywhere in one click.** Queue a render for every platform —
+  YouTube, TikTok, Reels, feed, square, Facebook, X — each at its own
+  frame and loudness, while you keep editing.
+- **Captions you can fix.** The transcribed cues are editable in place:
+  correct a word, jump to a line, delete what you don't want.
 - **Grade through LUTs.** Load any .cube 3D LUT per clip — sampled on the
   GPU, previewed exactly as rendered, applied before your trims, and never
   colouring the letterbox bars.

@@ -65,6 +65,70 @@ pub struct Effects {
     /// this shape (or outside, inverted). Everything is frame fractions.
     #[serde(default)]
     pub mask: Option<Mask>,
+    /// Tone curves — master and per-channel, five points each at fixed
+    /// inputs (0, ¼, ½, ¾, 1). Baked with the LUT into one lattice, so the
+    /// GPU cost of a full grade is one texture sample.
+    #[serde(default)]
+    pub curves: Option<Curves>,
+}
+
+/// Editable tone curves. Each array holds the OUTPUT at inputs
+/// 0, 0.25, 0.5, 0.75, 1 — identity is `[0, .25, .5, .75, 1]`.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Curves {
+    pub master: [f32; 5],
+    pub r: [f32; 5],
+    pub g: [f32; 5],
+    pub b: [f32; 5],
+}
+
+pub const CURVE_ID: [f32; 5] = [0.0, 0.25, 0.5, 0.75, 1.0];
+
+impl Default for Curves {
+    fn default() -> Self {
+        Self { master: CURVE_ID, r: CURVE_ID, g: CURVE_ID, b: CURVE_ID }
+    }
+}
+
+impl Curves {
+    pub fn is_identity(&self) -> bool {
+        let close = |a: &[f32; 5]| a.iter().zip(&CURVE_ID).all(|(x, y)| (x - y).abs() < 1e-4);
+        close(&self.master) && close(&self.r) && close(&self.g) && close(&self.b)
+    }
+
+    /// One channel through master + its own curve.
+    pub fn apply(&self, channel: usize, v: f32) -> f32 {
+        let per = match channel {
+            0 => &self.r,
+            1 => &self.g,
+            _ => &self.b,
+        };
+        curve_eval(per, curve_eval(&self.master, v))
+    }
+}
+
+/// Evaluate a five-point curve at `x` — Catmull-Rom through the points with
+/// clamped ends, then clamped to 0..1. Smooth enough for grading, simple
+/// enough to reason about, and exactly what the lattice bake computes.
+pub fn curve_eval(pts: &[f32; 5], x: f32) -> f32 {
+    let x = x.clamp(0.0, 1.0) * 4.0;
+    let i = (x.floor() as usize).min(3);
+    let t = x - i as f32;
+    // Phantom ends MIRROR the first/last segments (2·p0 − p1), so collinear
+    // points stay a straight line — clamping them instead sags the ends.
+    let p = |j: isize| -> f32 {
+        match j {
+            -1 => 2.0 * pts[0] - pts[1],
+            5 => 2.0 * pts[4] - pts[3],
+            j => pts[j.clamp(0, 4) as usize],
+        }
+    };
+    let (p0, p1, p2, p3) = (p(i as isize - 1), p(i as isize), p(i as isize + 1), p(i as isize + 2));
+    let a = 2.0 * p1;
+    let b = p2 - p0;
+    let c = 2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3;
+    let d = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    (0.5 * (a + b * t + c * t * t + d * t * t * t)).clamp(0.0, 1.0)
 }
 
 /// The grade-limiting window. `w`/`h` are HALF-extents from the centre.
@@ -135,6 +199,7 @@ impl Default for Effects {
             key_softness: default_key_softness(),
             lut: None,
             mask: None,
+            curves: None,
         }
     }
 }
@@ -143,6 +208,11 @@ impl Default for Effects {
 pub const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 impl Effects {
+    /// Does this clip grade through a lattice (LUT and/or curves)?
+    pub fn has_lattice(&self) -> bool {
+        self.lut.is_some() || self.curves.map(|c| !c.is_identity()).unwrap_or(false)
+    }
+
     pub fn is_identity(&self) -> bool {
         (self.exposure - 1.0).abs() < 1e-4
             && (self.contrast - 1.0).abs() < 1e-4
@@ -153,6 +223,7 @@ impl Effects {
             && self.key_color.is_none()
             && self.lut.is_none()
             && self.mask.is_none()
+            && self.curves.map(|c| c.is_identity()).unwrap_or(true)
     }
 
     pub fn has_reframe(&self) -> bool {
@@ -265,6 +336,35 @@ impl Effects {
             }
         }
         a as f32
+    }
+}
+
+#[cfg(test)]
+mod curve_tests {
+    use super::*;
+
+    #[test]
+    fn curves_pass_identity_through_and_bend_where_told() {
+        // Identity in, identity out — everywhere.
+        for x in [0.0, 0.1, 0.25, 0.5, 0.77, 1.0] {
+            assert!((curve_eval(&CURVE_ID, x) - x).abs() < 1e-3, "identity broke at {x}");
+        }
+        // A lifted midpoint bends the middle up and leaves the ends alone.
+        let lift = [0.0, 0.25, 0.65, 0.75, 1.0];
+        assert!((curve_eval(&lift, 0.0)).abs() < 1e-4);
+        assert!((curve_eval(&lift, 1.0) - 1.0).abs() < 1e-4);
+        assert!((curve_eval(&lift, 0.5) - 0.65).abs() < 1e-4, "points are interpolated exactly");
+        assert!(curve_eval(&lift, 0.4) > 0.4, "the lift spreads smoothly");
+        // Output clamps.
+        let wild = [0.0, -0.5, 1.5, 0.75, 1.0];
+        for x in [0.1, 0.3, 0.5, 0.9] {
+            let y = curve_eval(&wild, x);
+            assert!((0.0..=1.0).contains(&y));
+        }
+        // Master then channel compose.
+        let cv = Curves { master: lift, r: [0.0, 0.2, 0.4, 0.6, 1.0], ..Default::default() };
+        let expect = curve_eval(&[0.0, 0.2, 0.4, 0.6, 1.0], curve_eval(&lift, 0.5));
+        assert!((cv.apply(0, 0.5) - expect).abs() < 1e-6);
     }
 }
 

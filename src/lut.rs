@@ -191,6 +191,54 @@ pub fn to_texture(lut: &Lut, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu
     tex.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
+/// Bake a clip's whole lattice grade — the LUT (if any) then the tone
+/// curves — into one 33³ lattice. One texture sample buys the full grade.
+pub fn bake_grade(base: Option<&Lut>, curves: Option<&crate::effects::Curves>) -> Lut {
+    const N: u32 = 33;
+    let n1 = (N - 1) as f32;
+    let mut data = Vec::with_capacity((N * N * N * 4) as usize);
+    for b in 0..N {
+        for g in 0..N {
+            for r in 0..N {
+                let mut c = [r as f32 / n1, g as f32 / n1, b as f32 / n1];
+                if let Some(l) = base {
+                    c = apply_reference(l, c);
+                }
+                if let Some(cv) = curves {
+                    for (ch, v) in c.iter_mut().enumerate() {
+                        *v = cv.apply(ch, *v);
+                    }
+                }
+                data.extend_from_slice(&[c[0], c[1], c[2], 1.0]);
+            }
+        }
+    }
+    Lut { size: N, data }
+}
+
+/// A stable key for a grade: which LUT plus the exact curve values. Lets the
+/// pipelines cache one baked lattice per distinct grade.
+pub fn grade_key(lut_idx: Option<u32>, curves: Option<&crate::effects::Curves>) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    let mut eat = |b: u8| {
+        h ^= b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    };
+    for b in lut_idx.map(|i| i + 1).unwrap_or(0).to_le_bytes() {
+        eat(b);
+    }
+    if let Some(c) = curves {
+        for arr in [&c.master, &c.r, &c.g, &c.b] {
+            for v in arr {
+                for b in v.to_bits().to_le_bytes() {
+                    eat(b);
+                }
+            }
+        }
+    }
+    h
+}
+
 /// CPU reference application — trilinear, exactly what the shader computes.
 /// The parity test drives the GPU against this.
 #[cfg_attr(not(test), allow(dead_code))]

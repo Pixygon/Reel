@@ -257,6 +257,18 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Change how fast a clip plays",
     },
     Cmd {
+        name: "curves",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id" },
+            Flag { name: "channel", value: Some("NAME"), help: "master, r, g or b" },
+            Flag { name: "points", value: Some("Y0,Y1,Y2,Y3,Y4"), help: "Outputs at inputs 0,¼,½,¾,1 (identity: 0,0.25,0.5,0.75,1)" },
+            Flag { name: "reset", value: None, help: "Back to identity on every channel" },
+            F_JSON,
+        ],
+        help: "Tone curves — an S-curve in one flag, baked into the clip's grade",
+    },
+    Cmd {
         name: "transition",
         args: &["PROJECT"],
         flags: &[
@@ -566,6 +578,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "keyframe" => cmd_keyframe(p),
         "pip" => cmd_pip(p),
         "speed" => cmd_speed(p),
+        "curves" => cmd_curves(p),
         "transition" => cmd_transition(p),
         "title" => cmd_title(p),
         "music" => cmd_music(p),
@@ -1244,6 +1257,52 @@ fn cmd_pip(p: &Parsed) -> Result<Output> {
     Ok(Output::new(
         format!("Overlay {id} at ({:.2}, {:.2}), {:.0}% wide", pip.x, pip.y, pip.scale * 100.0),
         serde_json::json!({ "clip": id, "pip": pip }),
+    ))
+}
+
+fn cmd_curves(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    if p.on("reset") {
+        find_clip_mut(&mut proj, id)?.effects.curves = None;
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!("Clip {id}: curves back to identity"),
+            serde_json::json!({ "clip": id, "curves": null }),
+        ));
+    }
+    let channel = p.str("channel").unwrap_or("master");
+    let pts_str = p
+        .str("points")
+        .ok_or_else(|| anyhow!("--points is required (or --reset)"))?;
+    let vals: Vec<f32> = pts_str
+        .split(',')
+        .map(|v| v.trim().parse::<f32>())
+        .collect::<std::result::Result<_, _>>()
+        .map_err(|_| anyhow!("--points wants five numbers, e.g. 0,0.15,0.5,0.85,1"))?;
+    if vals.len() != 5 {
+        bail!("--points wants exactly five values (got {})", vals.len());
+    }
+    let mut arr = [0.0f32; 5];
+    arr.copy_from_slice(&vals);
+    let cv = {
+        let c = find_clip_mut(&mut proj, id)?;
+        let mut cv = c.effects.curves.unwrap_or_default();
+        match channel {
+            "master" | "all" => cv.master = arr,
+            "r" | "red" => cv.r = arr,
+            "g" | "green" => cv.g = arr,
+            "b" | "blue" => cv.b = arr,
+            other => bail!("--channel wants master, r, g or b — got {other:?}"),
+        }
+        c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
+        cv
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Clip {id}: {channel} curve set"),
+        serde_json::json!({ "clip": id, "curves": cv }),
     ))
 }
 

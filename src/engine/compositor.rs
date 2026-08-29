@@ -508,6 +508,44 @@ mod tests {
         assert!(at(150, 50) > 190, "inverted: outside graded");
     }
 
+    /// Curves ride the same lattice: an S-curve baked and sampled on the
+    /// GPU must match the CPU bake, point for point.
+    #[test]
+    fn curves_grade_through_the_baked_lattice() {
+        let Some(c) = comp() else { return };
+        let curves = crate::effects::Curves {
+            master: [0.0, 0.15, 0.5, 0.85, 1.0], // classic S
+            ..Default::default()
+        };
+        let lattice = crate::lut::bake_grade(None, Some(&curves));
+        let input = [64u8, 128, 200];
+        let scene = Scene {
+            layers: vec![Layer {
+                view: solid(&c, [input[0], input[1], input[2], 255], 4, 4),
+                rect: [0.0, 0.0, 1.0, 1.0],
+                uv: [0.0, 0.0, 1.0, 1.0],
+                opacity: 1.0,
+                effects: Effects { curves: Some(curves), ..Default::default() },
+                use_src_alpha: false,
+                lut: Some(c.lut_texture(&lattice)),
+            }],
+        };
+        let target = c.target(16, 16);
+        c.render(&scene, &target);
+        let px = c.read_back(&target);
+        let got = [px[4 * (8 * 16 + 8)], px[4 * (8 * 16 + 8) + 1], px[4 * (8 * 16 + 8) + 2]];
+        for ch in 0..3 {
+            let want = (curves.apply(ch, input[ch] as f32 / 255.0) * 255.0).round() as i32;
+            assert!(
+                (got[ch] as i32 - want).abs() <= 4,
+                "channel {ch}: GPU {got:?} vs curve reference {want}"
+            );
+        }
+        // The S-curve visibly did its job: shadows darker, highlights lighter.
+        assert!(got[0] < input[0], "shadows must darken under an S-curve");
+        assert!(got[2] > input[2], "highlights must lift under an S-curve");
+    }
+
     /// The LUT sampled on the GPU must match the CPU reference lattice walk
     /// — that reference is also what the parity story hangs on.
     #[test]

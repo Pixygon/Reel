@@ -94,8 +94,10 @@ pub struct ReelApp {
     pub user_muted: bool,
     /// Scopes panel visibility (histogram + waveform).
     pub show_scopes: bool,
-    /// LUT textures on the preview device, keyed by the project's LUT index.
-    lut_previews: std::collections::HashMap<u32, Option<wgpu::TextureView>>,
+    /// Which tone curve the panel edits: 0 master, 1 R, 2 G, 3 B.
+    pub curve_channel: usize,
+    /// Baked grade lattices on the preview device, keyed by grade content.
+    lut_previews: std::collections::HashMap<u64, Option<wgpu::TextureView>>,
     pub caption_model: crate::captions::Model,
 
     /// Result channel of a native file-picker running on its own thread.
@@ -169,6 +171,7 @@ impl ReelApp {
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
+            curve_channel: 0,
             lut_previews: std::collections::HashMap::new(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
@@ -880,31 +883,40 @@ impl ReelApp {
         }
     }
 
-    /// The preview-device texture for a project LUT index, uploaded lazily.
-    pub fn lut_view(&self, idx: Option<u32>) -> Option<wgpu::TextureView> {
-        idx.and_then(|i| self.lut_previews.get(&i).cloned().flatten())
+    /// The preview-device lattice for a clip's grade, if it has one.
+    pub fn lut_view(&self, fx: Option<crate::effects::Effects>) -> Option<wgpu::TextureView> {
+        let fx = fx?;
+        if !fx.has_lattice() {
+            return None;
+        }
+        let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+        self.lut_previews.get(&key).cloned().flatten()
     }
 
     fn sync_lut_previews(&mut self, gpu: &Gpu) {
-        // Resolve every LUT the project references; cheap after the first
-        // frame (the map remembers failures too).
-        let wanted: Vec<u32> = self
+        // Bake every grade the project references; a shared look shares one
+        // lattice, and edits to the curves re-bake under a new key. (Old
+        // keys linger until the next session — a few hundred KB at most.)
+        let wanted: Vec<crate::effects::Effects> = self
             .project
             .tracks
             .iter()
             .flat_map(|t| t.clips.iter())
-            .filter_map(|c| c.effects.lut)
+            .filter(|c| c.effects.has_lattice())
+            .map(|c| c.effects)
             .collect();
-        for idx in wanted {
-            if self.lut_previews.contains_key(&idx) {
+        for fx in wanted {
+            let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+            if self.lut_previews.contains_key(&key) {
                 continue;
             }
-            let view = self
-                .project
-                .lut_path(idx)
-                .and_then(|p| crate::lut::load(p).ok())
-                .map(|l| crate::lut::to_texture(&l, &gpu.device, &gpu.queue));
-            self.lut_previews.insert(idx, view);
+            let base = fx
+                .lut
+                .and_then(|i| self.project.lut_path(i).map(String::from))
+                .and_then(|p| crate::lut::load(&p).ok());
+            let lattice = crate::lut::bake_grade(base.as_deref(), fx.curves.as_ref());
+            self.lut_previews
+                .insert(key, Some(crate::lut::to_texture(&lattice, &gpu.device, &gpu.queue)));
         }
     }
 
@@ -1226,6 +1238,56 @@ impl ReelApp {
             }
             Err(e) => self.status = format!("Frame export failed: {e}"),
         }
+    }
+
+    /// Queue one timeline render per social preset — the whole publish
+    /// matrix in a click. Outputs land beside the project, named by
+    /// platform; already-queued or existing files are skipped, not clobbered.
+    pub fn queue_all_platforms(&mut self) -> usize {
+        let segments = self.project.export_segments();
+        if segments.is_empty() {
+            return 0;
+        }
+        let dir = self
+            .editor
+            .project_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
+        let mut queued = 0;
+        for preset in export::Preset::ALL {
+            let mut settings = self.export_settings.clone();
+            preset.apply(&mut settings);
+            let slug: String = preset
+                .name
+                .to_lowercase()
+                .chars()
+                .map(|c| if c.is_alphanumeric() { c } else { '-' })
+                .collect();
+            let out = dir.join(format!("publish-{slug}.mp4"));
+            if out.exists() {
+                continue;
+            }
+            self.queue.push(export::Queued {
+                job: export::Job::Timeline {
+                    segments: segments.clone(),
+                    project: (self.project.width, self.project.height, self.project.fps),
+                    captions: self.project.captions.clone(),
+                    caption_size: self.project.caption_size,
+                    titles: self.project.titles.clone(),
+                    music: self.project.music.clone(),
+                    overlays: self.project.overlay_segments(),
+                    markers: self.project.markers.clone(),
+                    luts: self.project.luts.clone(),
+                    audio_clips: self.project.audio_clips(),
+                },
+                output: out.to_string_lossy().into_owned(),
+                settings,
+                label: preset.name.to_string(),
+            });
+            queued += 1;
+        }
+        queued
     }
 
     /// Advance the render queue; keeps the UI repainting while it works.

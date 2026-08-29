@@ -219,6 +219,17 @@ Change how fast a clip plays
 | `--rate` | `N` | 2 = twice as fast, 0.5 = half. Audio follows. |
 | `--keep-length` | — | Keep the timeline slot; use more or less source |
 
+### `reel curves PROJECT`
+
+Tone curves — an S-curve in one flag, baked into the clip's grade
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id |
+| `--channel` | `NAME` | master, r, g or b |
+| `--points` | `Y0,Y1,Y2,Y3,Y4` | Outputs at inputs 0,¼,½,¾,1 (identity: 0,0.25,0.5,0.75,1) |
+| `--reset` | — | Back to identity on every channel |
+
 ### `reel transition PROJECT`
 
 Crossfade from the previous clip into this one

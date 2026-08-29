@@ -780,6 +780,36 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 });
 
+                // ── Curves ──────────────────────────────────────────────
+                {
+                    ui.add_space(4.0);
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Curves").color(theme::CYAN));
+                        for (i, label) in ["All", "R", "G", "B"].iter().enumerate() {
+                            if ui
+                                .selectable_label(app.curve_channel == i, *label)
+                                .clicked()
+                            {
+                                app.curve_channel = i;
+                            }
+                        }
+                        let has = app
+                            .project
+                            .clip(id)
+                            .and_then(|c| c.effects.curves)
+                            .map(|c| !c.is_identity())
+                            .unwrap_or(false);
+                        if has && ui.small_button("Reset").clicked() {
+                            app.editor.push_undo(&app.project);
+                            if let Some(c) = app.project.clip_mut(id) {
+                                c.effects.curves = None;
+                            }
+                            app.editor.mark_changed();
+                        }
+                    });
+                    tone_curve_editor(ui, app, id);
+                }
+
                 // ── Power window ────────────────────────────────────────
                 {
                     let mut fxm = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
@@ -1121,13 +1151,58 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     .color(egui::Color32::from_gray(150)),
             );
             ui.add(egui::Slider::new(&mut app.project.caption_size, 12..=40).text("Size"));
+            // The cue editor: fix a word, nudge a timing, drop a line —
+            // whisper gets it almost right, and "almost" is editable.
+            let head = app.editor.playhead;
+            egui::ScrollArea::vertical()
+                .id_salt("cues")
+                .max_height(150.0)
+                .show(ui, |ui| {
+                    let mut delete: Option<usize> = None;
+                    let n = app.project.captions.len();
+                    for i in 0..n {
+                        let (start, active) = {
+                            let cue = &app.project.captions[i];
+                            (cue.start, head >= cue.start && head < cue.end)
+                        };
+                        ui.horizontal(|ui| {
+                            if ui
+                                .small_button(RichText::new(format!("{start:.1}s")).monospace())
+                                .on_hover_text("Jump the playhead here")
+                                .clicked()
+                            {
+                                app.seek_timeline(start);
+                            }
+                            let cue = &mut app.project.captions[i];
+                            let mut text = cue.text.clone();
+                            let edit = ui.add(
+                                egui::TextEdit::singleline(&mut text)
+                                    .desired_width(ui.available_width() - 50.0)
+                                    .text_color(if active { theme::CYAN } else { theme::STAR }),
+                            );
+                            if edit.changed() {
+                                cue.text = text;
+                                app.editor.mark_changed();
+                            }
+                            if ui.small_button("−").on_hover_text("Delete this cue").clicked() {
+                                delete = Some(i);
+                            }
+                        });
+                    }
+                    if let Some(i) = delete {
+                        app.editor.push_undo(&app.project);
+                        app.project.captions.remove(i);
+                        app.editor.mark_changed();
+                    }
+                });
             ui.horizontal(|ui| {
                 if ui.button("Redo captions").clicked() {
                     app.start_captions();
                 }
-                if ui.button("Remove").clicked() {
+                if ui.button("Remove all").clicked() {
                     app.editor.push_undo(&app.project);
                     app.project.captions.clear();
+                    app.editor.mark_changed();
                 }
             });
         } else {
@@ -1321,7 +1396,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     tint: [1.0, 1.0, 1.0, fade],
                     use_src_alpha: app.image.is_some(),
                     effects,
-                    lut: app.lut_view(effects.and_then(|e| e.lut)),
+                    lut: app.lut_view(effects),
                 },
             ));
             // The incoming half of a crossfade, blended over the outgoing
@@ -1376,7 +1451,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                                     tint: [1.0, 1.0, 1.0, in_mul],
                                     use_src_alpha: false,
                                     effects: fx,
-                                    lut: app.lut_view(fx.and_then(|e| e.lut)),
+                                    lut: app.lut_view(fx),
                                 },
                             ));
                         }
@@ -1528,7 +1603,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
                         tint: [1.0, 1.0, 1.0, 1.0],
                         use_src_alpha: false,
                         effects: fx,
-                        lut: app.lut_view(fx.and_then(|e| e.lut)),
+                        lut: app.lut_view(fx),
                     },
                 ));
                 drew = true;
@@ -1652,6 +1727,75 @@ fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
     if response.drag_stopped() {
         app.editor.mark_changed();
     }
+}
+
+/// The tone-curve editor: five points at fixed inputs, dragged vertically.
+/// Master and per-channel; the drawn curve is `curve_eval`, the same
+/// function the lattice bakes — so the widget IS the grade.
+fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+    use crate::effects::{curve_eval, Curves};
+    let curves = app
+        .project
+        .clip(id)
+        .and_then(|c| c.effects.curves)
+        .unwrap_or_default();
+    let ch = app.curve_channel;
+    let pts = match ch {
+        0 => curves.master,
+        1 => curves.r,
+        2 => curves.g,
+        _ => curves.b,
+    };
+
+    let width = ui.available_width().max(60.0);
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(width, 110.0), Sense::click_and_drag());
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 6.0, theme::VOID_2);
+    let to_x = |x: f32| rect.left() + x * rect.width();
+    let to_y = |y: f32| rect.bottom() - y * rect.height();
+    // The identity diagonal, for reference.
+    painter.line_segment(
+        [egui::pos2(to_x(0.0), to_y(0.0)), egui::pos2(to_x(1.0), to_y(1.0))],
+        Stroke::new(0.5, egui::Color32::from_gray(60)),
+    );
+    let colour = [theme::STAR, Color32::from_rgb(255, 90, 90), Color32::from_rgb(90, 230, 120), Color32::from_rgb(110, 150, 255)][ch];
+    let n = 96;
+    let line: Vec<egui::Pos2> = (0..=n)
+        .map(|i| {
+            let x = i as f32 / n as f32;
+            egui::pos2(to_x(x), to_y(curve_eval(&pts, x)))
+        })
+        .collect();
+    painter.add(egui::Shape::line(line, Stroke::new(1.5, colour)));
+    for (i, y) in pts.iter().enumerate() {
+        let p = egui::pos2(to_x(i as f32 / 4.0), to_y(*y));
+        painter.circle_filled(p, 4.0, colour);
+        painter.circle_stroke(p, 4.0, Stroke::new(1.0, theme::VOID));
+    }
+
+    if response.dragged() || response.clicked() {
+        if let Some(m) = response.interact_pointer_pos() {
+            let xi = (((m.x - rect.left()) / rect.width()) * 4.0).round().clamp(0.0, 4.0) as usize;
+            let y = (1.0 - (m.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+            if response.drag_started() || response.clicked() {
+                app.editor.push_undo(&app.project);
+            }
+            if let Some(c) = app.project.clip_mut(id) {
+                let mut cv = c.effects.curves.unwrap_or_default();
+                let arr = match ch {
+                    0 => &mut cv.master,
+                    1 => &mut cv.r,
+                    2 => &mut cv.g,
+                    _ => &mut cv.b,
+                };
+                arr[xi] = y;
+                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
+            }
+            app.editor.mark_changed();
+        }
+    }
+    let _ = Curves::default();
 }
 
 /// The keyframe curve editor for one clip + the panel's selected parameter.
@@ -2340,6 +2484,27 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 if let Some(p) = chosen {
                     p.apply(&mut app.export_settings);
                     app.export_out = app.preset_output(p);
+                }
+                // Publish everywhere: one click queues a render per
+                // platform — the queue runs them in order while you keep
+                // editing.
+                if app.export_timeline {
+                    let every = egui::Button::new(
+                        RichText::new("Queue ALL platforms").color(theme::VOID),
+                    )
+                    .fill(theme::EMBER)
+                    .corner_radius(8.0);
+                    if ui
+                        .add_sized([ui.available_width(), 26.0], every)
+                        .on_hover_text(
+                            "One render per preset — YouTube, TikTok, Reels, feed, square, \
+                             Facebook, X — named after the platform, delivered at its loudness",
+                        )
+                        .clicked()
+                    {
+                        let count = app.queue_all_platforms();
+                        app.status = format!("{count} renders queued — keep editing.");
+                    }
                 }
                 ui.add_space(6.0);
                 let custom = export::Preset::ALL.iter().all(|p| !p.is_active(&app.export_settings));

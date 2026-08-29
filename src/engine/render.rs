@@ -284,11 +284,16 @@ pub fn render_still(
                     opacity: base_opacity(p, seg, t) * key_op,
                     effects: fx,
                     use_src_alpha: true,
-                    lut: fx
-                        .lut
-                        .and_then(|i| overlays.luts.get(i as usize))
-                        .and_then(|p| crate::lut::load(p).ok())
-                        .map(|l| comp.lut_texture(&l)),
+                    lut: fx.has_lattice().then(|| {
+                        let base = fx
+                            .lut
+                            .and_then(|i| overlays.luts.get(i as usize))
+                            .and_then(|p| crate::lut::load(p).ok());
+                        comp.lut_texture(&crate::lut::bake_grade(
+                            base.as_deref(),
+                            fx.curves.as_ref(),
+                        ))
+                    }),
                 },
             ));
         }
@@ -325,12 +330,17 @@ pub fn render_still(
                     opacity: op,
                     effects: o.effects,
                     use_src_alpha: false,
-                    lut: o
-                        .effects
-                        .lut
-                        .and_then(|i| overlays.luts.get(i as usize))
-                        .and_then(|p| crate::lut::load(p).ok())
-                        .map(|l| comp.lut_texture(&l)),
+                    lut: o.effects.has_lattice().then(|| {
+                        let base = o
+                            .effects
+                            .lut
+                            .and_then(|i| overlays.luts.get(i as usize))
+                            .and_then(|p| crate::lut::load(p).ok());
+                        comp.lut_texture(&crate::lut::bake_grade(
+                            base.as_deref(),
+                            o.effects.curves.as_ref(),
+                        ))
+                    }),
                 },
             ));
         }
@@ -494,21 +504,30 @@ fn run(
         );
     };
 
-    // LUT textures on this device, resolved once per index.
-    let mut lut_views: std::collections::HashMap<u32, Option<wgpu::TextureView>> =
+    // Baked grade lattices (LUT ∘ curves) on this device, one per distinct
+    // grade — a timeline of clips sharing a look shares one texture.
+    let mut grade_views: std::collections::HashMap<u64, Option<wgpu::TextureView>> =
         Default::default();
-    let mut lut_for = |idx: Option<u32>, comp: &Compositor| -> Option<wgpu::TextureView> {
-        let idx = idx?;
-        lut_views
-            .entry(idx)
-            .or_insert_with(|| {
-                lut_table
-                    .get(idx as usize)
-                    .and_then(|p| crate::lut::load(p).ok())
-                    .map(|l| comp.lut_texture(&l))
-            })
-            .clone()
-    };
+    let mut lut_for =
+        |fx: &crate::effects::Effects, comp: &Compositor| -> Option<wgpu::TextureView> {
+            if !fx.has_lattice() {
+                return None;
+            }
+            let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+            grade_views
+                .entry(key)
+                .or_insert_with(|| {
+                    let base = fx
+                        .lut
+                        .and_then(|i| lut_table.get(i as usize))
+                        .and_then(|p| crate::lut::load(p).ok());
+                    Some(comp.lut_texture(&crate::lut::bake_grade(
+                        base.as_deref(),
+                        fx.curves.as_ref(),
+                    )))
+                })
+                .clone()
+        };
     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
     let mut ov_active: Vec<Option<Active>> = (0..planned_overlays.len()).map(|_| None).collect();
     let out_tex = comp.target(tw, th);
@@ -622,7 +641,7 @@ fn run(
                     // Honour alpha: the letterbox pad is transparent, so
                     // grading colours the picture and never the bars.
                     use_src_alpha: true,
-                    lut: lut_for(fx.lut, &comp),
+                    lut: lut_for(&fx, &comp),
                 });
             }
 
@@ -685,7 +704,7 @@ fn run(
                     // is what makes a green-screen inset composite.
                     effects: o.effects,
                     use_src_alpha: false,
-                    lut: lut_for(o.effects.lut, &comp),
+                    lut: lut_for(&o.effects, &comp),
                 });
             }
 
