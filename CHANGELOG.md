@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.35.0] — 2026-08-29
+
+### Added
+- A real transition library: crossfade, dip-to-black, four wipes (left/right/up/down) and two slides. Pick one per cut with the `--kind` flag or the transition dropdown in the editor, and the live preview now shows the exact same geometry the final render produces. _(4318a20)_
+- Social export presets (YouTube, TikTok, Reels/Shorts, Instagram, Facebook, X) now automatically deliver audio normalized to -14 LUFS, so uploads don't get squashed or boosted by the platform's own loudness processing. A new `--loudness` flag lets you set a custom target on any render or transcode. _(4318a20)_
+- New `reel align` command syncs one clip to another by matching their audio — perfect for lining up multicam takes without clap sticks or timecode. _(4318a20)_
+
+### Changed
+- The `reel transition` command's `--seconds` flag is now described as controlling transition length generally (not just crossfade), reflecting the new range of transition types available via `--kind`. _(4318a20)_
+
+
 ## [0.34.0] — 2026-08-28
 
 ### Added
