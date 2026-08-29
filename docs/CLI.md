@@ -217,7 +217,8 @@ Crossfade from the previous clip into this one
 | Flag | Value | Meaning |
 | --- | --- | --- |
 | `--clip` | `ID` | Clip id — the fade runs INTO this clip |
-| `--seconds` | `SECONDS` | Crossfade length (0 = hard cut) |
+| `--seconds` | `SECONDS` | Transition length (0 = hard cut) |
+| `--kind` | `NAME` | fade, dip, wipe-left/right/up/down, slide-left/right |
 
 ### `reel title ACTION PROJECT`
 
@@ -255,6 +256,16 @@ Flag a position in the timeline
 | `--at` | `SECONDS` | Where to put it |
 | `--remove` | — | Take it away instead |
 | `--list` | — | Show the markers |
+
+### `reel align PROJECT`
+
+Sync one clip to another by their AUDIO — multicam without clap sticks
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | The clip to move |
+| `--to` | `ID` | The clip to sync against |
+| `--window` | `SECONDS` | Largest offset to search (default 90) |
 
 ### `reel tighten PROJECT`
 
@@ -300,6 +311,7 @@ Render the edit — captions, titles and music included
 | `--resolution` | `HEIGHT` | source, 2160, 1080, 720, 480 |
 | `--fit` | `MODE` | letterbox, crop or blur (how a mismatched aspect is filled) |
 | `--audio` | `MODE` | copy (pass the source audio through) or encode |
+| `--loudness` | `LUFS` | Deliver audio at this integrated loudness (e.g. -14); presets set it automatically |
 | `--no-hardware` | — | Force the software encoder |
 | `--overwrite` | — | Replace the output file if it exists |
 | `--quiet` | — | Don't print progress |
@@ -316,6 +328,7 @@ Transcode one file, no project needed
 | `--resolution` | `HEIGHT` | source, 2160, 1080, 720, 480 |
 | `--fit` | `MODE` | letterbox, crop or blur (how a mismatched aspect is filled) |
 | `--audio` | `MODE` | copy (pass the source audio through) or encode |
+| `--loudness` | `LUFS` | Deliver audio at this integrated loudness (e.g. -14); presets set it automatically |
 | `--no-hardware` | — | Force the software encoder |
 | `--overwrite` | — | Replace the output file if it exists |
 | `--quiet` | — | Don't print progress |

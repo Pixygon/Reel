@@ -89,6 +89,13 @@ not the finished tool, but real, honest software you can build and run today.
 - **Scopes, chapters, stills.** A live histogram and waveform while you
   grade; markers become real MP4 chapters on export; and one button saves
   the composed frame under the playhead as a PNG.
+- **A real transition library.** Crossfade, dip-to-black, wipes and slides —
+  picked per cut, previewed live with the same geometry the render uses.
+- **Delivered at the platform's loudness.** Social presets normalize the
+  finished mix to −14 LUFS (music and ducking included), so your upload
+  doesn't get squashed or boosted by the platform.
+- **Multicam sync without clap sticks.** `reel align` lines two takes up by
+  their audio alone.
 - **One click removes the dead air.** ✂ Tighten (or `reel tighten`) finds
   every silence in the edit, cuts it with breathing room around your words,
   and closes the timeline up — the podcast jump-cut pass, undoable.

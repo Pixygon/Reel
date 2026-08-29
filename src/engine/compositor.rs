@@ -22,11 +22,10 @@ struct Uniforms {
     reframe: [f32; 4],
     /// exposure, contrast, saturation, unused.
     fx: [f32; 4],
-    /// Chroma key: rgb + similarity; softness in params.w... no — softness
-    /// rides in params[3]? See uniforms(): params = [use_src_alpha,
-    /// apply_fx, opacity, key_softness]; key.w = similarity; key_on when
-    /// key != vec4(0).
+    /// Chroma key: rgb + similarity (softness in params[3]; enable in fx[3]).
     key: [f32; 4],
+    /// The uv window of the layer shown across `rect` — wipes crop both.
+    uvr: [f32; 4],
 }
 
 pub struct Compositor {
@@ -260,6 +259,7 @@ impl Compositor {
                 .key_color
                 .map(|c| [c[0], c[1], c[2], l.effects.key_similarity])
                 .unwrap_or([0.0; 4]),
+            uvr: l.uv,
         }
     }
 
@@ -344,6 +344,7 @@ mod tests {
             layers: vec![Layer {
                 view: solid(&c, [255, 0, 0, 255], 8, 8),
                 rect: [0.25, 0.25, 0.75, 0.75],
+                uv: [0.0, 0.0, 1.0, 1.0],
                 opacity: 1.0,
                 effects: Effects::default(),
                 use_src_alpha: false,
@@ -374,6 +375,7 @@ mod tests {
                 Layer {
                     view: solid(&c, [0, 0, 255, 255], 4, 4),
                     rect: [0.0, 0.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: 1.0,
                     effects: Effects::default(),
                     use_src_alpha: false,
@@ -381,6 +383,7 @@ mod tests {
                 Layer {
                     view: solid(&c, [255, 0, 0, 255], 4, 4),
                     rect: [0.5, 0.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: 0.5,
                     effects: Effects::default(),
                     use_src_alpha: false,
@@ -422,6 +425,7 @@ mod tests {
                 layers: vec![Layer {
                     view: solid(&c, [input[0], input[1], input[2], 255], 4, 4),
                     rect: [0.0, 0.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: 1.0,
                     effects: fx,
                     use_src_alpha: false,

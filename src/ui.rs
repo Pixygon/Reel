@@ -836,10 +836,29 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         app.editor.mark_changed();
                     }
                     if xf > 0.0 {
+                        let mut kind = app
+                            .project
+                            .clip(id)
+                            .map(|c| c.transition_kind)
+                            .unwrap_or_default();
+                        let before_kind = kind;
+                        egui::ComboBox::from_id_salt("transkind")
+                            .selected_text(kind.label())
+                            .show_ui(ui, |ui| {
+                                for k in crate::edit::TransitionKind::ALL {
+                                    ui.selectable_value(&mut kind, k, k.label());
+                                }
+                            });
+                        if kind != before_kind {
+                            if let Some(c) = app.project.clip_mut(id) {
+                                c.transition_kind = kind;
+                            }
+                            app.editor.mark_changed();
+                        }
                         ui.label(
                             RichText::new(
-                                "The preview fades through the incoming clip; the render \
-                                 overlaps the two and the edit shortens by the fade.",
+                                "Previewed live; the render overlaps the clips and the \
+                                 edit shortens by the transition.",
                             )
                             .small()
                             .color(egui::Color32::from_gray(140)),
@@ -1149,24 +1168,57 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             // picture at the ramp's opacity — drawn through the same video
             // pass so its colour effects apply. This is what makes a fade
             // preview as a fade instead of a hard cut.
-            if let Some((clip_id, progress)) = app.transition_preview {
+            if let Some((clip_id, progress, kind)) = app.transition_preview {
                 if let Some(ov) = app.overlay_previews.get(&clip_id) {
                     if let Some(tex) = &ov.tex {
                         let fx = app
                             .project
                             .clip(clip_id)
                             .map(|c| c.animated((app.editor.playhead - c.start).max(0.0)).0);
-                        painter.add(egui_wgpu::Callback::new_paint_callback(
-                            img_rect,
-                            crate::video_pass::VideoDraw {
-                                view: tex
-                                    .texture
-                                    .create_view(&wgpu::TextureViewDescriptor::default()),
-                                tint: [1.0, 1.0, 1.0, progress],
-                                use_src_alpha: false,
-                                effects: fx,
-                            },
-                        ));
+                        // The SAME geometry the frame server renders: mods
+                        // give the incoming rect/uv and both opacities.
+                        let (out_mul, in_mul, r, _) =
+                            crate::engine::render::transition_mods(kind, progress);
+                        // Outgoing side dimming (dip-to-black) — a black
+                        // veil over the base picture.
+                        if out_mul < 0.999 {
+                            painter.rect_filled(
+                                img_rect,
+                                0.0,
+                                Color32::from_black_alpha(((1.0 - out_mul) * 255.0) as u8),
+                            );
+                        }
+                        if in_mul > 0.001 {
+                            let draw_rect = Rect::from_min_max(
+                                egui::pos2(
+                                    img_rect.left() + r[0] * img_rect.width(),
+                                    img_rect.top() + r[1] * img_rect.height(),
+                                ),
+                                egui::pos2(
+                                    img_rect.left() + r[2] * img_rect.width(),
+                                    img_rect.top() + r[3] * img_rect.height(),
+                                ),
+                            );
+                            // Wipes crop; slides move a full frame. Either
+                            // way, clip the callback to the picture so a
+                            // slide never draws over the panels.
+                            let clipped = painter.with_clip_rect(draw_rect.intersect(img_rect));
+                            clipped.add(egui_wgpu::Callback::new_paint_callback(
+                                match kind {
+                                    crate::edit::TransitionKind::SlideLeft
+                                    | crate::edit::TransitionKind::SlideRight => draw_rect,
+                                    _ => img_rect,
+                                },
+                                crate::video_pass::VideoDraw {
+                                    view: tex
+                                        .texture
+                                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                                    tint: [1.0, 1.0, 1.0, in_mul],
+                                    use_src_alpha: false,
+                                    effects: fx,
+                                },
+                            ));
+                        }
                     }
                 }
             }

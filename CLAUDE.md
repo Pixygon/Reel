@@ -334,6 +334,16 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   every hole FIRST, then cuts from the END backwards so earlier positions
   stay valid. Multi-select: `editor.multi` + `selected` as primary; group
   move applies the primary's delta to the rest.
+- TRANSITIONS: `TransitionKind` on the clip; `engine::render::transition_mods`
+  is the ONE geometry function (out/in opacities + incoming rect + uv) —
+  wipes crop rect AND uv together (reveal, never squash); slides move a
+  full-frame rect. The frame server executes it, the preview draws the same
+  numbers (clip-rects/offsets), the graph fallback maps to xfade names. The
+  compositor Layer grew a `uv` window (6th uniform vec4 `uvr`).
+- Loudness: `ExportSettings.loudness` → loudnorm appended LAST in the wav
+  pass (measures the finished mix); presets carry Some(-14.0).
+- `waveform::best_lag` = zero-mean NCC over envelopes (min 40-bucket
+  overlap, or slivers win by luck) — the sync engine behind `reel align`.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

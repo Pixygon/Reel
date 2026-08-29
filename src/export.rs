@@ -243,20 +243,22 @@ pub struct Preset {
     pub fit: Fit,
     pub codec: Codec,
     pub quality: Quality,
+    /// The platform's loudness target, LUFS.
+    pub loudness: Option<f32>,
 }
 
 impl Preset {
     /// Vertical 9:16 is the shape of TikTok / Reels / Shorts; 1:1 and 4:5 are
     /// the feed shapes; 16:9 is YouTube and X.
     pub const ALL: &'static [Preset] = &[
-        Preset { name: "YouTube", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High },
-        Preset { name: "YouTube 4K", note: "2160p · 16:9", w: 3840, h: 2160, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High },
-        Preset { name: "TikTok", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
-        Preset { name: "Reels / Shorts", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
-        Preset { name: "Instagram feed", note: "1080×1350 · 4:5", w: 1080, h: 1350, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
-        Preset { name: "Square", note: "1080×1080 · 1:1", w: 1080, h: 1080, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced },
-        Preset { name: "Facebook", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced },
-        Preset { name: "X / Twitter", note: "720p · 16:9", w: 1280, h: 720, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced },
+        Preset { name: "YouTube", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High, loudness: Some(-14.0) },
+        Preset { name: "YouTube 4K", note: "2160p · 16:9", w: 3840, h: 2160, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::High, loudness: Some(-14.0) },
+        Preset { name: "TikTok", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
+        Preset { name: "Reels / Shorts", note: "1080×1920 · 9:16", w: 1080, h: 1920, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
+        Preset { name: "Instagram feed", note: "1080×1350 · 4:5", w: 1080, h: 1350, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
+        Preset { name: "Square", note: "1080×1080 · 1:1", w: 1080, h: 1080, fit: Fit::Blur, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
+        Preset { name: "Facebook", note: "1080p · 16:9", w: 1920, h: 1080, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
+        Preset { name: "X / Twitter", note: "720p · 16:9", w: 1280, h: 720, fit: Fit::Letterbox, codec: Codec::H264, quality: Quality::Balanced, loudness: Some(-14.0) },
     ];
 
     pub fn apply(&self, s: &mut ExportSettings) {
@@ -266,6 +268,9 @@ impl Preset {
         s.target = Some((self.w, self.h));
         s.fit = self.fit;
         s.audio = AudioMode::Encode { kbps: 160 };
+        // Platform delivery includes the platform's loudness target — the
+        // whole point of picking a destination instead of a resolution.
+        s.loudness = self.loudness;
     }
 
     /// Is this preset what the settings currently describe?
@@ -301,6 +306,9 @@ pub struct ExportSettings {
     pub target: Option<(u32, u32)>,
     /// How the source is mapped into `target` when the aspect differs.
     pub fit: Fit,
+    /// Deliver the audio at this integrated loudness (LUFS) — the platform
+    /// targets (-14 for YouTube and the socials). None = leave levels alone.
+    pub loudness: Option<f32>,
 }
 
 impl Default for ExportSettings {
@@ -316,6 +324,7 @@ impl Default for ExportSettings {
             // normal timeline case) it's a no-op, and it costs nothing.
             // Presets pick Blur where a shape change is expected.
             fit: Fit::Letterbox,
+            loudness: None,
         }
     }
 }
@@ -721,7 +730,8 @@ pub fn build_timeline_args_full(
             if d > 0.0 {
                 let start = (offset - d).max(0.0);
                 graph.push_str(&format!(
-                    "[{vprev}][v{k}]xfade=transition=fade:duration={d:.4}:offset={start:.4}[{vo}];"
+                    "[{vprev}][v{k}]xfade=transition={}:duration={d:.4}:offset={start:.4}[{vo}];",
+                    segments[k].transition_kind.xfade_name()
                 ));
                 if with_audio {
                     graph.push_str(&format!("[{aprev}][a{k}]acrossfade=d={d:.4}[{ao}];"));
@@ -1035,6 +1045,7 @@ pub(crate) fn build_timeline_audio_wav_args(
     segments: &[Segment],
     with_audio: bool,
     music: Option<&crate::edit::Music>,
+    loudness: Option<f32>,
     wav_out: &str,
 ) -> Option<Vec<String>> {
     let music = music.filter(|m| !m.source.is_empty());
@@ -1154,7 +1165,16 @@ pub(crate) fn build_timeline_audio_wav_args(
         }
         push_music_mix(&mut graph, &mut audio_out, idx, m, crate::edit::render_duration(segments));
     }
-    let out_label = audio_out?;
+    let mut out_label = audio_out?;
+    // Loudness delivery: one-pass loudnorm to the platform target. Sits at
+    // the very end so it measures the finished mix, music and all.
+    if let Some(target) = loudness {
+        graph.push_str(&format!(
+            ";{out_label}loudnorm=I={:.1}:TP=-1.5:LRA=11[aloud]",
+            target.clamp(-36.0, -8.0)
+        ));
+        out_label = "[aloud]".into();
+    }
     a.splice(0..0, ["-y".into()]);
     a.extend([
         "-filter_complex".into(),
@@ -1418,6 +1438,7 @@ mod tests {
             duration,
             effects: crate::effects::Effects::default(),
             transition_in: 0.0,
+            transition_kind: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -1445,6 +1466,7 @@ mod tests {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let a = build_args("in.mkv", "out.mp4", &s);
         let joined = a.join(" ");
@@ -1465,6 +1487,7 @@ mod tests {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let a = build_args("in.mp4", "out.mkv", &s);
         let joined = a.join(" ");
@@ -1483,6 +1506,7 @@ mod tests {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let a = build_args("in.mp4", "out.mp3", &s);
         let joined = a.join(" ");
@@ -1502,6 +1526,7 @@ mod tests {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let a = build_args("in.png", "out.jpg", &s);
         let joined = a.join(" ");
@@ -1935,6 +1960,7 @@ mod tests {
             duration: 4.0,
             effects: Default::default(),
             transition_in: 0.0,
+            transition_kind: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2070,6 +2096,136 @@ mod tests {
         assert!(start < mid && mid < end, "brightness must rise monotonically");
 
         for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Loudness delivery: ask for −16 LUFS and the finished file must
+    /// MEASURE −16 (±1.5). ebur128 on the real output is the only honest
+    /// referee here.
+    #[test]
+    fn delivered_loudness_hits_the_target() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-loud-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-loud-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // A quiet tone (−30ish) so normalisation has real work to do.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "color=c=gray:size=160x120:rate=25:duration=4",
+                   "-f", "lavfi", "-i", "sine=frequency=300:duration=4",
+                   "-af", "volume=-18dB",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                   &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let segs = vec![seg(&src.to_string_lossy(), 0.0, 4.0)];
+        let s = ExportSettings {
+            quality: Quality::Small,
+            hardware: false,
+            loudness: Some(-16.0),
+            ..Default::default()
+        };
+        let job = start_timeline_with_captions(
+            &segs, &out.to_string_lossy(), &s, (160, 120, 25.0), Overlays::default(),
+        )
+        .expect("start loudness render");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "loudness render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "loudness render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        let probe = std::process::Command::new("ffmpeg")
+            .args(["-i", &out.to_string_lossy(), "-af", "ebur128", "-f", "null", "-"])
+            .output()
+            .expect("run ebur128");
+        let text = String::from_utf8_lossy(&probe.stderr);
+        let measured: f32 = text
+            .lines()
+            .rev()
+            .find_map(|l| {
+                let l = l.trim();
+                l.strip_prefix("I:")
+                    .and_then(|v| v.trim().strip_suffix("LUFS"))
+                    .and_then(|v| v.trim().parse().ok())
+            })
+            .unwrap_or_else(|| panic!("no integrated loudness in ebur128 output:\n{text}"));
+        assert!(
+            (measured - -16.0).abs() < 1.5,
+            "asked for −16 LUFS, delivered {measured:.1}"
+        );
+
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// A wipe, mid-travel, in rendered pixels: red cuts to blue with a
+    /// WipeRight — halfway through, the frame's left half must be blue
+    /// (incoming) and its right half still red. Geometry, not just opacity.
+    #[test]
+    fn a_wipe_reveals_geometrically_in_the_render() {
+        use crate::edit::TransitionKind;
+        let dir = std::env::temp_dir();
+        let mk = |name: &str, colour: &str| -> std::path::PathBuf {
+            let f = dir.join(format!("reel-wipe-{name}-{}.mp4", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi",
+                       "-i", &format!("color=c={colour}:size=320x240:rate=25:duration=3"),
+                       "-c:v", "libx264", "-pix_fmt", "yuv420p", &f.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            f
+        };
+        let red = mk("a", "red");
+        let blue = mk("b", "blue");
+        let out = dir.join(format!("reel-wipe-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+
+        let mut s1 = seg(&blue.to_string_lossy(), 0.0, 3.0);
+        s1.transition_in = 2.0;
+        s1.transition_kind = TransitionKind::WipeRight;
+        let segs = vec![seg(&red.to_string_lossy(), 0.0, 3.0), s1];
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let job = match crate::engine::render::start_timeline(
+            &segs, &out.to_string_lossy(), &s, (320, 240, 25.0), &Overlays::default(),
+        ) {
+            Ok(j) => j,
+            Err(e) => {
+                eprintln!("no GPU — skipping wipe test ({e})");
+                return;
+            }
+        };
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "wipe render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "wipe render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // The overlap runs 1..3 in output time; t=2 is prog 0.5.
+        let png = dir.join(format!("reel-wipe-f-{}.png", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "2", "-i", &out.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let img = image::open(&png).expect("read frame").to_rgb8();
+        let px = |x: u32, y: u32| img.get_pixel(x, y).0;
+        let [r, _, b] = px(60, 120);
+        assert!(b > 130 && r < 90, "left quarter should be the incoming blue, got rgb{:?}", px(60, 120));
+        let [r, _, b] = px(260, 120);
+        assert!(r > 130 && b < 90, "right quarter should still be red, got rgb{:?}", px(260, 120));
+
+        for f in [&red, &blue, &out, &png] {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -2538,6 +2694,7 @@ mod tests {
             duration: 3.0,
             effects: Default::default(),
             transition_in: 0.0,
+            transition_kind: Default::default(),
             gain_db: 0.0,
             speed: 2.0,
             keys: Vec::new(),
@@ -2759,6 +2916,7 @@ mod tests {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let job = start(&fixture(), &out, &s, 2.0).expect("start export");
         let deadline = Instant::now() + Duration::from_secs(60);

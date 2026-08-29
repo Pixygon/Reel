@@ -57,6 +57,7 @@ const RENDER_FLAGS: &[Flag] = &[
     Flag { name: "resolution", value: Some("HEIGHT"), help: "source, 2160, 1080, 720, 480" },
     Flag { name: "fit", value: Some("MODE"), help: "letterbox, crop or blur (how a mismatched aspect is filled)" },
     Flag { name: "audio", value: Some("MODE"), help: "copy (pass the source audio through) or encode" },
+    Flag { name: "loudness", value: Some("LUFS"), help: "Deliver audio at this integrated loudness (e.g. -14); presets set it automatically" },
     Flag { name: "no-hardware", value: None, help: "Force the software encoder" },
     Flag { name: "overwrite", value: None, help: "Replace the output file if it exists" },
     Flag { name: "quiet", value: None, help: "Don't print progress" },
@@ -251,7 +252,8 @@ pub static COMMANDS: &[Cmd] = &[
         args: &["PROJECT"],
         flags: &[
             Flag { name: "clip", value: Some("ID"), help: "Clip id — the fade runs INTO this clip" },
-            Flag { name: "seconds", value: Some("SECONDS"), help: "Crossfade length (0 = hard cut)" },
+            Flag { name: "seconds", value: Some("SECONDS"), help: "Transition length (0 = hard cut)" },
+            Flag { name: "kind", value: Some("NAME"), help: "fade, dip, wipe-left/right/up/down, slide-left/right" },
             F_JSON,
         ],
         help: "Crossfade from the previous clip into this one",
@@ -295,6 +297,17 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Flag a position in the timeline",
+    },
+    Cmd {
+        name: "align",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "The clip to move" },
+            Flag { name: "to", value: Some("ID"), help: "The clip to sync against" },
+            Flag { name: "window", value: Some("SECONDS"), help: "Largest offset to search (default 90)" },
+            F_JSON,
+        ],
+        help: "Sync one clip to another by their AUDIO — multicam without clap sticks",
     },
     Cmd {
         name: "tighten",
@@ -538,6 +551,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "title" => cmd_title(p),
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
+        "align" => cmd_align(p),
         "tighten" => cmd_tighten(p),
         "captions" => cmd_captions(p),
         "frame" => cmd_frame(p),
@@ -1173,11 +1187,23 @@ fn cmd_transition(p: &Parsed) -> Result<Output> {
         bail!("--seconds cannot be negative");
     }
     let mut proj = load(path)?;
-    find_clip_mut(&mut proj, id)?.transition_in = secs;
+    let kind = match p.str("kind") {
+        Some(k) => crate::edit::TransitionKind::parse(k).ok_or_else(|| {
+            let names: Vec<&str> =
+                crate::edit::TransitionKind::ALL.iter().map(|k| k.name()).collect();
+            anyhow!("--kind must be one of: {}", names.join(", "))
+        })?,
+        None => proj.clip(id).map(|c| c.transition_kind).unwrap_or_default(),
+    };
+    {
+        let c = find_clip_mut(&mut proj, id)?;
+        c.transition_in = secs;
+        c.transition_kind = kind;
+    }
     save(&proj, path)?;
     Ok(Output::new(
-        format!("Clip {id} now crossfades in over {secs:.2}s"),
-        serde_json::json!({ "clip": id, "transition_in": secs }),
+        format!("Clip {id}: {} over {secs:.2}s", kind.label()),
+        serde_json::json!({ "clip": id, "transition_in": secs, "kind": kind.name() }),
     ))
 }
 
@@ -1317,6 +1343,48 @@ fn cmd_marker(p: &Parsed) -> Result<Output> {
     ))
 }
 
+fn cmd_align(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let to: u64 = p.need_num("to")?;
+    let window = p.num::<f64>("window")?.unwrap_or(90.0).clamp(1.0, 600.0);
+    let mut proj = load(path)?;
+    let (b, _) = proj.clip_with_kind(id).ok_or_else(|| anyhow!("no clip with id {id}"))?;
+    let (a, _) = proj.clip_with_kind(to).ok_or_else(|| anyhow!("no clip with id {to}"))?;
+
+    let pa = crate::waveform::compute(&a.source)
+        .ok_or_else(|| anyhow!("no audio in {} to sync against", a.source))?;
+    let pb = crate::waveform::compute(&b.source)
+        .ok_or_else(|| anyhow!("no audio in {} to sync", b.source))?;
+    let max_lag = (window * crate::waveform::BUCKETS_PER_SEC) as usize;
+    let (lag, score) = crate::waveform::best_lag(&pa.data, &pb.data, max_lag)
+        .ok_or_else(|| anyhow!("not enough audio to correlate"))?;
+    if score < 0.35 {
+        bail!(
+            "no confident match (correlation {score:.2}) — are these recordings of the same moment?"
+        );
+    }
+    // b[i] ≈ a[i + lag]: a moment at B-source time u sits at A-source time
+    // u + lag. Place B so the two land on the same timeline instant.
+    let lag_secs = lag as f64 / crate::waveform::BUCKETS_PER_SEC;
+    let new_start = a.start - a.in_point + b.in_point + lag_secs;
+    if new_start < -1e-9 {
+        bail!(
+            "aligning would place the clip at {new_start:.2}s — trim its head by that much first"
+        );
+    }
+    if let Some(c) = proj.clip_mut(id) {
+        c.start = new_start.max(0.0);
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!(
+            "Aligned clip {id} to {to}: moved to {new_start:.3}s (offset {lag_secs:+.3}s, correlation {score:.2})"
+        ),
+        serde_json::json!({ "clip": id, "start": new_start, "offset": lag_secs, "score": score }),
+    ))
+}
+
 fn cmd_tighten(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let threshold = p.num::<f32>("threshold")?.unwrap_or(0.06).clamp(0.001, 0.9);
@@ -1442,6 +1510,7 @@ fn settings_from(p: &Parsed, default_codec: Codec) -> Result<export::ExportSetti
         hardware: !p.on("no-hardware"),
         target: None,
         fit: Fit::Letterbox,
+        loudness: None,
     };
     if let Some(name) = p.str("preset") {
         let found = export::Preset::ALL
@@ -1455,6 +1524,7 @@ fn settings_from(p: &Parsed, default_codec: Codec) -> Result<export::ExportSetti
         s.fit = found.fit;
         s.codec = found.codec;
         s.quality = found.quality;
+        s.loudness = found.loudness;
     }
     if let Some(c) = p.str("codec") {
         s.codec = match c.to_lowercase().as_str() {
@@ -1501,6 +1571,9 @@ fn settings_from(p: &Parsed, default_codec: Codec) -> Result<export::ExportSetti
             "blur" | "blurred" => Fit::Blur,
             other => bail!("--fit wants letterbox, crop or blur — got {other:?}"),
         };
+    }
+    if let Some(l) = p.num::<f32>("loudness")? {
+        s.loudness = Some(l);
     }
     if let Some(a) = p.str("audio") {
         s.audio = match a.to_lowercase().as_str() {
@@ -1569,6 +1642,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             hardware: false,
             target: None,
             fit: Fit::Letterbox,
+            loudness: None,
         };
         let overlays = export::Overlays {
             captions: &proj.captions,

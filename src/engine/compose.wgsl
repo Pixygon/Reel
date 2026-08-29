@@ -19,6 +19,8 @@ struct Uniforms {
     // Chroma key: rgb = key colour (sRGB), w = similarity. Softness lives
     // in params.w.
     key: vec4<f32>,
+    // The uv window shown across rect (min x, min y, max x, max y).
+    uvr: vec4<f32>,
 };
 
 fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
@@ -52,7 +54,7 @@ fn vs(@builtin(vertex_index) idx: u32) -> VsOut {
     let fy = mix(u.rect.y, u.rect.w, c.y);
     var out: VsOut;
     out.pos = vec4<f32>(fx * 2.0 - 1.0, 1.0 - fy * 2.0, 0.0, 1.0);
-    out.uv = c;
+    out.uv = vec2<f32>(mix(u.uvr.x, u.uvr.z, c.x), mix(u.uvr.y, u.uvr.w, c.y));
     return out;
 }
 

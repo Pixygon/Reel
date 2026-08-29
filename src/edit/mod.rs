@@ -37,6 +37,9 @@ pub struct Clip {
     /// ffmpeg's `xfade` does at render time.
     #[serde(default)]
     pub transition_in: f64,
+    /// The shape of that handover.
+    #[serde(default)]
+    pub transition_kind: TransitionKind,
     /// Level change for this clip's audio, in decibels. 0 is untouched.
     #[serde(default)]
     pub gain_db: f32,
@@ -125,6 +128,81 @@ impl Param {
 
     pub fn parse(s: &str) -> Option<Param> {
         Param::ALL.into_iter().find(|p| p.name() == s)
+    }
+}
+
+/// How one clip hands over to the next when they overlap.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize, Default)]
+pub enum TransitionKind {
+    /// Crossfade: the incoming picture blends over the outgoing.
+    #[default]
+    Fade,
+    /// Dip to black: out fades down, then in fades up.
+    DipToBlack,
+    /// The incoming picture is revealed by a travelling edge.
+    WipeLeft,
+    WipeRight,
+    WipeUp,
+    WipeDown,
+    /// The incoming picture slides in over the outgoing.
+    SlideLeft,
+    SlideRight,
+}
+
+impl TransitionKind {
+    pub const ALL: [TransitionKind; 8] = [
+        TransitionKind::Fade,
+        TransitionKind::DipToBlack,
+        TransitionKind::WipeLeft,
+        TransitionKind::WipeRight,
+        TransitionKind::WipeUp,
+        TransitionKind::WipeDown,
+        TransitionKind::SlideLeft,
+        TransitionKind::SlideRight,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TransitionKind::Fade => "Crossfade",
+            TransitionKind::DipToBlack => "Dip to black",
+            TransitionKind::WipeLeft => "Wipe left",
+            TransitionKind::WipeRight => "Wipe right",
+            TransitionKind::WipeUp => "Wipe up",
+            TransitionKind::WipeDown => "Wipe down",
+            TransitionKind::SlideLeft => "Slide left",
+            TransitionKind::SlideRight => "Slide right",
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            TransitionKind::Fade => "fade",
+            TransitionKind::DipToBlack => "dip",
+            TransitionKind::WipeLeft => "wipe-left",
+            TransitionKind::WipeRight => "wipe-right",
+            TransitionKind::WipeUp => "wipe-up",
+            TransitionKind::WipeDown => "wipe-down",
+            TransitionKind::SlideLeft => "slide-left",
+            TransitionKind::SlideRight => "slide-right",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|k| k.name() == s)
+    }
+
+    /// The equivalent ffmpeg `xfade` transition — the graph fallback's map.
+    pub fn xfade_name(self) -> &'static str {
+        match self {
+            TransitionKind::Fade => "fade",
+            TransitionKind::DipToBlack => "fadeblack",
+            TransitionKind::WipeLeft => "wipeleft",
+            TransitionKind::WipeRight => "wiperight",
+            TransitionKind::WipeUp => "wipeup",
+            TransitionKind::WipeDown => "wipedown",
+            TransitionKind::SlideLeft => "slideleft",
+            TransitionKind::SlideRight => "slideright",
+        }
     }
 }
 
@@ -401,6 +479,7 @@ pub struct Segment {
     pub effects: Effects,
     /// Crossfade from the previous segment, in seconds (0 = hard cut).
     pub transition_in: f64,
+    pub transition_kind: TransitionKind,
     /// Level change for this clip's own audio, in decibels.
     pub gain_db: f32,
     /// Playback rate; `duration` is already the sped-up length.
@@ -643,6 +722,7 @@ impl Project {
                 duration,
                 effects: Default::default(),
                 transition_in: 0.0,
+                transition_kind: TransitionKind::default(),
                 gain_db: 0.0,
                 speed: 1.0,
                 pip: Pip::default(),
@@ -1277,6 +1357,7 @@ impl Project {
                     // A clip cut into by the range marker loses its
                     // transition — there's no longer a clip to fade from.
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
+                    transition_kind: c.transition_kind,
                     gain_db: c.gain_db,
                     speed: c.speed,
                     keys: c.keys.clone(),

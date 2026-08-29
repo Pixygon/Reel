@@ -69,8 +69,8 @@ pub struct ReelApp {
     /// share one source file). The seed of the decoder pool.
     pub overlay_previews: std::collections::HashMap<u64, OverlayPreview>,
     /// The transition being previewed at the playhead, if any:
-    /// (incoming clip id, 0..1 progress).
-    pub transition_preview: Option<(u64, f32)>,
+    /// (incoming clip id, 0..1 progress, kind).
+    pub transition_preview: Option<(u64, f32, crate::edit::TransitionKind)>,
     /// The live timeline audio mix (editor mode): every sounding clip, the
     /// music bed, gains, fades and ducking — not just the main clip's own
     /// track. The video clock stays master; this chases it.
@@ -696,7 +696,7 @@ impl ReelApp {
                 let into = t - fade_start;
                 let progress = (into / d).clamp(0.0, 1.0) as f32;
                 active.push((b.id, b.source.clone(), b.in_point + into * b.speed.max(0.01) as f64));
-                self.transition_preview = Some((b.id, progress));
+                self.transition_preview = Some((b.id, progress, b.transition_kind));
                 log::debug!("transition preview: clip {} at {progress:.2}", b.id);
                 break;
             }

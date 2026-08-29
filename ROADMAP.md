@@ -276,8 +276,10 @@ within the phase by editor-workflow importance:
       per-folder relink); "offline" placeholder rendering, never a crash.
 - [ ] Source monitor: preview any pool item with in/out before it touches
       the timeline.
-- [ ] **Multicam**: sync by audio waveform correlation (we already decode
-      peaks), cut between angles live with number keys.
+- [~] **Multicam**: the sync half is done — `reel align` places one clip
+      against another by normalised cross-correlation of their audio
+      envelopes (a camera that started 2.35 s late aligned to 2.350 s,
+      correlation 1.00). Live angle-cutting UI still open.
 
 ### 3.3 The look
 - [ ] Curves (master + per-channel), levels, HSL qualifiers, white balance,
@@ -295,8 +297,11 @@ within the phase by editor-workflow importance:
       template matching first; optical flow upgrade later.
 - [ ] Stabilization (vidstab two-pass or own path through the tracker).
 - [ ] Blur/sharpen/glow/vignette/grain — the bread-and-butter stack.
-- [ ] Transition library beyond crossfade: dip-to-color, wipe, slide, zoom,
-      blur-through — each a two-input frame-graph node, previewed live.
+- [x] Transition library: crossfade, dip-to-black, four wipes, two slides —
+      ONE pure geometry function (`transition_mods`) executed by the frame
+      server, drawn identically by the live preview, and mapped to xfade
+      names for the no-GPU fallback. A mid-wipe pixel test pins the
+      geometry. Zoom/blur-through still open.
 
 ### 3.4 Delivery
 - [ ] Per-platform publish presets grow into a **publish panel**: filename
@@ -338,9 +343,10 @@ The engine (1.4) makes these tractable; captions make some of them unique.
 - [ ] **Repair suite**, all local: broadband noise reduction (RNNoise or
       spectral gating), de-hum (notch at mains + harmonics), de-click,
       de-ess. One-button "Fix voice" chain with sensible defaults.
-- [ ] **Loudness delivery**: EBU R128 / platform targets (−14 LUFS YouTube,
-      etc.) — measure, then normalize the master automatically per preset.
-      A render test asserts the delivered integrated loudness.
+- [x] **Loudness delivery**: every social preset now delivers at −14 LUFS
+      (loudnorm at the very end of the mix, music included), overridable
+      with `--loudness`. The test renders a quiet source and MEASURES the
+      output at −16 ± 1.5 with ebur128.
 - [ ] Clip fade handles with curve choice (linear/equal-power/exp) directly
       on the timeline; crossfade by overlap, as video does.
 - [x] **Silence removal**: `reel tighten` / the ✂ Tighten button — quiet

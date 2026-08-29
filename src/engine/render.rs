@@ -24,7 +24,7 @@ use std::process::{Command, Stdio};
 use std::sync::atomic::Ordering;
 
 /// One segment placed on the output timeline.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlannedSegment {
     pub seg: usize,
     /// Output-time window this segment occupies (overlapping its
@@ -71,6 +71,38 @@ pub fn base_opacity(p: &PlannedSegment, seg: &Segment, t: f64) -> f32 {
         a *= (remain / seg.effects.fade_out).clamp(0.0, 1.0);
     }
     a as f32
+}
+
+/// What a transition does to its two sides at progress `p` (0..1):
+/// (outgoing opacity multiplier, incoming opacity multiplier, incoming
+/// rect, incoming uv window). Wipes crop rect and uv TOGETHER so the
+/// incoming picture is revealed in place, never squashed; slides move a
+/// full-frame rect through the viewport. Pure and unit-tested — the frame
+/// server executes exactly this, and the preview draws the same geometry.
+pub fn transition_mods(
+    kind: crate::edit::TransitionKind,
+    p: f32,
+) -> (f32, f32, [f32; 4], [f32; 4]) {
+    use crate::edit::TransitionKind as K;
+    let p = p.clamp(0.0, 1.0);
+    let full = [0.0, 0.0, 1.0, 1.0];
+    match kind {
+        K::Fade => (1.0, p, full, full),
+        K::DipToBlack => (
+            1.0 - (p * 2.0).min(1.0),
+            ((p - 0.5) * 2.0).clamp(0.0, 1.0),
+            full,
+            full,
+        ),
+        // The revealed strip grows from the named edge's opposite side —
+        // matching ffmpeg's xfade naming, which the graph fallback uses.
+        K::WipeLeft => (1.0, 1.0, [1.0 - p, 0.0, 1.0, 1.0], [1.0 - p, 0.0, 1.0, 1.0]),
+        K::WipeRight => (1.0, 1.0, [0.0, 0.0, p, 1.0], [0.0, 0.0, p, 1.0]),
+        K::WipeUp => (1.0, 1.0, [0.0, 1.0 - p, 1.0, 1.0], [0.0, 1.0 - p, 1.0, 1.0]),
+        K::WipeDown => (1.0, 1.0, [0.0, 0.0, 1.0, p], [0.0, 0.0, 1.0, p]),
+        K::SlideLeft => (1.0, 1.0, [1.0 - p, 0.0, 2.0 - p, 1.0], full),
+        K::SlideRight => (1.0, 1.0, [p - 1.0, 0.0, p, 1.0], full),
+    }
 }
 
 /// Start a timeline render through the frame server. Fails fast (before any
@@ -149,6 +181,7 @@ pub fn start_timeline(
         segments,
         with_audio,
         overlays.music,
+        settings.loudness,
         &format!("{output}.audio.wav"),
     );
 
@@ -245,6 +278,7 @@ pub fn render_still(
                 super::Layer {
                     view: comp.upload(&[0, 0, 0, 0], 1, 1), // replaced below
                     rect: [0.0, 0.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: base_opacity(p, seg, t) * key_op,
                     effects: fx,
                     use_src_alpha: false,
@@ -280,6 +314,7 @@ pub fn render_still(
                         pip.x + wf / 2.0,
                         pip.y + hf / 2.0,
                     ],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: op,
                     effects: o.effects,
                     use_src_alpha: false,
@@ -511,10 +546,36 @@ fn run(
                 // Keyframes: every animated parameter re-evaluated for THIS
                 // frame — the whole point of frame-serving the render.
                 let (fx, key_opacity) = seg.animated(t - p.start);
+                // Transition roles: this layer may be the INCOMING side of
+                // its own handover, and simultaneously the OUTGOING side of
+                // the next one (a short middle clip during two fades).
+                let mut opacity = key_opacity;
+                let mut rect = [0.0, 0.0, 1.0, 1.0];
+                let mut uv = rect;
+                let local = t - p.start;
+                if p.fade_in > 0.0 && local < p.fade_in {
+                    let prog = (local / p.fade_in) as f32;
+                    let (_, inc, r, u) = transition_mods(seg.transition_kind, prog);
+                    opacity *= inc;
+                    rect = r;
+                    uv = u;
+                }
+                if let Some(np) = plan.iter().find(|n| n.fade_in > 0.0 && n.start > p.start && t >= n.start && t < n.start + n.fade_in) {
+                    let prog = ((t - np.start) / np.fade_in) as f32;
+                    let (out_mul, _, _, _) =
+                        transition_mods(segments[np.seg].transition_kind, prog);
+                    opacity *= out_mul;
+                }
+                // To-black fades of the clip itself still ride base_opacity,
+                // minus the crossfade ramp (now owned by transition_mods).
+                let mut fade_only = *p;
+                fade_only.fade_in = 0.0;
+                opacity *= base_opacity(&fade_only, seg, t);
                 layers.push(super::Layer {
                     view: a.view.clone(),
-                    rect: [0.0, 0.0, 1.0, 1.0],
-                    opacity: base_opacity(p, seg, t) * key_opacity,
+                    rect,
+                    uv,
+                    opacity,
                     effects: fx,
                     use_src_alpha: false,
                 });
@@ -573,6 +634,7 @@ fn run(
                         pip.x + wf / 2.0,
                         pip.y + hf / 2.0,
                     ],
+                    uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: op,
                     // The overlay's own effects — chroma key included, which
                     // is what makes a green-screen inset composite.
@@ -628,10 +690,34 @@ mod tests {
             duration: dur,
             effects: Effects::default(),
             transition_in: fade,
+            transition_kind: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
         }
+    }
+
+    /// Transition maths: each kind's opacities and geometry at key points.
+    #[test]
+    fn transition_mods_do_what_their_names_say() {
+        use crate::edit::TransitionKind as K;
+        // Fade: incoming ramps, outgoing holds.
+        assert_eq!(transition_mods(K::Fade, 0.25).1, 0.25);
+        assert_eq!(transition_mods(K::Fade, 0.25).0, 1.0);
+        // Dip: first half the outgoing dies to black, incoming still hidden.
+        let (o, i, _, _) = transition_mods(K::DipToBlack, 0.25);
+        assert_eq!((o, i), (0.5, 0.0));
+        let (o, i, _, _) = transition_mods(K::DipToBlack, 0.75);
+        assert_eq!((o, i), (0.0, 0.5));
+        // WipeRight at half: the LEFT half of the frame shows the incoming,
+        // sampled from its own left half — revealed, not squashed.
+        let (_, _, r, u) = transition_mods(K::WipeRight, 0.5);
+        assert_eq!(r, [0.0, 0.0, 0.5, 1.0]);
+        assert_eq!(u, r, "wipes crop rect and uv together");
+        // SlideLeft at half: a full frame, half on screen, uv uncropped.
+        let (_, _, r, u) = transition_mods(K::SlideLeft, 0.5);
+        assert_eq!(r, [0.5, 0.0, 1.5, 1.0]);
+        assert_eq!(u, [0.0, 0.0, 1.0, 1.0]);
     }
 
     /// The plan must agree with `render_duration` — they encode the same

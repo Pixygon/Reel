@@ -195,6 +195,52 @@ impl Cache {
     }
 }
 
+/// The lag (in buckets) at which `b` best lines up inside `a`, by
+/// normalised cross-correlation of the two envelopes: `b[i] ≈ a[i + lag]`.
+/// This is how two cameras (or a camera and a recorder) that heard the same
+/// room get synced without clap sticks.
+pub fn best_lag(a: &[f32], b: &[f32], max_lag: usize) -> Option<(isize, f32)> {
+    if a.len() < 8 || b.len() < 8 {
+        return None;
+    }
+    let mean = |v: &[f32]| v.iter().sum::<f32>() / v.len() as f32;
+    let (ma, mb) = (mean(a), mean(b));
+    let az: Vec<f32> = a.iter().map(|v| v - ma).collect();
+    let bz: Vec<f32> = b.iter().map(|v| v - mb).collect();
+    let max_lag = max_lag as isize;
+    let mut best = (0isize, f32::MIN);
+    for lag in -max_lag..=max_lag {
+        let mut dot = 0.0f32;
+        let mut na = 0.0f32;
+        let mut nb = 0.0f32;
+        let mut n = 0u32;
+        for i in 0..bz.len() {
+            let j = i as isize + lag;
+            if j < 0 || j >= az.len() as isize {
+                continue;
+            }
+            let (x, y) = (az[j as usize], bz[i]);
+            dot += x * y;
+            na += x * x;
+            nb += y * y;
+            n += 1;
+        }
+        // Demand a real overlap, or a sliver at the extremes wins by luck.
+        if n < 40 {
+            continue;
+        }
+        let denom = (na * nb).sqrt();
+        if denom < 1e-9 {
+            continue;
+        }
+        let score = dot / denom;
+        if score > best.1 {
+            best = (lag, score);
+        }
+    }
+    (best.1 > f32::MIN).then_some(best)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -231,6 +277,27 @@ mod tests {
             loud_min > 0.5 && quiet_max < 0.2,
             "envelope does not follow the audio: quiet max {quiet_max:.2}, loud min {loud_min:.2}"
         );
+    }
+
+    /// The correlator's contract: a delayed copy of the same envelope is
+    /// found at exactly its delay, with a near-perfect score.
+    #[test]
+    fn best_lag_finds_a_known_offset() {
+        // A wandering envelope with real structure.
+        let a: Vec<f32> = (0..2000)
+            .map(|i| ((i as f32 * 0.037).sin() * (i as f32 * 0.011).cos()).abs())
+            .collect();
+        // b = a delayed by 173 buckets (b[i] = a[i + 173] ... b starts later
+        // in the event, i.e. b[0] happens at a's bucket 173).
+        let b: Vec<f32> = a[173..1800].to_vec();
+        let (lag, score) = best_lag(&a, &b, 400).expect("a lag");
+        assert_eq!(lag, 173, "found lag {lag}");
+        assert!(score > 0.99, "score {score}");
+        // And the mirror case: b PADDED with leading quiet finds a negative lag.
+        let mut c = vec![0.0f32; 90];
+        c.extend_from_slice(&a[..1200]);
+        let (lag2, _) = best_lag(&a, &c, 400).expect("a lag");
+        assert_eq!(lag2, -90);
     }
 
     #[test]

@@ -23,6 +23,10 @@ pub struct Layer {
     /// (min x, min y, max x, max y). Fractions are the house rule: the same
     /// scene renders identically at any output size.
     pub rect: [f32; 4],
+    /// Which window of the layer's own texture is shown (uv min/max).
+    /// [0,0,1,1] = all of it; wipes crop this together with `rect` so the
+    /// picture is revealed, not squashed.
+    pub uv: [f32; 4],
     /// Multiplied into the layer: fades and crossfades ride here.
     pub opacity: f32,
     /// Colour adjustments + reframe, applied exactly as the preview shader
