@@ -190,6 +190,10 @@ impl MpvPlayer {
             ("pause", "yes"),
             ("input-default-bindings", "no"),
             ("audio-client-name", "reel"),
+            // Speed-changed preview audio keeps its pitch (scaletempo2),
+            // matching the render's atempo. mpv defaults to yes; pinned so
+            // a config or future default change can't make the preview lie.
+            ("audio-pitch-correction", "yes"),
             // Cold-open speed: no built-in scripts (ytdl_hook etc.) — Reel
             // opens local files; script init measurably delays FILE_LOADED.
             ("load-scripts", "no"),

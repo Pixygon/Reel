@@ -30,7 +30,12 @@ fn proxy_dir() -> PathBuf {
 }
 
 /// Stable identity for a source file's current contents (cheap: no hashing
-/// of the data itself — size+mtime changes when the file does).
+/// of the data itself — size+mtime changes when the file does). Shared by
+/// every disk cache keyed on a media file: proxies, waveforms, thumbnails.
+pub fn file_key(path: &str) -> Option<String> {
+    key(path)
+}
+
 fn key(path: &str) -> Option<String> {
     let meta = std::fs::metadata(path).ok()?;
     let mtime = meta

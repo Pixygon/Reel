@@ -13,6 +13,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_opening();
     app.poll_captures();
     app.poll_queue();
+    app.poll_audition();
     app.poll_autosave();
     app.poll_captions();
     app.update_editor_playback();
@@ -891,6 +892,32 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         }
                         app.editor.mark_changed();
                     }
+                    // The audition: render THIS clip stabilized (720p, its
+                    // own window only) and play the result — the one way to
+                    // judge vidstab before committing to a full export.
+                    if app.audition.is_some() {
+                        let frac = app.audition.as_ref().map(|(j, _, _)| j.state().fraction).unwrap_or(0.0);
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label(format!("auditioning… {:.0}%", frac * 100.0));
+                            if ui.small_button("cancel").clicked() {
+                                if let Some((job, out, _)) = app.audition.take() {
+                                    job.cancel();
+                                    let _ = std::fs::remove_file(out);
+                                }
+                            }
+                        });
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                    } else if ui
+                        .button("Audition stabilization")
+                        .on_hover_text(
+                            "Render just this clip with stabilization (720p) and play it. \
+                             The edit is untouched — press E to come back.",
+                        )
+                        .clicked()
+                    {
+                        app.start_audition(id);
+                    }
                 }
 
                 // ── Green screen ────────────────────────────────────────
@@ -1480,6 +1507,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             draw_overlays(app, &painter, img_rect);
             drag_title(app, &response, img_rect);
             drag_pip(app, &response, img_rect);
+            proxy_chip(app, &painter, rect);
             return;
         }
     }
@@ -1513,6 +1541,40 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             Color32::from_gray(90),
         );
     }
+
+    proxy_chip(app, &painter, rect);
+}
+
+/// Honesty chip: when the editor preview is playing a 720p proxy (or one is
+/// still baking), say so in the corner — the export always uses the original.
+fn proxy_chip(app: &ReelApp, painter: &egui::Painter, rect: Rect) {
+    if app.mode != Mode::Editor {
+        return;
+    }
+    let label = if app
+        .player
+        .as_ref()
+        .map(|p| app.proxies.is_proxy(&p.path))
+        .unwrap_or(false)
+    {
+        "PROXY"
+    } else if app.proxies.is_busy() {
+        "PROXY…"
+    } else {
+        return;
+    };
+    let pos = rect.right_top() + Vec2::new(-10.0, 10.0);
+    let galley = painter.layout_no_wrap(
+        label.into(),
+        egui::FontId::monospace(11.0),
+        Color32::from_gray(210),
+    );
+    let chip = Rect::from_min_size(
+        pos - Vec2::new(galley.size().x + 12.0, 0.0),
+        galley.size() + Vec2::new(12.0, 6.0),
+    );
+    painter.rect_filled(chip, 4.0, Color32::from_black_alpha(150));
+    painter.galley(chip.min + Vec2::new(6.0, 3.0), galley, Color32::from_gray(210));
 }
 
 /// The classic transparency checkerboard, drawn under a still image. Base

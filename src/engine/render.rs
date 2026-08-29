@@ -273,15 +273,39 @@ pub fn render_still(
         let src_at = seg.in_point + seg.source_offset_at(t - p.start);
         if let Some(buf) = grab(&seg.source, src_at, tone.as_deref(), &fit, (tw, th))? {
             let (fx, key_op) = seg.animated(t - p.start);
+            // Transitions compose in stills exactly as in motion: same mods,
+            // same roles — a frame grabbed mid-wipe shows the wipe.
+            let mut rect = [0.0, 0.0, 1.0, 1.0];
+            let mut uv = rect;
+            let mut opacity = key_op;
+            let local = t - p.start;
+            if p.fade_in > 0.0 && local < p.fade_in {
+                let prog = (local / p.fade_in) as f32;
+                let (_, inc, r, u) = transition_mods(seg.transition_kind, prog);
+                opacity *= inc;
+                rect = r;
+                uv = u;
+            }
+            if let Some(np) = plan
+                .iter()
+                .find(|n| n.fade_in > 0.0 && n.start > p.start && t >= n.start && t < n.start + n.fade_in)
+            {
+                let prog = ((t - np.start) / np.fade_in) as f32;
+                let (out_mul, _, _, _) = transition_mods(segments[np.seg].transition_kind, prog);
+                opacity *= out_mul;
+            }
+            let mut fade_only = *p;
+            fade_only.fade_in = 0.0;
+            opacity *= base_opacity(&fade_only, seg, t);
             layers_data.push((
                 buf,
                 tw,
                 th,
                 super::Layer {
                     view: comp.upload(&[0, 0, 0, 0], 1, 1), // replaced below
-                    rect: [0.0, 0.0, 1.0, 1.0],
-                    uv: [0.0, 0.0, 1.0, 1.0],
-                    opacity: base_opacity(p, seg, t) * key_op,
+                    rect,
+                    uv,
+                    opacity,
                     effects: fx,
                     use_src_alpha: true,
                     lut: fx.has_lattice().then(|| {
@@ -355,6 +379,53 @@ pub fn render_still(
     let target = comp.target(tw, th);
     comp.render(&super::Scene { layers }, &target);
     Ok((comp.read_back(&target), tw, th))
+}
+
+/// Render a still of the edit at `t` and write it as a PNG — transitions
+/// composed, captions and titles burned exactly as the full render burns
+/// them (same `burnin_filters`, applied by ffmpeg with the frame's PTS
+/// shifted to `t` so time-windowed cues land correctly).
+pub fn still_png(
+    segments: &[Segment],
+    overlays: &Overlays<'_>,
+    project: (u32, u32, f64),
+    settings: &ExportSettings,
+    t: f64,
+    out: &str,
+) -> Result<(u32, u32)> {
+    let (rgba, w, h) = render_still(segments, overlays, project, settings, t)?;
+    let target = export::render_target(project, settings);
+    let burnin = export::burnin_filters(out, overlays, target)?;
+    if burnin.is_empty() {
+        image::save_buffer(out, &rgba, w, h, image::ColorType::Rgba8)
+            .with_context(|| format!("could not write {out}"))?;
+        return Ok((w, h));
+    }
+    // Shift the lone frame's PTS to `t` so libass shows what belongs at
+    // that moment, then burn with the very same filters as the render.
+    let vf = format!("setpts=PTS+{t:.4}/TB,{}", burnin.join(","));
+    let mut child = std::process::Command::new("ffmpeg")
+        .args([
+            "-y", "-v", "error",
+            "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &format!("{w}x{h}"),
+            "-i", "-",
+            "-vf", &vf,
+            "-frames:v", "1", out,
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .context("burn-in encoder failed to start")?;
+    child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("no stdin"))?
+        .write_all(&rgba)?;
+    let status = child.wait()?;
+    if !status.success() {
+        anyhow::bail!("burning captions into the still failed");
+    }
+    Ok((w, h))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -531,6 +602,8 @@ fn run(
     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
     let mut ov_active: Vec<Option<Active>> = (0..planned_overlays.len()).map(|_| None).collect();
     let out_tex = comp.target(tw, th);
+    let ring = comp.readback_ring(tw, th);
+    let mut rb_buf: Vec<u8> = Vec::new();
     let started = std::time::Instant::now();
 
     let result = (|| -> Result<()> {
@@ -709,16 +782,28 @@ fn run(
             }
 
             comp.render(&super::Scene { layers }, &out_tex);
-            let rgba = comp.read_back(&out_tex);
-            enc_in
-                .write_all(&rgba)
-                .map_err(|_| anyhow!("the encoder stopped accepting frames"))?;
+            // Pipeline the readback: enqueue THIS frame's copy, then collect
+            // and write the PREVIOUS one while the GPU keeps working.
+            ring.enqueue(&comp, &out_tex, f);
+            if f > 0 {
+                ring.take(&comp, f - 1, &mut rb_buf);
+                enc_in
+                    .write_all(&rb_buf)
+                    .map_err(|_| anyhow!("the encoder stopped accepting frames"))?;
+            }
 
             if f % 8 == 0 {
                 let mut st = state.lock().unwrap();
                 st.fraction = f as f32 / frames as f32;
                 st.speed = (t / started.elapsed().as_secs_f64().max(0.001)) as f32;
             }
+        }
+        // Drain the last frame still in the ring.
+        if frames > 0 {
+            ring.take(&comp, frames - 1, &mut rb_buf);
+            enc_in
+                .write_all(&rb_buf)
+                .map_err(|_| anyhow!("the encoder stopped accepting frames"))?;
         }
         Ok(())
     })();

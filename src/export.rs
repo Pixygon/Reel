@@ -2432,6 +2432,66 @@ mod tests {
         }
     }
 
+    /// A still grabbed mid-transition must SHOW the transition, and cues
+    /// active at that moment must burn in — the still is a one-frame render,
+    /// not a shortcut past it.
+    #[test]
+    fn a_still_composes_the_wipe_and_burns_the_caption() {
+        use crate::edit::TransitionKind;
+        let dir = std::env::temp_dir();
+        let mk = |name: &str, colour: &str| -> std::path::PathBuf {
+            let f = dir.join(format!("reel-stw-{name}-{}.mp4", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi",
+                       "-i", &format!("color=c={colour}:size=320x240:rate=25:duration=3"),
+                       "-c:v", "libx264", "-pix_fmt", "yuv420p", &f.to_string_lossy()])
+                .status().map(|st| st.success()).unwrap_or(false));
+            f
+        };
+        let red = mk("a", "red");
+        let blue = mk("b", "blue");
+        let out = dir.join(format!("reel-stw-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+
+        let mut s1 = seg(&blue.to_string_lossy(), 0.0, 3.0);
+        s1.transition_in = 2.0;
+        s1.transition_kind = TransitionKind::WipeRight;
+        let segs = vec![seg(&red.to_string_lossy(), 0.0, 3.0), s1];
+        let cues = vec![crate::captions::Cue { start: 1.5, end: 2.5, text: "MID WIPE".into() }];
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        // Timeline t=2.0 is the wipe's midpoint (overlap runs 1..3).
+        match crate::engine::render::still_png(
+            &segs,
+            &Overlays { captions: &cues, caption_size: 20, ..Default::default() },
+            (320, 240, 25.0),
+            &s,
+            2.0,
+            &out.to_string_lossy(),
+        ) {
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("no GPU — skipping still test ({e})");
+                return;
+            }
+        }
+        let img = image::open(&out).expect("read still").to_rgb8();
+        let px = |x: u32, y: u32| img.get_pixel(x, y).0;
+        let [r, _, b] = px(60, 60);
+        assert!(b > 130 && r < 90, "left of the travelling edge must be blue, got {:?}", px(60, 60));
+        let [r, _, b] = px(260, 60);
+        assert!(r > 130 && b < 90, "right must still be red, got {:?}", px(260, 60));
+        // The caption burned: white pixels along the bottom band.
+        let white = img
+            .enumerate_pixels()
+            .filter(|(_, y, p)| *y > 180 && p.0.iter().all(|c| *c > 200))
+            .count();
+        assert!(white > 100, "the caption is missing from the still ({white} white px)");
+        let _ = std::fs::remove_file(&out);
+        for f in [&red, &blue] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// A wipe, mid-travel, in rendered pixels: red cuts to blue with a
     /// WipeRight — halfway through, the frame's left half must be blue
     /// (incoming) and its right half still red. Geometry, not just opacity.

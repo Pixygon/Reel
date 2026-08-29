@@ -365,6 +365,15 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Transcribe speech locally. TARGET is a .reel project or a media file",
     },
     Cmd {
+        name: "bench",
+        args: &["MEDIA"],
+        flags: &[
+            Flag { name: "seconds", value: Some("N"), help: "How much of the file the export leg renders (default 5)" },
+            F_JSON,
+        ],
+        help: "Measure this machine: probe, first frame, scrub latency, export speed on MEDIA",
+    },
+    Cmd {
         name: "frame",
         args: &["TARGET"],
         flags: &[
@@ -587,6 +596,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "align" => cmd_align(p),
         "tighten" => cmd_tighten(p),
         "captions" => cmd_captions(p),
+        "bench" => cmd_bench(p),
         "frame" => cmd_frame(p),
         "render" => cmd_render(p),
         "convert" => cmd_convert(p),
@@ -1773,6 +1783,121 @@ fn prepare_output(path: &str, overwrite: bool) -> Result<()> {
     Ok(())
 }
 
+/// A measured snapshot of what this machine can do with a real file —
+/// numbers, not vibes. Every leg exercises the code path the app itself
+/// uses: probe, a decoded first frame, cold seeks, and a real frame-server
+/// export through ffmpeg.
+fn cmd_bench(p: &Parsed) -> Result<Output> {
+    let media = p.at(0)?;
+    if !std::path::Path::new(media).exists() {
+        bail!("no such file: {media}");
+    }
+    let window = p.num::<f64>("seconds")?.unwrap_or(5.0).max(1.0);
+    let ms = |d: std::time::Duration| d.as_secs_f64() * 1000.0;
+
+    // Probe: what `open` pays before anything else.
+    let t0 = std::time::Instant::now();
+    let info = crate::video::decoder::probe(media)?;
+    let probe_ms = ms(t0.elapsed());
+
+    // First frame: decode one frame from the head, discarded — the floor
+    // under "time to first pixel".
+    let t0 = std::time::Instant::now();
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-v", "error", "-i", media, "-frames:v", "1", "-f", "null", "-"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        bail!("ffmpeg could not decode {media}");
+    }
+    let first_frame_ms = ms(t0.elapsed());
+
+    // Scrub: five cold seeks spread through the file; the median is what a
+    // timeline drag feels like.
+    let dur = info.duration.max(0.1);
+    let mut seeks: Vec<f64> = (1..=5)
+        .map(|i| {
+            let at = dur * i as f64 / 6.0;
+            let t0 = std::time::Instant::now();
+            let _ = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-ss", &format!("{at:.3}"), "-i", media,
+                       "-frames:v", "1", "-f", "null", "-"])
+                .status();
+            ms(t0.elapsed())
+        })
+        .collect();
+    seeks.sort_by(|a, b| a.total_cmp(b));
+    let scrub_ms = seeks[seeks.len() / 2];
+
+    // Export: the frame server renders a real window of the file to H.264,
+    // same path as `reel render`.
+    let clip_len = window.min(dur);
+    let mut proj = crate::edit::Project::default();
+    if info.width > 0 {
+        proj.width = info.width;
+        proj.height = info.height;
+    }
+    proj.add_clip(media, crate::edit::TrackKind::Video, 0.0, 0.0, clip_len);
+    let segments = proj.export_segments();
+    let out = std::env::temp_dir().join(format!("reel-bench-{}.mp4", std::process::id()));
+    let settings = export::ExportSettings {
+        codec: Codec::H264,
+        quality: Quality::High,
+        resolution: Resolution::Source,
+        audio: AudioMode::Encode { kbps: 160 },
+        hardware: false,
+        target: None,
+        fit: Fit::Letterbox,
+        loudness: None,
+    };
+    let t0 = std::time::Instant::now();
+    let job = export::start_timeline_with_captions(
+        &segments,
+        &out.to_string_lossy(),
+        &settings,
+        (proj.width, proj.height, proj.fps),
+        export::Overlays {
+            captions: &[],
+            caption_size: crate::edit::Project::default().caption_size,
+            titles: &[],
+            music: None,
+            overlays: &[],
+            markers: &[],
+            luts: &[],
+            audio_clips: &[],
+        },
+    )?;
+    await_job(job, true)?;
+    let export_s = t0.elapsed().as_secs_f64();
+    let _ = std::fs::remove_file(&out);
+    let speed = clip_len / export_s.max(0.001);
+
+    let text = format!(
+        "Benchmark — {media} ({}×{}, {:.1}s)\n\
+         probe        {probe_ms:>8.1} ms\n\
+         first frame  {first_frame_ms:>8.1} ms\n\
+         scrub (med)  {scrub_ms:>8.1} ms\n\
+         export       {speed:>8.2}× realtime  ({clip_len:.1}s in {export_s:.1}s, software H.264)",
+        info.width, info.height, info.duration
+    );
+    Ok(Output::new(
+        text,
+        serde_json::json!({
+            "media": media,
+            "width": info.width,
+            "height": info.height,
+            "duration": info.duration,
+            "probe_ms": probe_ms,
+            "first_frame_ms": first_frame_ms,
+            "scrub_median_ms": scrub_ms,
+            "export_window_s": clip_len,
+            "export_wall_s": export_s,
+            "export_speed_x": speed,
+        }),
+    ))
+}
+
 fn cmd_frame(p: &Parsed) -> Result<Output> {
     let target = p.at(0)?;
     let at = p.num::<f64>("at")?.unwrap_or(0.0);
@@ -1808,19 +1933,14 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             luts: &proj.luts,
             audio_clips: &[],
         };
-        let (rgba, w, h) = crate::engine::render::render_still(
+        let (w, h) = crate::engine::render::still_png(
             &segments,
             &overlays,
             (proj.width, proj.height, proj.fps),
             &settings,
             at,
+            &out,
         )?;
-        image::save_buffer(&out, &rgba, w, h, image::ColorType::Rgba8)
-            .with_context(|| format!("could not write {out}"))?;
-        // Titles/captions burn through libass at encode time in a full
-        // render; for a still, burn them onto the PNG via one ffmpeg pass.
-        // (Simplest honest approach: the still already has picture layers;
-        // text overlays follow in a later pass.)
         Ok(Output::new(
             format!("Wrote {out} — the edit at {at:.2}s ({w}×{h})"),
             serde_json::json!({ "output": out, "at": at, "width": w, "height": h }),

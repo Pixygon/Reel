@@ -67,10 +67,33 @@ struct Baked {
     image: Option<(Vec<u8>, u32, u32, u32, f64)>, // rgba, w, h, count, interval
 }
 
+fn disk_path(source: &str, count: u32) -> Option<std::path::PathBuf> {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache")
+        });
+    let dir = base.join("reel/thumbs");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("{}-{count}.png", crate::proxy::file_key(source)?)))
+}
+
 /// Render one tiled contact sheet for `source`. Blocking; run on a worker.
+/// The sheet persists on disk keyed by file identity + cell count, so a
+/// reopened project shows its thumbnails immediately.
 fn bake(source: &str, duration: f64) -> Option<(Vec<u8>, u32, u32, u32, f64)> {
     if duration <= 0.0 {
         return None;
+    }
+    let count_for = (duration.ceil() as u32).clamp(1, MAX_CELLS);
+    if let Some(p) = disk_path(source, count_for) {
+        if let Ok(img) = image::open(&p) {
+            let rgba = img.to_rgba8();
+            let (w, h) = (rgba.width(), rgba.height());
+            if (w, h) == (COLS * CELL_W, ROWS * CELL_H) {
+                return Some((rgba.into_raw(), w, h, count_for, duration / count_for as f64));
+            }
+        }
     }
     // One cell every `interval` seconds, never more than the sheet holds.
     let count = (duration.ceil() as u32).clamp(1, MAX_CELLS);
@@ -94,6 +117,12 @@ fn bake(source: &str, duration: f64) -> Option<(Vec<u8>, u32, u32, u32, f64)> {
     }
     let img = image::load_from_memory(&out.stdout).ok()?.to_rgba8();
     let (w, h) = (img.width(), img.height());
+    if let Some(p) = disk_path(source, count) {
+        let tmp = p.with_extension("part.png");
+        if img.save(&tmp).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
     Some((img.into_raw(), w, h, count, interval))
 }
 

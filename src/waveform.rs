@@ -55,9 +55,47 @@ impl Peaks {
     }
 }
 
-/// Decode `source` to peaks. Blocking — callers use `Cache`, which runs this
-/// on a worker.
+fn disk_path(source: &str) -> Option<std::path::PathBuf> {
+    let base = std::env::var("XDG_CACHE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".cache")
+        });
+    let dir = base.join("reel/waveforms");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir.join(format!("{}.f32", crate::proxy::file_key(source)?)))
+}
+
+/// Decode `source` to peaks — via the disk cache when this exact file was
+/// decoded before (any session), so a reopened project is dressed at once.
 pub fn compute(source: &str) -> Option<Peaks> {
+    let cache = disk_path(source);
+    if let Some(p) = &cache {
+        if let Ok(bytes) = std::fs::read(p) {
+            if bytes.len() >= 4 && bytes.len() % 4 == 0 {
+                let data = bytes
+                    .chunks_exact(4)
+                    .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                    .collect();
+                return Some(Peaks { data });
+            }
+        }
+    }
+    let peaks = compute_uncached(source)?;
+    if let Some(p) = &cache {
+        let mut bytes = Vec::with_capacity(peaks.data.len() * 4);
+        for v in &peaks.data {
+            bytes.extend_from_slice(&v.to_le_bytes());
+        }
+        let tmp = p.with_extension("part");
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, p);
+        }
+    }
+    Some(peaks)
+}
+
+fn compute_uncached(source: &str) -> Option<Peaks> {
     // 8 kHz mono 16-bit is far more than enough to draw an envelope, and
     // keeps the pipe small: ~16 KB per second of audio.
     const RATE: u32 = 8000;
@@ -244,6 +282,33 @@ pub fn best_lag(a: &[f32], b: &[f32], max_lag: usize) -> Option<(isize, f32)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The disk cache is real: a second compute of the same file reads the
+    /// cached array instead of decoding again. Proven by planting a marker
+    /// value in the cache file and getting it back.
+    #[test]
+    fn peaks_persist_on_disk_across_computes() {
+        let wav = std::env::temp_dir().join(format!("reel-wavecache-{}.wav", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i",
+                   "sine=frequency=440:duration=1", &wav.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let src = wav.to_string_lossy().into_owned();
+        let cache = disk_path(&src).expect("cache path");
+        let _ = std::fs::remove_file(&cache);
+        let first = compute(&src).expect("decode");
+        assert!(cache.exists(), "compute must leave the peaks on disk");
+        // Plant a marker: if the next compute returns it, the cache was read.
+        let mut marked = first.data.clone();
+        marked[0] = 0.123_456;
+        let bytes: Vec<u8> = marked.iter().flat_map(|v| v.to_le_bytes()).collect();
+        std::fs::write(&cache, bytes).unwrap();
+        let second = compute(&src).expect("cached read");
+        assert_eq!(second.data[0], 0.123_456, "second compute must hit the disk cache");
+        assert_eq!(second.data.len(), first.data.len());
+        let _ = std::fs::remove_file(&wav);
+        let _ = std::fs::remove_file(&cache);
+    }
 
     /// The envelope has to actually follow the sound, or it is decoration.
     /// This builds audio that is silent, then loud, then silent, and checks

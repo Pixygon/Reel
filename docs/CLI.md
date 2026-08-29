@@ -318,6 +318,14 @@ Transcribe speech locally. TARGET is a .reel project or a media file
 | `--source` | `MEDIA` | Transcribe this instead of the project's first clip |
 | `--quiet` | — | Don't print progress |
 
+### `reel bench MEDIA`
+
+Measure this machine: probe, first frame, scrub latency, export speed on MEDIA
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--seconds` | `N` | How much of the file the export leg renders (default 5) |
+
 ### `reel frame TARGET`
 
 Export one frame as PNG. TARGET is a .reel (rendered with effects, overlays, animation) or a media file

@@ -60,6 +60,8 @@ pub struct ReelApp {
     pub export_timeline: bool,
     /// Queued exports — line up every platform, then walk away.
     pub queue: export::Queue,
+    /// A stabilization audition mid-render: (job, temp output, clip id).
+    pub audition: Option<(ExportJob, String, u64)>,
     /// A captioning run in progress (local, on a worker thread).
     pub captions_job: Option<crate::captions::Job>,
     /// Audio peaks per source, for the timeline. Decoded in the background.
@@ -172,6 +174,7 @@ impl ReelApp {
             mixer_attempted: false,
             samples: crate::audio::SampleCache::default(),
             proxies: crate::proxy::Cache::default(),
+            audition: None,
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
@@ -506,6 +509,24 @@ impl ReelApp {
             self.debug_autoplay = false;
             if let Some(p) = self.player.as_mut() {
                 p.toggle_play();
+            }
+        }
+        // REEL_DEBUG_AUDITION=1 — start a stabilization audition of the
+        // first clip, so a headless check can watch the whole loop land.
+        if std::env::var("REEL_DEBUG_AUDITION").as_deref() == Ok("1")
+            && self.audition.is_none()
+            && self.mode == Mode::Editor
+        {
+            if let Some(id) = self
+                .project
+                .tracks
+                .iter()
+                .flat_map(|t| t.clips.iter())
+                .map(|c| c.id)
+                .next()
+            {
+                std::env::remove_var("REEL_DEBUG_AUDITION");
+                self.start_audition(id);
             }
         }
         // REEL_DEBUG_SELECT=1 — select the first clip, so headless checks can
@@ -914,6 +935,11 @@ impl ReelApp {
             .filter(|c| c.effects.has_lattice())
             .map(|c| c.effects)
             .collect();
+        // Bounded: editing curves mints a new key per tweak — cap the map so
+        // a long grading session can't grow it without limit.
+        if self.lut_previews.len() > 48 {
+            self.lut_previews.clear(); // rebuilt below for what's in use
+        }
         for fx in wanted {
             let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
             if self.lut_previews.contains_key(&key) {
@@ -1232,19 +1258,15 @@ impl ReelApp {
             luts: &self.project.luts,
             audio_clips: &[],
         };
-        match crate::engine::render::render_still(
+        match crate::engine::render::still_png(
             &segments,
             &ov,
             (self.project.width, self.project.height, self.project.fps),
             &settings,
             t,
+            &out.to_string_lossy(),
         ) {
-            Ok((rgba, w, h)) => {
-                match image::save_buffer(&out, &rgba, w, h, image::ColorType::Rgba8) {
-                    Ok(()) => self.status = format!("Frame saved: {}", out.display()),
-                    Err(e) => self.status = format!("Could not save the frame: {e}"),
-                }
-            }
+            Ok(_) => self.status = format!("Frame saved: {}", out.display()),
             Err(e) => self.status = format!("Frame export failed: {e}"),
         }
     }
@@ -1302,6 +1324,76 @@ impl ReelApp {
     /// Advance the render queue; keeps the UI repainting while it works.
     pub fn poll_queue(&mut self) {
         self.queue.poll();
+    }
+
+    /// Audition stabilization: render JUST this clip's window — shake
+    /// analysis and all — to a temp file, then play it. The only honest way
+    /// to preview vidstab without paying its full decode in the live preview.
+    pub fn start_audition(&mut self, clip_id: u64) {
+        if self.project.clip(clip_id).is_none() {
+            return;
+        }
+        // Reuse the exact clip→segment flattening the export uses, on a
+        // scratch project holding only this clip.
+        let mut scratch = self.project.clone();
+        for t in &mut scratch.tracks {
+            t.clips.retain(|c| c.id == clip_id);
+        }
+        let mut segs = scratch.export_segments();
+        let [seg] = &mut segs[..] else { return };
+        seg.stabilize = true;
+        seg.transition_in = 0.0;
+        let out = std::env::temp_dir()
+            .join(format!("reel-audition-{}-{clip_id}.mp4", std::process::id()))
+            .to_string_lossy()
+            .into_owned();
+        let settings = ExportSettings {
+            codec: export::Codec::H264,
+            quality: export::Quality::Balanced,
+            resolution: export::Resolution::H720,
+            audio: export::AudioMode::Encode { kbps: 128 },
+            hardware: false,
+            target: None,
+            fit: export::Fit::Letterbox,
+            loudness: None,
+        };
+        let overlays = export::Overlays {
+            captions: &[],
+            caption_size: self.project.caption_size,
+            titles: &[],
+            music: None,
+            overlays: &[],
+            markers: &[],
+            luts: &self.project.luts,
+            audio_clips: &[],
+        };
+        match export::start_timeline_with_captions(
+            &segs,
+            &out,
+            &settings,
+            (self.project.width, self.project.height, self.project.fps),
+            overlays,
+        ) {
+            Ok(job) => self.audition = Some((job, out, clip_id)),
+            Err(e) => log::error!("audition failed to start: {e:#}"),
+        }
+    }
+
+    /// When the audition render lands, open it in the player. E returns to
+    /// the editor exactly where it was — the project is untouched.
+    pub fn poll_audition(&mut self) {
+        let Some((job, _, _)) = &self.audition else { return };
+        let st = job.state();
+        if !st.finished {
+            return;
+        }
+        let (_, out, _) = self.audition.take().unwrap();
+        if let Some(e) = st.error {
+            log::error!("audition render failed: {e}");
+            return;
+        }
+        self.open(&out);
+        self.mode = Mode::Player;
     }
 
     /// Output path for a preset export: `<name>-<platform>.mp4`, so the
