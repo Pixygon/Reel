@@ -3238,11 +3238,14 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let (snapped, hit) = EditorState::snap(pt, &targets, snap_tol);
                         snap_line = hit;
                         if let Some(c) = app.project.clip_mut(id) {
-                            let min_start = lo.max(c.start - c.in_point);
+                            let rate = c.speed.max(0.01) as f64;
+                            let min_start = lo.max(c.start - c.in_point / rate);
                             let new_start = snapped.clamp(min_start, c.end() - 0.05);
                             let delta = new_start - c.start;
                             c.start = new_start;
-                            c.in_point += delta;
+                            // The source moves faster than the timeline on a
+                            // sped-up clip — trim the head in SOURCE seconds.
+                            c.in_point += delta * rate;
                             c.duration -= delta;
                         }
                     }

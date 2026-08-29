@@ -920,13 +920,35 @@ pub(crate) fn start_timeline_graph(
     if Path::new(output).exists() {
         return Err(anyhow!("output already exists: {output}"));
     }
-    // A static filter graph has one value per parameter for the whole clip —
-    // it cannot animate. Say so out loud rather than quietly rendering the
-    // base values.
+    // The static graph can't do everything the frame server can. One
+    // honest, complete list — silence would be a preview that lies at
+    // render time.
+    let mut dropped: Vec<&str> = Vec::new();
     if segments.iter().any(|s| !s.keys.is_empty()) {
+        dropped.push("keyframe animation");
+    }
+    if segments.iter().any(|s| s.effects.has_lattice()) {
+        dropped.push("LUTs/curves");
+    }
+    if segments.iter().any(|s| s.effects.mask.is_some()) {
+        dropped.push("power windows");
+    }
+    if segments.iter().any(|s| s.effects.key_color.is_some())
+        || overlays.overlays.iter().any(|o| o.effects.key_color.is_some())
+    {
+        dropped.push("chroma keys");
+    }
+    if segments.iter().any(|s| s.stabilize) {
+        dropped.push("stabilization");
+    }
+    if !overlays.markers.is_empty() {
+        dropped.push("chapters");
+    }
+    if !dropped.is_empty() {
         log::warn!(
-            "this edit has keyframes, which the graph fallback cannot animate — \
-             rendered with base values (a GPU enables the frame server)"
+            "the graph fallback cannot render: {} — a GPU enables the frame server, \
+             which does all of it",
+            dropped.join(", ")
         );
     }
     let with_audio = segments.iter().all(|seg| has_audio_stream(&seg.source));

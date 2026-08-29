@@ -752,6 +752,10 @@ impl ReelApp {
                 }
             };
             let p = &mut entry.player;
+            // A quarter-frame inset deserves a quarter-frame decode: cap the
+            // pooled player's render size well under the viewport. (Audit
+            // item C1 — these were decoding at full source size.)
+            p.set_display_size(640.0, 360.0);
             if p.playing != want_playing {
                 p.toggle_play();
             }
@@ -1366,7 +1370,16 @@ impl ReelApp {
         if let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) {
             let (id, src, in_point, start) =
                 (clip.id, clip.source.clone(), clip.in_point, clip.start);
-            let want = in_point + (self.editor.playhead - start);
+            // Timeline → source through the clip's speed curve — a 2× clip
+            // consumes two source seconds per timeline second, and a ramp
+            // consumes its integral. Mapping linearly here made every seek
+            // into a sped clip land on the wrong frame.
+            let want = in_point
+                + self
+                    .project
+                    .clip(id)
+                    .map(|c| c.source_offset_at(self.editor.playhead - start))
+                    .unwrap_or(self.editor.playhead - start);
             // The preview may be playing this source's PROXY — compare and
             // switch against the preview path, never the original, or every
             // seek would bounce back to the heavy file.
@@ -1394,6 +1407,7 @@ impl ReelApp {
             return;
         }
         let pos = player.position;
+        let player_speed = player.speed;
         let player_path = player.path.clone();
         let active = self
             .editor
@@ -1406,18 +1420,35 @@ impl ReelApp {
             .cloned();
         let Some(clip) = active else { return };
         self.editor.active_clip = Some(clip.id);
+        // The preview PLAYS at the clip's rate: a 2× clip moves at 2×, and a
+        // ramp approximates with its average (the render walks the true
+        // curve). Without this the picture ambles at 1× while the timeline
+        // crawls or sprints.
+        let want_rate = (clip.source_len() / clip.duration.max(1e-9)).clamp(0.05, 20.0);
+        if (player_speed - want_rate).abs() > 0.01 {
+            if let Some(p) = self.player.as_mut() {
+                p.set_speed(want_rate);
+            }
+        }
         // Stop at the out-marker when a range is set.
         if let Some(out) = self.editor.range_out {
             if self.editor.playhead >= out {
-                if player.playing {
-                    player.toggle_play();
+                if let Some(p) = self.player.as_mut() {
+                    if p.playing {
+                        p.toggle_play();
+                    }
                 }
                 self.editor.playhead = out;
                 return;
             }
         }
         if pos <= clip.in_point + clip.source_len() + 0.02 {
-            self.editor.playhead = clip.start + (pos - clip.in_point).max(0.0);
+            // Source → timeline through the inverse of the speed curve, so
+            // the playhead crosses the clip in its TIMELINE duration. The
+            // picture's own pace is handled below by driving mpv at the
+            // clip's rate.
+            self.editor.playhead =
+                clip.start + clip.output_time_for_source((pos - clip.in_point).max(0.0));
         } else {
             match self.project.clip_after(TrackKind::Video, clip.start).cloned() {
                 Some(next) => {
@@ -1435,8 +1466,10 @@ impl ReelApp {
                 }
                 None => {
                     // End of the edit.
-                    if player.playing {
-                        player.toggle_play();
+                    if let Some(p) = self.player.as_mut() {
+                        if p.playing {
+                            p.toggle_play();
+                        }
                     }
                     self.editor.playhead = clip.end();
                 }

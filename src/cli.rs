@@ -1633,6 +1633,16 @@ fn cmd_captions(p: &Parsed) -> Result<Output> {
         None => 0,
     };
 
+    if is_project && applied == 0 && !cues.is_empty() {
+        // Audit item B3: this happened silently. Cues map through clips of
+        // the transcribed SOURCE — if that file isn't on the timeline, or
+        // the spoken parts were trimmed away, nothing lands.
+        eprintln!(
+            "note: {} cue(s) transcribed but none landed on the timeline — \
+             captions map through clips of {source}; is it in the edit?",
+            cues.len()
+        );
+    }
     Ok(Output::new(
         if is_project {
             format!("{applied} caption(s) written into {target}")
