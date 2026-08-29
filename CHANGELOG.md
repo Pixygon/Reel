@@ -4,6 +4,18 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.39.0] — 2026-08-29
+
+### Added
+- Tone curves: adjust master and per-channel (R/G/B) five-point curves by dragging directly on a new curve widget. Curves are baked together with any LUT into a single lattice, so a full grade still costs just one GPU texture sample and previews exactly as it renders. _(b435f5f)_
+- A new 'Queue ALL platforms' button renders your timeline for every social preset at once — YouTube, TikTok, Reels, feed, square, Facebook, and X — each at its own frame size and loudness, named by platform, while you keep editing. _(b435f5f)_
+- Captions are now editable in place: fix a word directly in the cue list, jump the playhead to any line, or delete cues you don't want. The currently playing cue is highlighted as you play. _(b435f5f)_
+- New `reel curves` CLI command lets you set or reset tone curves on a clip from the command line, including a quick S-curve in one flag. _(b435f5f)_
+
+### Changed
+- The caption panel's 'Remove' button is now 'Remove all', clarifying that it clears every caption rather than a single one. _(b435f5f)_
+
+
 ## [0.38.0] — 2026-08-29
 
 ### Added
