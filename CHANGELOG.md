@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.36.0] — 2026-08-29
+
+### Added
+- Grade clips through 3D LUTs — load any .cube file per clip and see it applied live in the preview, sampled on the GPU exactly as it will render on export. LUTs apply before your exposure/contrast/trim adjustments, so you conform the look first and fine-tune after. _(06b5092)_
+- New stabilization option: smooth a clip's camera shake at render time with two-pass analysis (cached so re-exports are fast). Enable it with a checkbox in the editor or via `reel stabilize`; the preview still shows raw footage since stabilization only happens on export. _(06b5092)_
+- New CLI flags `--lut` / `--lut-off` on the clip effects command to apply or remove a LUT, and a new `reel stabilize` command to turn stabilization on or off for a clip. _(06b5092)_
+
+### Fixed
+- Letterbox bars are now transparent under the hood so grades and chroma-key effects on your footage no longer bleed color into the black bars. _(06b5092)_
+
+
 ## [0.35.0] — 2026-08-29
 
 ### Added
