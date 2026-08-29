@@ -4,6 +4,13 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.38.0] — 2026-08-29
+
+### Added
+- Added a mixer to the editor: each track now has its own gain fader, mute and solo button, right in the media panel. _(a667692)_
+- Soloing a track now works the way you'd expect — it silences every other track, including the base video's own audio — and mute/solo/gain routing is identical between live preview and the exported file, so what you hear while editing is what you get in the render. _(a667692)_
+
+
 ## [0.37.0] — 2026-08-29
 
 ### Added

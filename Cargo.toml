@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "0.38.0"
+version = "0.39.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
