@@ -821,20 +821,24 @@ impl ReelApp {
         if stale {
             self.mix_built_at = std::time::Instant::now();
             let mut plan = crate::audio::Plan::default();
-            let clips: Vec<crate::edit::Clip> = self
+            let soloing = self.project.tracks.iter().any(|t| t.solo);
+            let clips: Vec<(f32, crate::edit::Clip)> = self
                 .project
                 .tracks
                 .iter()
                 .filter(|t| {
                     !t.muted
+                        && (!soloing || t.solo)
                         && matches!(
                             t.kind,
-                            crate::edit::TrackKind::Video | crate::edit::TrackKind::Audio
+                            crate::edit::TrackKind::Video
+                                | crate::edit::TrackKind::Audio
+                                | crate::edit::TrackKind::Overlay
                         )
                 })
-                .flat_map(|t| t.clips.iter().cloned())
+                .flat_map(|t| t.clips.iter().cloned().map(move |c| (t.gain_db, c)))
                 .collect();
-            for c in clips {
+            for (track_gain, c) in clips {
                 let Some(pcm) = self.samples.get(&c.source) else { continue };
                 let avg = (c.source_len() / c.duration.max(1e-9)).max(0.01);
                 plan.clips.push(crate::audio::PlanClip {
@@ -842,7 +846,7 @@ impl ReelApp {
                     start: c.start,
                     duration: c.duration,
                     in_point: c.in_point,
-                    gain: crate::audio::db_to_gain(c.gain_db),
+                    gain: crate::audio::db_to_gain(c.gain_db + track_gain),
                     fade_in: c.effects.fade_in,
                     fade_out: c.effects.fade_out,
                     speed: avg,

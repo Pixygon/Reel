@@ -677,6 +677,13 @@ pub struct Track {
     pub kind: TrackKind,
     pub clips: Vec<Clip>,
     pub muted: bool,
+    /// Track-level level trim, dB — applies to every clip on the track, in
+    /// the live mix and the export alike.
+    #[serde(default)]
+    pub gain_db: f32,
+    /// Solo: when ANY track is soloed, only soloed tracks sound.
+    #[serde(default)]
+    pub solo: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -726,8 +733,8 @@ impl Default for Project {
             width: 1920,
             height: 1080,
             tracks: vec![
-                Track { id: 1, name: "V1".into(), kind: TrackKind::Video, clips: vec![], muted: false },
-                Track { id: 2, name: "A1".into(), kind: TrackKind::Audio, clips: vec![], muted: false },
+                Track { id: 1, name: "V1".into(), kind: TrackKind::Video, clips: vec![], muted: false, gain_db: 0.0, solo: false },
+                Track { id: 2, name: "A1".into(), kind: TrackKind::Audio, clips: vec![], muted: false, gain_db: 0.0, solo: false },
             ],
             captions: Vec::new(),
             caption_size: default_caption_size(),
@@ -1034,7 +1041,15 @@ impl Project {
             TrackKind::Overlay => "V2",
             TrackKind::Audio => "A1",
         };
-        let track = Track { id, name: name.into(), kind, clips: vec![], muted: false };
+        let track = Track {
+            id,
+            name: name.into(),
+            kind,
+            clips: vec![],
+            muted: false,
+            gain_db: 0.0,
+            solo: false,
+        };
         // Overlays sit above the base video, audio below — the order lanes
         // are drawn in.
         match kind {
@@ -1072,19 +1087,23 @@ impl Project {
     /// fades. Overlay clips' audio rides along too — a PiP's sound belongs
     /// in the mix just like its picture belongs on screen.
     pub fn audio_clips(&self) -> Vec<AudioClip> {
+        let soloing = self.tracks.iter().any(|t| t.solo);
         let mut out: Vec<AudioClip> = self
             .tracks
             .iter()
             .filter(|t| {
-                matches!(t.kind, TrackKind::Audio | TrackKind::Overlay) && !t.muted
+                matches!(t.kind, TrackKind::Audio | TrackKind::Overlay)
+                    && !t.muted
+                    && (!soloing || t.solo)
             })
-            .flat_map(|t| t.clips.iter())
-            .map(|c| AudioClip {
+            .flat_map(|t| t.clips.iter().map(move |c| (t.gain_db, c)))
+            .map(|(track_gain, c)| AudioClip {
                 source: c.source.clone(),
                 at: c.start,
                 in_point: c.in_point,
                 duration: c.duration,
-                gain_db: c.gain_db,
+                // Track trim and clip trim compose in dB.
+                gain_db: c.gain_db + track_gain,
                 fade_in: c.effects.fade_in,
                 fade_out: c.effects.fade_out,
                 speed: c.speed,
@@ -1092,6 +1111,17 @@ impl Project {
             .collect();
         out.sort_by(|a, b| a.at.total_cmp(&b.at));
         out
+    }
+
+    /// The V1 track's own audio state for the export: (gain dB, silenced) —
+    /// silenced when V1 is muted, or when a solo elsewhere excludes it.
+    pub fn video_audio_state(&self) -> (f32, bool) {
+        let soloing = self.tracks.iter().any(|t| t.solo);
+        self.tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Video)
+            .map(|t| (t.gain_db, t.muted || (soloing && !t.solo)))
+            .unwrap_or((0.0, false))
     }
 
     /// The caption showing at timeline time `t`, if any.
@@ -1454,6 +1484,7 @@ impl Project {
     ) -> Vec<Segment> {
         let lo = range_in.unwrap_or(f64::NEG_INFINITY);
         let hi = range_out.unwrap_or(f64::INFINITY);
+        let (v_gain, v_silent) = self.video_audio_state();
         let mut clips: Vec<&Clip> = self
             .tracks
             .iter()
@@ -1479,7 +1510,7 @@ impl Project {
                     // transition — there's no longer a clip to fade from.
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
                     transition_kind: c.transition_kind,
-                    gain_db: c.gain_db,
+                    gain_db: if v_silent { -120.0 } else { c.gain_db + v_gain },
                     speed: c.speed,
                     keys: c.keys.clone(),
                     stabilize: c.stabilize,
@@ -1891,6 +1922,51 @@ mod tests {
         assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
         assert!(c.clear_key(Param::Exposure, 2.0));
         assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
+    }
+
+    /// The mixer's routing rules: track gain composes with clip gain in dB,
+    /// mute silences, and one solo silences everyone else — identically for
+    /// the audio-clip list and the V1 cut's own audio.
+    #[test]
+    fn track_gain_mute_and_solo_route_the_mix() {
+        let mut p = one_clip_project();
+        p.ensure_track(TrackKind::Audio);
+        let vo = p.add_clip("/tmp/vo.wav", TrackKind::Audio, 1.0, 0.0, 2.0);
+        if let Some(c) = p.clip_mut(vo) {
+            c.gain_db = -2.0;
+        }
+        if let Some(t) = p.tracks.iter_mut().find(|t| t.kind == TrackKind::Audio) {
+            t.gain_db = -4.0;
+        }
+        // Gains compose in dB. (one_clip_project seeds a linked A1 clip, so
+        // find ours by source.)
+        let clips = p.audio_clips();
+        let ours = clips.iter().find(|c| c.source == "/tmp/vo.wav").expect("vo in the mix");
+        assert!((ours.gain_db - -6.0).abs() < 1e-6, "got {}", ours.gain_db);
+        // V1 unaffected so far.
+        assert_eq!(p.video_audio_state(), (0.0, false));
+
+        // Mute the audio track: its clips leave the mix.
+        p.tracks.iter_mut().find(|t| t.kind == TrackKind::Audio).unwrap().muted = true;
+        assert!(p.audio_clips().is_empty());
+        p.tracks.iter_mut().find(|t| t.kind == TrackKind::Audio).unwrap().muted = false;
+
+        // Solo the audio track: V1's own audio is silenced in the export.
+        p.tracks.iter_mut().find(|t| t.kind == TrackKind::Audio).unwrap().solo = true;
+        assert!(
+            p.audio_clips().iter().any(|c| c.source == "/tmp/vo.wav"),
+            "soloed track still sounds"
+        );
+        let (_, silent) = p.video_audio_state();
+        assert!(silent, "a solo elsewhere must silence V1");
+        let segs = p.export_segments();
+        assert!(segs[0].gain_db < -100.0, "V1 segment gain must be floored when soloed out");
+
+        // Solo V1 instead: the audio track leaves, V1 stays.
+        p.tracks.iter_mut().find(|t| t.kind == TrackKind::Audio).unwrap().solo = false;
+        p.tracks.iter_mut().find(|t| t.kind == TrackKind::Video).unwrap().solo = true;
+        assert!(p.audio_clips().is_empty());
+        assert!(!p.video_audio_state().1);
     }
 
     /// Tighten finds the quiet spans and closes them: the definition of the

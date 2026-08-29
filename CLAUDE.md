@@ -366,6 +366,11 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   adelay'd to its TIMELINE position, amixed with normalize=0. The live
   mixer had made these audible in preview while the export dropped them;
   the beep-at-2s band test pins the fix.
+- MIXER ROUTING: Track.gain_db/solo — `audio_clips()` composes track+clip
+  dB and applies mute/solo; `video_audio_state()` gives V1's (gain,
+  silenced) which export_segments folds into segment gains (-120 dB floor
+  when soloed out). The LIVE plan applies the same rules — routing must
+  never diverge between preview and render.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

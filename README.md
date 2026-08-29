@@ -108,6 +108,8 @@ not the finished tool, but real, honest software you can build and run today.
 - **One click removes the dead air.** ✂ Tighten (or `reel tighten`) finds
   every silence in the edit, cuts it with breathing room around your words,
   and closes the timeline up — the podcast jump-cut pass, undoable.
+- **A mixer.** Per-track faders, mute and solo — and the live mix and the
+  export obey the same routing, so what you solo is what renders.
 - **You hear the whole edit.** Editor playback mixes the timeline live —
   every clip's audio with its gain and fades, and the music bed ducking
   under speech in real time — through a native PipeWire stream on Linux.

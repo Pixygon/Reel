@@ -342,8 +342,10 @@ touch weekly — and gains local captions, honest performance, and a CLI.
 
 The engine (1.4) makes these tractable; captions make some of them unique.
 
-- [ ] **Mixer panel**: per-track strips (fader, pan, mute/solo, meters),
-      master strip with true-peak + LUFS meters.
+- [~] **Mixer**: per-track fader, mute and solo — honoured identically by
+      the live mix and the export (routing rules unit-tested: gains compose
+      in dB, one solo silences the rest, V1's own audio included). Pan,
+      meters and the LUFS master strip still open.
 - [ ] Insert effects per track/clip: parametric EQ (with spectrum overlay),
       compressor, limiter, gate, de-esser. Visual, keyframable, and each
       one verified by measurement tests (band levels, gain reduction), the

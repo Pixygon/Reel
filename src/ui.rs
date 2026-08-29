@@ -999,6 +999,55 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
         }
+        // ── Mixer ───────────────────────────────────────────────────────
+        ui.separator();
+        ui.label(RichText::new("Mixer").color(theme::CYAN));
+        {
+            let track_rows: Vec<(u64, String)> = app
+                .project
+                .tracks
+                .iter()
+                .map(|t| (t.id, t.name.clone()))
+                .collect();
+            let mut changed = false;
+            for (tid, name) in track_rows {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(name).small().color(egui::Color32::from_gray(170)));
+                    let Some(t) = app.project.tracks.iter_mut().find(|t| t.id == tid) else {
+                        return;
+                    };
+                    let mut gain = t.gain_db;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut gain, -30.0..=12.0)
+                                .show_value(false)
+                                .text(""),
+                        )
+                        .on_hover_text(format!("{:+.1} dB", t.gain_db))
+                        .changed()
+                    {
+                        t.gain_db = gain;
+                        changed = true;
+                    }
+                    let mut m = t.muted;
+                    if ui.selectable_label(m, "M").on_hover_text("Mute").clicked() {
+                        m = !m;
+                        t.muted = m;
+                        changed = true;
+                    }
+                    let mut so = t.solo;
+                    if ui.selectable_label(so, "S").on_hover_text("Solo").clicked() {
+                        so = !so;
+                        t.solo = so;
+                        changed = true;
+                    }
+                });
+            }
+            if changed {
+                app.editor.mark_changed();
+            }
+        }
+
         // ── Tighten ─────────────────────────────────────────────────────
         if ui
             .button("✂ Tighten silence")
