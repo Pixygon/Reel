@@ -191,11 +191,14 @@ pub fn to_texture(lut: &Lut, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu
     tex.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
-/// Bake a clip's whole lattice grade — the LUT (if any) then the tone
-/// curves — into one 33³ lattice. One texture sample buys the full grade.
-pub fn bake_grade(base: Option<&Lut>, curves: Option<&crate::effects::Curves>) -> Lut {
+/// Bake a clip's whole lattice grade into one 33³ lattice: the LUT (if any,
+/// conforming the look first), then the colour correction (white balance →
+/// levels → HSL qualifier, `Effects::grade_reference`), then the tone
+/// curves. One texture sample buys the full grade.
+pub fn bake_grade(base: Option<&Lut>, fx: &crate::effects::Effects) -> Lut {
     const N: u32 = 33;
     let n1 = (N - 1) as f32;
+    let grades = fx.has_grade();
     let mut data = Vec::with_capacity((N * N * N * 4) as usize);
     for b in 0..N {
         for g in 0..N {
@@ -204,7 +207,10 @@ pub fn bake_grade(base: Option<&Lut>, curves: Option<&crate::effects::Curves>) -
                 if let Some(l) = base {
                     c = apply_reference(l, c);
                 }
-                if let Some(cv) = curves {
+                if grades {
+                    c = fx.grade_reference(c);
+                }
+                if let Some(cv) = &fx.curves {
                     for (ch, v) in c.iter_mut().enumerate() {
                         *v = cv.apply(ch, *v);
                     }
@@ -216,27 +222,56 @@ pub fn bake_grade(base: Option<&Lut>, curves: Option<&crate::effects::Curves>) -
     Lut { size: N, data }
 }
 
-/// A stable key for a grade: which LUT plus the exact curve values. Lets the
-/// pipelines cache one baked lattice per distinct grade.
-pub fn grade_key(lut_idx: Option<u32>, curves: Option<&crate::effects::Curves>) -> u64 {
+/// A stable key for a grade: which LUT plus every lattice-baked value
+/// (curves, levels, white balance, HSL). Lets the pipelines cache one baked
+/// lattice per distinct grade — never resolve by LUT index alone.
+pub fn grade_key(fx: &crate::effects::Effects) -> u64 {
     let mut h: u64 = 0xcbf29ce484222325;
     let mut eat = |b: u8| {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     };
-    for b in lut_idx.map(|i| i + 1).unwrap_or(0).to_le_bytes() {
+    let eat_f32 = |h: &mut u64, v: f32| {
+        for b in v.to_bits().to_le_bytes() {
+            *h ^= b as u64;
+            *h = h.wrapping_mul(0x100000001b3);
+        }
+    };
+    for b in fx.lut.map(|i| i + 1).unwrap_or(0).to_le_bytes() {
         eat(b);
     }
-    if let Some(c) = curves {
+    if let Some(c) = &fx.curves {
         for arr in [&c.master, &c.r, &c.g, &c.b] {
             for v in arr {
-                for b in v.to_bits().to_le_bytes() {
-                    eat(b);
-                }
+                eat_f32(&mut h, *v);
             }
         }
     }
+    for v in [fx.levels_black, fx.levels_white, fx.levels_gamma, fx.wb_temp, fx.wb_tint] {
+        eat_f32(&mut h, v);
+    }
+    if let Some(q) = &fx.hsl {
+        for v in [
+            q.hue, q.hue_width, q.sat_min, q.sat_max, q.lum_min, q.lum_max, q.soft,
+            q.push_hue, q.push_sat, q.push_lum,
+        ] {
+            eat_f32(&mut h, v);
+        }
+    }
     h
+}
+
+/// Write a lattice as a .cube file — how the graph fallback carries the
+/// whole baked grade through ffmpeg's `lut3d` filter.
+pub fn write_cube(lut: &Lut, path: &std::path::Path) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    writeln!(out, "TITLE \"reel grade\"")?;
+    writeln!(out, "LUT_3D_SIZE {}", lut.size)?;
+    for rgba in lut.data.chunks_exact(4) {
+        writeln!(out, "{:.6} {:.6} {:.6}", rgba[0], rgba[1], rgba[2])?;
+    }
+    Ok(())
 }
 
 /// CPU reference application — trilinear, exactly what the shader computes.

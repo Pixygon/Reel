@@ -628,7 +628,31 @@ pub fn build_timeline_args_with_music(
     target: (u32, u32, f64),
     music: Option<&crate::edit::Music>,
 ) -> Vec<String> {
-    build_timeline_args_full(segments, output, s, with_audio, target, music, &[])
+    build_timeline_args_full(segments, output, s, with_audio, target, music, &[], &[])
+}
+
+/// Bake a segment's lattice grade and park it as a temp .cube for ffmpeg's
+/// lut3d — how the graph fallback renders the SAME grade the GPU pipelines
+/// sample. Files are keyed by grade_key, so identical grades share one and
+/// re-runs cost nothing.
+fn grade_cube(fx: &crate::effects::Effects, luts: &[String]) -> Option<String> {
+    if !fx.has_lattice() {
+        return None;
+    }
+    let key = crate::lut::grade_key(fx);
+    let path = std::env::temp_dir().join(format!("reel-grade-{key:016x}.cube"));
+    if !path.exists() {
+        let base = fx
+            .lut
+            .and_then(|i| luts.get(i as usize))
+            .and_then(|p| crate::lut::load(p).ok());
+        let lattice = crate::lut::bake_grade(base.as_deref(), fx);
+        if let Err(e) = crate::lut::write_cube(&lattice, &path) {
+            log::warn!("could not write the grade lattice ({e}); the fallback skips this grade");
+            return None;
+        }
+    }
+    Some(path.to_string_lossy().into_owned())
 }
 
 /// The full timeline graph: the cut, a music bed, and any overlay clips
@@ -641,6 +665,7 @@ pub fn build_timeline_args_full(
     target: (u32, u32, f64),
     music: Option<&crate::edit::Music>,
     overlays: &[crate::edit::OverlaySegment],
+    luts: &[String],
 ) -> Vec<String> {
     let (tw, th, tfps) = target;
     let mut a: Vec<String> = Vec::new();
@@ -689,7 +714,13 @@ pub fn build_timeline_args_full(
         let (in_point, duration) = (seg.in_point, seg.duration);
         // Per-clip effects run before the frame is fitted to the target, so
         // fades and colour behave the same whatever the output shape is.
-        let fx = seg.effects.filters(duration);
+        // The lattice grade (LUT ∘ WB/levels/HSL ∘ curves) is baked to a
+        // temp .cube and applied via lut3d FIRST — the same order the GPU
+        // pipelines sample it (grade before the trims).
+        let mut fx = seg.effects.filters(duration);
+        if let Some(cube) = grade_cube(&seg.effects, luts) {
+            fx.insert(0, format!("lut3d='{}'", cube));
+        }
         let fx = if fx.is_empty() { String::new() } else { format!("{},", fx.join(",")) };
         let reframe = seg
             .effects
@@ -927,9 +958,6 @@ pub(crate) fn start_timeline_graph(
     if segments.iter().any(|s| !s.keys.is_empty()) {
         dropped.push("keyframe animation");
     }
-    if segments.iter().any(|s| s.effects.has_lattice()) {
-        dropped.push("LUTs/curves");
-    }
     if segments.iter().any(|s| s.effects.mask.is_some()) {
         dropped.push("power windows");
     }
@@ -962,6 +990,7 @@ pub(crate) fn start_timeline_graph(
         target,
         overlays.music,
         overlays.overlays,
+        overlays.luts,
     );
 
     let chain = burnin_filters(output, &overlays, target)?;
@@ -1701,6 +1730,73 @@ mod tests {
 
     /// The whole point: a two-piece cut with the middle removed must render
     /// to a file whose duration is the SUM OF THE PIECES, not the source.
+    #[test]
+    /// The graph fallback now carries the WHOLE lattice grade (levels, WB,
+    /// HSL, curves) through a baked lut3d. Render a solid colour through it
+    /// and check the pixel against grade_reference — the same contract the
+    /// GPU pipelines are held to.
+    #[test]
+    fn the_graph_fallback_applies_the_baked_grade() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-gradefall-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-gradefall-out-{}.mp4", std::process::id()));
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        // Solid mid-blue, 1s.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i",
+                   "color=c=0x4060C0:size=320x240:rate=30:duration=1",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let fx = crate::effects::Effects {
+            levels_black: 0.1,
+            levels_gamma: 1.2,
+            wb_temp: 0.4,
+            curves: Some(crate::effects::Curves {
+                master: [0.0, 0.2, 0.5, 0.8, 1.0],
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut sg = seg(&src.to_string_lossy(), 0.2, 0.5);
+        sg.effects = fx;
+        let args = build_timeline_args(&[sg], &out.to_string_lossy(),
+            &ExportSettings { quality: Quality::High, hardware: false, ..Default::default() },
+            false, (320, 240, 30.0));
+        assert!(args.iter().any(|a| a.contains("lut3d")), "the grade must ride a lut3d: {args:?}");
+        let run = std::process::Command::new("ffmpeg").args(&args).arg("-y")
+            .output().expect("spawn ffmpeg");
+        assert!(run.status.success(), "fallback render failed:\n{}",
+            String::from_utf8_lossy(&run.stderr));
+        // Probe the middle frame's centre pixel.
+        let png = dir.join(format!("reel-gradefall-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&png);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "0.25", "-i", &out.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let img = image::open(&png).unwrap().to_rgb8();
+        let got = img.get_pixel(160, 120).0;
+        // The lattice bakes grade_reference THEN the curves — expectation
+        // must compose both, exactly like bake_grade does.
+        let mut expect = fx.grade_reference([0x40 as f32 / 255.0, 0x60 as f32 / 255.0, 0xC0 as f32 / 255.0]);
+        let cv = fx.curves.unwrap();
+        for (ch, v) in expect.iter_mut().enumerate() {
+            *v = cv.apply(ch, *v);
+        }
+        for c in 0..3 {
+            let e = (expect[c] * 255.0).round() as i32;
+            let delta = (got[c] as i32 - e).abs();
+            // lut3d interp + yuv420 round-trip: allow a little more than the
+            // RGB-only parity tests.
+            assert!(delta <= 8, "channel {c}: fallback {} vs reference {e} (Δ{delta})", got[c]);
+        }
+        for f in [&src, &out, &png] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     #[test]
     fn renders_a_real_cut_from_the_fixture() {
         let out = std::env::temp_dir().join(format!("reel-cut-test-{}.mp4", std::process::id()));

@@ -62,6 +62,14 @@ pub struct ReelApp {
     pub queue: export::Queue,
     /// A stabilization audition mid-render: (job, temp output, clip id).
     pub audition: Option<(ExportJob, String, u64)>,
+    /// The copied grade, waiting to be pasted onto other clips.
+    pub grade_clipboard: Option<crate::effects::Effects>,
+    /// A window-track in flight: (receiver, clip id).
+    #[allow(clippy::type_complexity)]
+    pub tracking: Option<(
+        std::sync::mpsc::Receiver<anyhow::Result<(Vec<crate::edit::Keyframe>, Vec<crate::edit::Keyframe>)>>,
+        u64,
+    )>,
     /// A captioning run in progress (local, on a worker thread).
     pub captions_job: Option<crate::captions::Job>,
     /// Audio peaks per source, for the timeline. Decoded in the background.
@@ -96,6 +104,9 @@ pub struct ReelApp {
     pub user_muted: bool,
     /// Scopes panel visibility (histogram + waveform).
     pub show_scopes: bool,
+    /// One-shot: scroll the panel to the scopes next frame (set by the Show
+    /// button and the headless hook — the panel is taller than the window).
+    pub scroll_to_scopes: bool,
     /// Which tone curve the panel edits: 0 master, 1 R, 2 G, 3 B.
     pub curve_channel: usize,
     /// The USER's playback rate (the [ ] keys and the transport control).
@@ -175,9 +186,12 @@ impl ReelApp {
             samples: crate::audio::SampleCache::default(),
             proxies: crate::proxy::Cache::default(),
             audition: None,
+            grade_clipboard: None,
+            tracking: None,
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
+            scroll_to_scopes: false,
             curve_channel: 0,
             user_rate: 1.0,
             lut_previews: std::collections::HashMap::new(),
@@ -535,6 +549,7 @@ impl ReelApp {
             && self.editor.selected.is_none()
         {
             self.show_scopes = true; // the headless check photographs these too
+            self.scroll_to_scopes = true;
             let first = self
                 .project
                 .tracks
@@ -919,7 +934,7 @@ impl ReelApp {
         if !fx.has_lattice() {
             return None;
         }
-        let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+        let key = crate::lut::grade_key(&fx);
         self.lut_previews.get(&key).cloned().flatten()
     }
 
@@ -941,7 +956,7 @@ impl ReelApp {
             self.lut_previews.clear(); // rebuilt below for what's in use
         }
         for fx in wanted {
-            let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+            let key = crate::lut::grade_key(&fx);
             if self.lut_previews.contains_key(&key) {
                 continue;
             }
@@ -949,7 +964,7 @@ impl ReelApp {
                 .lut
                 .and_then(|i| self.project.lut_path(i).map(String::from))
                 .and_then(|p| crate::lut::load(&p).ok());
-            let lattice = crate::lut::bake_grade(base.as_deref(), fx.curves.as_ref());
+            let lattice = crate::lut::bake_grade(base.as_deref(), &fx);
             self.lut_previews
                 .insert(key, Some(crate::lut::to_texture(&lattice, &gpu.device, &gpu.queue)));
         }
@@ -1376,6 +1391,47 @@ impl ReelApp {
         ) {
             Ok(job) => self.audition = Some((job, out, clip_id)),
             Err(e) => log::error!("audition failed to start: {e:#}"),
+        }
+    }
+
+    /// Kick off a subject track for the clip's power window on a worker —
+    /// the decode takes seconds and must never block a frame.
+    pub fn start_tracking(&mut self, clip_id: u64) {
+        let Some(clip) = self.project.clip(clip_id).cloned() else { return };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.tracking = Some((rx, clip_id));
+        std::thread::spawn(move || {
+            let _ = tx.send(crate::track::track_clip(&clip));
+        });
+    }
+
+    /// Land finished tracks: the path becomes MaskX/MaskY keyframes, played
+    /// by the same `animated()` everything else uses.
+    pub fn poll_tracking(&mut self) {
+        let Some((rx, id)) = &self.tracking else { return };
+        let id = *id;
+        let result = match rx.try_recv() {
+            Ok(r) => r,
+            Err(std::sync::mpsc::TryRecvError::Empty) => return,
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.tracking = None;
+                return;
+            }
+        };
+        self.tracking = None;
+        match result {
+            Ok((kx, ky)) => {
+                self.editor.push_undo(&self.project);
+                if let Some(c) = self.project.clip_mut(id) {
+                    c.keys.retain(|(q, _)| {
+                        !matches!(q, crate::edit::Param::MaskX | crate::edit::Param::MaskY)
+                    });
+                    c.keys.push((crate::edit::Param::MaskX, kx));
+                    c.keys.push((crate::edit::Param::MaskY, ky));
+                }
+                self.editor.mark_changed();
+            }
+            Err(e) => log::error!("tracking failed: {e:#}"),
         }
     }
 

@@ -209,6 +209,19 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "mask-feather", value: Some("0..1"), help: "Soft edge width (default 0.05)" },
             Flag { name: "mask-invert", value: None, help: "Grade outside the window instead" },
             Flag { name: "lut-off", value: None, help: "Remove the LUT" },
+            Flag { name: "black", value: Some("0..0.5"), help: "Levels input black point (0 = unchanged)" },
+            Flag { name: "white", value: Some("0.5..1.5"), help: "Levels input white point (1 = unchanged)" },
+            Flag { name: "gamma", value: Some("N"), help: "Levels mid gamma; >1 brightens (1 = unchanged)" },
+            Flag { name: "temp", value: Some("-1..1"), help: "White balance: + warms, - cools" },
+            Flag { name: "tint", value: Some("-1..1"), help: "White balance: + magenta, - green" },
+            Flag { name: "hsl-hue", value: Some("DEG"), help: "HSL qualifier: window centre hue 0..360 (creates the qualifier)" },
+            Flag { name: "hsl-width", value: Some("DEG"), help: "Hue window half-width (default 40)" },
+            Flag { name: "hsl-push-hue", value: Some("DEG"), help: "Hue shift inside the window" },
+            Flag { name: "hsl-push-sat", value: Some("N"), help: "Saturation multiplier inside the window" },
+            Flag { name: "hsl-push-lum", value: Some("N"), help: "Lightness multiplier inside the window" },
+            Flag { name: "hsl-off", value: None, help: "Remove the qualifier" },
+            Flag { name: "like", value: Some("CLIP"), help: "Copy another clip's grade (colour only, not fades/reframe)" },
+            Flag { name: "like-all", value: None, help: "With --like: stamp that grade on EVERY video clip" },
             Flag { name: "key-color", value: Some("RRGGBB"), help: "Chroma key: knock this colour out (e.g. 00b140)" },
             Flag { name: "key-similarity", value: Some("0..1"), help: "How far from the key colour still counts (default 0.3)" },
             Flag { name: "key-softness", value: Some("0..1"), help: "Soft edge width beyond similarity (default 0.1)" },
@@ -318,6 +331,15 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Flag a position in the timeline",
+    },
+    Cmd {
+        name: "track",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (needs a power window — see effects --mask)" },
+            F_JSON,
+        ],
+        help: "Follow the subject under the clip's power window and keyframe the window onto its path",
     },
     Cmd {
         name: "stabilize",
@@ -592,6 +614,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "title" => cmd_title(p),
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
+        "track" => cmd_track(p),
         "stabilize" => cmd_stabilize(p),
         "align" => cmd_align(p),
         "tighten" => cmd_tighten(p),
@@ -1067,6 +1090,47 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         if let Some(v) = p.num::<f32>("key-softness")? {
             c.effects.key_softness = v.clamp(0.0, 1.0);
         }
+        if let Some(v) = p.num::<f32>("black")? {
+            c.effects.levels_black = v.clamp(0.0, 0.95);
+        }
+        if let Some(v) = p.num::<f32>("white")? {
+            c.effects.levels_white = v;
+        }
+        if let Some(v) = p.num::<f32>("gamma")? {
+            c.effects.levels_gamma = v;
+        }
+        if let Some(v) = p.num::<f32>("temp")? {
+            c.effects.wb_temp = v.clamp(-1.0, 1.0);
+        }
+        if let Some(v) = p.num::<f32>("tint")? {
+            c.effects.wb_tint = v.clamp(-1.0, 1.0);
+        }
+        if p.str("hsl-hue").is_some()
+            || p.str("hsl-width").is_some()
+            || p.str("hsl-push-hue").is_some()
+            || p.str("hsl-push-sat").is_some()
+            || p.str("hsl-push-lum").is_some()
+        {
+            let q = c.effects.hsl.get_or_insert_with(Default::default);
+            if let Some(v) = p.num::<f32>("hsl-hue")? {
+                q.hue = v.rem_euclid(360.0);
+            }
+            if let Some(v) = p.num::<f32>("hsl-width")? {
+                q.hue_width = v.clamp(1.0, 180.0);
+            }
+            if let Some(v) = p.num::<f32>("hsl-push-hue")? {
+                q.push_hue = v.clamp(-180.0, 180.0);
+            }
+            if let Some(v) = p.num::<f32>("hsl-push-sat")? {
+                q.push_sat = v.max(0.0);
+            }
+            if let Some(v) = p.num::<f32>("hsl-push-lum")? {
+                q.push_lum = v.max(0.0);
+            }
+        }
+        if p.on("hsl-off") {
+            c.effects.hsl = None;
+        }
         if p.on("key-off") {
             c.effects.key_color = None;
         }
@@ -1118,6 +1182,23 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         let idx = proj.add_lut(&abs);
         if let Some(c) = proj.clip_mut(id) {
             c.effects.lut = Some(idx);
+        }
+    }
+    // Copy another clip's grade — the colour work only. With --like-all,
+    // stamp it on every video clip: the project look, one command.
+    if let Some(from) = p.num::<u64>("like")? {
+        let donor = proj
+            .clip(from)
+            .map(|c| c.effects)
+            .ok_or_else(|| anyhow!("no clip {from} to copy the grade from"))?;
+        if p.on("like-all") {
+            for t in &mut proj.tracks {
+                for c in &mut t.clips {
+                    c.effects.copy_grade_from(&donor);
+                }
+            }
+        } else if let Some(c) = proj.clip_mut(id) {
+            c.effects.copy_grade_from(&donor);
         }
     }
     save(&proj, path)?;
@@ -1477,6 +1558,32 @@ fn cmd_marker(p: &Parsed) -> Result<Output> {
     Ok(Output::new(
         format!("{} marker at {at:.2}s", if p.on("remove") { "Removed" } else { "Added" }),
         serde_json::json!({ "markers": proj.markers }),
+    ))
+}
+
+fn cmd_track(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let clip = proj
+        .clip(id)
+        .ok_or_else(|| anyhow!("no clip {id}"))?
+        .clone();
+    let (kx, ky) = crate::track::track_clip(&clip)?;
+    let n = kx.len();
+    let end = kx.last().map(|k| k.t).unwrap_or(0.0);
+    let c = find_clip_mut(&mut proj, id)?;
+    c.keys.retain(|(q, _)| !matches!(q, crate::edit::Param::MaskX | crate::edit::Param::MaskY));
+    c.keys.push((crate::edit::Param::MaskX, kx));
+    c.keys.push((crate::edit::Param::MaskY, ky));
+    save(&proj, path)?;
+    let full = end >= clip.duration - 0.25;
+    Ok(Output::new(
+        format!(
+            "Tracked clip {id}: {n} keyframes over {end:.2}s{}",
+            if full { String::new() } else { format!(" (the subject was lost at {end:.2}s — the window holds there)") }
+        ),
+        serde_json::json!({ "clip": id, "keyframes": n, "tracked_until": end, "complete": full }),
     ))
 }
 

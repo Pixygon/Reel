@@ -70,6 +70,147 @@ pub struct Effects {
     /// GPU cost of a full grade is one texture sample.
     #[serde(default)]
     pub curves: Option<Curves>,
+    /// Levels: input black point (0 = untouched). Values at or below it
+    /// become black. Baked into the grade lattice with everything below.
+    #[serde(default)]
+    pub levels_black: f32,
+    /// Levels: input white point (1 = untouched). Values at or above it
+    /// become white.
+    #[serde(default = "one")]
+    pub levels_white: f32,
+    /// Levels: mid gamma. 1 = untouched, >1 brightens mids (Photoshop's
+    /// convention: out = lin^(1/gamma)).
+    #[serde(default = "one")]
+    pub levels_gamma: f32,
+    /// White balance temperature, -1..1. Positive warms (more red, less
+    /// blue), negative cools.
+    #[serde(default)]
+    pub wb_temp: f32,
+    /// White balance tint, -1..1. Positive shifts magenta (less green),
+    /// negative shifts green.
+    #[serde(default)]
+    pub wb_tint: f32,
+    /// HSL qualifier — select a hue/saturation/lightness window, then push
+    /// only those pixels. The classic "make the sky bluer" tool.
+    #[serde(default)]
+    pub hsl: Option<Hsl>,
+}
+
+/// An HSL secondary: the selection window and the push applied inside it.
+/// Everything is baked into the grade lattice — no extra GPU cost.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Hsl {
+    /// Window centre hue, degrees 0..360.
+    pub hue: f32,
+    /// Half-width of the hue window, degrees.
+    pub hue_width: f32,
+    /// Saturation window, 0..1.
+    pub sat_min: f32,
+    pub sat_max: f32,
+    /// Lightness window, 0..1.
+    pub lum_min: f32,
+    pub lum_max: f32,
+    /// Soft edge on every window boundary (fractional; floored at 0.02 so
+    /// the 33³ lattice can represent the transition without stair-steps).
+    #[serde(default = "default_hsl_soft")]
+    pub soft: f32,
+    /// Hue shift applied inside the window, degrees.
+    #[serde(default)]
+    pub push_hue: f32,
+    /// Saturation multiplier inside the window. 1 = untouched.
+    #[serde(default = "one")]
+    pub push_sat: f32,
+    /// Lightness multiplier inside the window. 1 = untouched.
+    #[serde(default = "one")]
+    pub push_lum: f32,
+}
+
+fn default_hsl_soft() -> f32 {
+    0.1
+}
+
+impl Default for Hsl {
+    fn default() -> Self {
+        Self {
+            hue: 210.0, // skies are the most-qualified thing in the world
+            hue_width: 40.0,
+            sat_min: 0.0,
+            sat_max: 1.0,
+            lum_min: 0.0,
+            lum_max: 1.0,
+            soft: default_hsl_soft(),
+            push_hue: 0.0,
+            push_sat: 1.0,
+            push_lum: 1.0,
+        }
+    }
+}
+
+impl Hsl {
+    /// Selection weight 0..1 for a pixel at (hue, sat, lightness): the
+    /// product of three soft windows. `soft` is the edge width — sat/lum
+    /// use it directly, hue scales it by the hue width so a narrow window
+    /// keeps a proportionate edge.
+    pub fn weight(&self, hsl: [f32; 3]) -> f32 {
+        let soft = self.soft.max(0.02);
+        let smooth = |edge0: f32, edge1: f32, x: f32| -> f32 {
+            let t = ((x - edge0) / (edge1 - edge0).max(1e-6)).clamp(0.0, 1.0);
+            t * t * (3.0 - 2.0 * t)
+        };
+        // Circular hue distance from the centre, in degrees.
+        let d = (hsl[0] - self.hue).rem_euclid(360.0);
+        let d = d.min(360.0 - d);
+        let hw = self.hue_width.max(1.0);
+        let hue_w = 1.0 - smooth(hw, hw + hw.max(10.0) * soft * 4.0, d);
+        let band = |lo: f32, hi: f32, x: f32| -> f32 {
+            smooth(lo - soft, lo, x) * (1.0 - smooth(hi, hi + soft, x))
+        };
+        hue_w * band(self.sat_min, self.sat_max, hsl[1]) * band(self.lum_min, self.lum_max, hsl[2])
+    }
+
+    pub fn is_identity(&self) -> bool {
+        self.push_hue.abs() < 1e-3
+            && (self.push_sat - 1.0).abs() < 1e-4
+            && (self.push_lum - 1.0).abs() < 1e-4
+    }
+}
+
+/// sRGB 0..1 → (hue degrees 0..360, saturation 0..1, lightness 0..1).
+pub fn rgb_to_hsl(rgb: [f32; 3]) -> [f32; 3] {
+    let (r, g, b) = (rgb[0], rgb[1], rgb[2]);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let l = (max + min) * 0.5;
+    let d = max - min;
+    if d < 1e-6 {
+        return [0.0, 0.0, l];
+    }
+    let s = d / (1.0 - (2.0 * l - 1.0).abs()).max(1e-6);
+    let h = if max == r {
+        60.0 * (((g - b) / d).rem_euclid(6.0))
+    } else if max == g {
+        60.0 * ((b - r) / d + 2.0)
+    } else {
+        60.0 * ((r - g) / d + 4.0)
+    };
+    [h, s.clamp(0.0, 1.0), l]
+}
+
+/// The inverse of `rgb_to_hsl`.
+pub fn hsl_to_rgb(hsl: [f32; 3]) -> [f32; 3] {
+    let (h, s, l) = (hsl[0].rem_euclid(360.0), hsl[1].clamp(0.0, 1.0), hsl[2].clamp(0.0, 1.0));
+    let c = (1.0 - (2.0 * l - 1.0).abs()) * s;
+    let x = c * (1.0 - ((h / 60.0).rem_euclid(2.0) - 1.0).abs());
+    let m = l - c * 0.5;
+    let (r, g, b) = match (h / 60.0) as u32 {
+        0 => (c, x, 0.0),
+        1 => (x, c, 0.0),
+        2 => (0.0, c, x),
+        3 => (0.0, x, c),
+        4 => (x, 0.0, c),
+        _ => (c, 0.0, x),
+    };
+    [r + m, g + m, b + m]
 }
 
 /// Editable tone curves. Each array holds the OUTPUT at inputs
@@ -200,6 +341,12 @@ impl Default for Effects {
             lut: None,
             mask: None,
             curves: None,
+            levels_black: 0.0,
+            levels_white: 1.0,
+            levels_gamma: 1.0,
+            wb_temp: 0.0,
+            wb_tint: 0.0,
+            hsl: None,
         }
     }
 }
@@ -208,9 +355,65 @@ impl Default for Effects {
 pub const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 impl Effects {
-    /// Does this clip grade through a lattice (LUT and/or curves)?
+    /// Does this clip grade through a lattice? LUT, curves, levels, white
+    /// balance and HSL qualifiers all bake into the same 33³ texture.
     pub fn has_lattice(&self) -> bool {
-        self.lut.is_some() || self.curves.map(|c| !c.is_identity()).unwrap_or(false)
+        self.lut.is_some()
+            || self.curves.map(|c| !c.is_identity()).unwrap_or(false)
+            || self.has_grade()
+    }
+
+    /// Any of the lattice-baked colour corrections active (beyond LUT and
+    /// curves, which have their own flags)?
+    pub fn has_grade(&self) -> bool {
+        self.levels_black.abs() > 1e-4
+            || (self.levels_white - 1.0).abs() > 1e-4
+            || (self.levels_gamma - 1.0).abs() > 1e-4
+            || self.wb_temp.abs() > 1e-4
+            || self.wb_tint.abs() > 1e-4
+            || self.hsl.map(|q| !q.is_identity()).unwrap_or(false)
+    }
+
+    /// The lattice-baked colour correction: white balance, then levels,
+    /// then the HSL qualifier — on sRGB-encoded values, like everything in
+    /// this module. ONE formula: `bake_grade` samples it into the lattice
+    /// both pipelines draw with, and the fallback's lut3d export carries
+    /// the identical numbers.
+    pub fn grade_reference(&self, rgb: [f32; 3]) -> [f32; 3] {
+        let mut c = rgb;
+        // White balance: opposing channel gains. ±1 temp swings red/blue by
+        // 25% — enough to rescue tungsten, small enough to stay linear-ish.
+        if self.wb_temp.abs() > 1e-4 || self.wb_tint.abs() > 1e-4 {
+            let t = self.wb_temp.clamp(-1.0, 1.0);
+            let g = self.wb_tint.clamp(-1.0, 1.0);
+            c[0] *= 1.0 + 0.25 * t;
+            c[2] *= 1.0 - 0.25 * t;
+            c[1] *= 1.0 - 0.15 * g;
+        }
+        // Levels: remap black..white to 0..1, then the gamma mid slider.
+        let black = self.levels_black.clamp(0.0, 0.95);
+        let white = self.levels_white.clamp(black + 0.05, 2.0);
+        let gamma = self.levels_gamma.clamp(0.1, 10.0);
+        for v in &mut c {
+            let lin = ((*v - black) / (white - black)).clamp(0.0, 1.0);
+            *v = lin.powf(1.0 / gamma);
+        }
+        // HSL qualifier: weight by the window, push inside it.
+        if let Some(q) = self.hsl {
+            if !q.is_identity() {
+                let hsl = rgb_to_hsl([c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)]);
+                let w = q.weight(hsl);
+                if w > 1e-4 {
+                    let pushed = hsl_to_rgb([
+                        hsl[0] + q.push_hue * w,
+                        hsl[1] * (1.0 + (q.push_sat - 1.0) * w),
+                        hsl[2] * (1.0 + (q.push_lum - 1.0) * w),
+                    ]);
+                    c = pushed;
+                }
+            }
+        }
+        [c[0].clamp(0.0, 1.0), c[1].clamp(0.0, 1.0), c[2].clamp(0.0, 1.0)]
     }
 
     pub fn is_identity(&self) -> bool {
@@ -224,6 +427,24 @@ impl Effects {
             && self.lut.is_none()
             && self.mask.is_none()
             && self.curves.map(|c| c.is_identity()).unwrap_or(true)
+            && !self.has_grade()
+    }
+
+    /// Take another clip's GRADE — the colour work only. Fades, reframe,
+    /// keying and the power window stay as they were: those are per-shot
+    /// decisions, a grade is a look.
+    pub fn copy_grade_from(&mut self, other: &Effects) {
+        self.exposure = other.exposure;
+        self.contrast = other.contrast;
+        self.saturation = other.saturation;
+        self.levels_black = other.levels_black;
+        self.levels_white = other.levels_white;
+        self.levels_gamma = other.levels_gamma;
+        self.wb_temp = other.wb_temp;
+        self.wb_tint = other.wb_tint;
+        self.hsl = other.hsl;
+        self.lut = other.lut;
+        self.curves = other.curves;
     }
 
     pub fn has_reframe(&self) -> bool {
@@ -336,6 +557,87 @@ impl Effects {
             }
         }
         a as f32
+    }
+}
+
+#[cfg(test)]
+mod grade_tests {
+    use super::*;
+
+    #[test]
+    fn hsl_round_trips_and_matches_known_colours() {
+        for rgb in [
+            [1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0],
+            [0.3, 0.6, 0.9], [0.5, 0.5, 0.5], [0.9, 0.1, 0.4],
+        ] {
+            let back = hsl_to_rgb(rgb_to_hsl(rgb));
+            for c in 0..3 {
+                assert!((back[c] - rgb[c]).abs() < 1e-4, "{rgb:?} → {back:?}");
+            }
+        }
+        assert!((rgb_to_hsl([1.0, 0.0, 0.0])[0]).abs() < 0.5, "pure red is hue 0");
+        assert!((rgb_to_hsl([0.0, 0.0, 1.0])[0] - 240.0).abs() < 0.5, "pure blue is hue 240");
+    }
+
+    #[test]
+    fn grade_reference_moves_in_the_stated_directions() {
+        let id = Effects::default();
+        assert!(!id.has_grade());
+        let probe = [0.4, 0.5, 0.6];
+        assert_eq!(id.grade_reference(probe), probe, "identity passes through exactly");
+
+        // Warm temperature: red up, blue down, green untouched.
+        let warm = Effects { wb_temp: 0.5, ..Default::default() };
+        let w = warm.grade_reference(probe);
+        assert!(w[0] > probe[0] && w[2] < probe[2] && (w[1] - probe[1]).abs() < 1e-5, "{w:?}");
+        // Green tint: green up.
+        let green = Effects { wb_tint: -0.5, ..Default::default() };
+        assert!(green.grade_reference(probe)[1] > probe[1]);
+
+        // Levels: a raised black point crushes shadows to zero and keeps
+        // white at white; gamma > 1 brightens the mids.
+        let lv = Effects { levels_black: 0.2, ..Default::default() };
+        assert_eq!(lv.grade_reference([0.1, 0.1, 0.1]), [0.0, 0.0, 0.0]);
+        assert_eq!(lv.grade_reference([1.0, 1.0, 1.0]), [1.0, 1.0, 1.0]);
+        let bright = Effects { levels_gamma: 2.0, ..Default::default() };
+        assert!(bright.grade_reference([0.25, 0.25, 0.25])[0] > 0.4);
+
+        // The qualifier: a blue pixel inside a blue window desaturates when
+        // told to; a red pixel outside the window is untouched.
+        let kill_blue = Effects {
+            hsl: Some(Hsl { hue: 240.0, hue_width: 40.0, push_sat: 0.0, ..Default::default() }),
+            ..Default::default()
+        };
+        let blue = kill_blue.grade_reference([0.2, 0.3, 0.9]);
+        assert!((blue[0] - blue[2]).abs() < 0.05, "blue desaturated toward grey: {blue:?}");
+        let red = kill_blue.grade_reference([0.9, 0.2, 0.2]);
+        assert!(red[0] - red[2] > 0.5, "red is outside the window: {red:?}");
+    }
+
+    /// The lattice IS the formula: baking levels+WB+HSL into 33³ and
+    /// sampling it trilinearly must agree with grade_reference off-node.
+    #[test]
+    fn the_baked_lattice_matches_the_direct_formula() {
+        let fx = Effects {
+            levels_black: 0.05,
+            levels_gamma: 1.3,
+            wb_temp: 0.3,
+            hsl: Some(Hsl { hue: 240.0, hue_width: 50.0, push_sat: 0.3, ..Default::default() }),
+            ..Default::default()
+        };
+        let lattice = crate::lut::bake_grade(None, &fx);
+        for probe in [
+            [0.13, 0.47, 0.81], [0.5, 0.5, 0.5], [0.02, 0.98, 0.33], [0.7, 0.7, 0.1],
+        ] {
+            let direct = fx.grade_reference(probe);
+            let via = crate::lut::apply_reference(&lattice, probe);
+            for c in 0..3 {
+                assert!(
+                    (direct[c] - via[c]).abs() < 0.035,
+                    "lattice drifted at {probe:?}: direct {direct:?} vs lattice {via:?}"
+                );
+            }
+        }
     }
 }
 

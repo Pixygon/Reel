@@ -14,6 +14,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_captures();
     app.poll_queue();
     app.poll_audition();
+    app.poll_tracking();
     app.poll_autosave();
     app.poll_captions();
     app.update_editor_playback();
@@ -611,6 +612,44 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.add(egui::Slider::new(&mut fx.exposure, 0.2..=2.0).text("Exposure"));
                 ui.add(egui::Slider::new(&mut fx.contrast, 0.2..=2.5).text("Contrast"));
                 ui.add(egui::Slider::new(&mut fx.saturation, 0.0..=2.5).text("Saturation"));
+                // Levels + white balance — baked into the grade lattice
+                // with the LUT and curves, so preview cost stays one sample.
+                ui.collapsing("Levels & balance", |ui| {
+                    ui.add(egui::Slider::new(&mut fx.levels_black, 0.0..=0.5).text("Black point"));
+                    ui.add(egui::Slider::new(&mut fx.levels_white, 0.5..=1.5).text("White point"));
+                    ui.add(egui::Slider::new(&mut fx.levels_gamma, 0.2..=3.0).logarithmic(true).text("Gamma"));
+                    ui.add(egui::Slider::new(&mut fx.wb_temp, -1.0..=1.0).text("Temperature"));
+                    ui.add(egui::Slider::new(&mut fx.wb_tint, -1.0..=1.0).text("Tint"));
+                    if ui.small_button("reset").clicked() {
+                        fx.levels_black = 0.0;
+                        fx.levels_white = 1.0;
+                        fx.levels_gamma = 1.0;
+                        fx.wb_temp = 0.0;
+                        fx.wb_tint = 0.0;
+                    }
+                });
+                // HSL qualifier — grab a hue/sat/lightness window, push it.
+                ui.collapsing("HSL qualifier", |ui| {
+                    let mut on = fx.hsl.is_some();
+                    if ui.checkbox(&mut on, "Qualify").on_hover_text(
+                        "Select pixels by hue, saturation and lightness, then push only those — the make-the-sky-bluer tool.",
+                    ).changed() {
+                        fx.hsl = on.then(crate::effects::Hsl::default);
+                    }
+                    if let Some(q) = &mut fx.hsl {
+                        ui.add(egui::Slider::new(&mut q.hue, 0.0..=360.0).text("Hue centre"));
+                        ui.add(egui::Slider::new(&mut q.hue_width, 5.0..=180.0).text("Hue width"));
+                        ui.add(egui::Slider::new(&mut q.sat_min, 0.0..=1.0).text("Sat min"));
+                        ui.add(egui::Slider::new(&mut q.sat_max, 0.0..=1.0).text("Sat max"));
+                        ui.add(egui::Slider::new(&mut q.lum_min, 0.0..=1.0).text("Light min"));
+                        ui.add(egui::Slider::new(&mut q.lum_max, 0.0..=1.0).text("Light max"));
+                        ui.add(egui::Slider::new(&mut q.soft, 0.02..=0.5).text("Softness"));
+                        ui.separator();
+                        ui.add(egui::Slider::new(&mut q.push_hue, -180.0..=180.0).text("Push hue"));
+                        ui.add(egui::Slider::new(&mut q.push_sat, 0.0..=2.0).text("Push sat"));
+                        ui.add(egui::Slider::new(&mut q.push_lum, 0.0..=2.0).text("Push light"));
+                    }
+                });
                 ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).text("Fade in (s)"));
                 ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
                 // Reframe — how you put a landscape shot into a vertical
@@ -861,8 +900,26 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         ui.add(egui::Slider::new(&mut m.h, 0.02..=0.8).text("Height"));
                         ui.add(egui::Slider::new(&mut m.feather, 0.0..=0.3).text("Feather"));
                         ui.checkbox(&mut m.invert, "Grade outside instead");
+                        // Auto tracking: follow whatever is under the window
+                        // and keyframe the window onto its path.
+                        if app.tracking.as_ref().map(|(_, tid)| *tid) == Some(id) {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("tracking the subject…");
+                            });
+                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
+                        } else if ui
+                            .button("Track subject")
+                            .on_hover_text(
+                                "Follow what's under the window through the clip and keyframe \
+                                 the window onto its path (replaces mask-x/y keyframes)",
+                            )
+                            .clicked()
+                        {
+                            app.start_tracking(id);
+                        }
                         ui.label(
-                            RichText::new("The colour grade (LUT + sliders) applies only where the window says. Animate mask-x/y/w/h to track a subject.")
+                            RichText::new("The colour grade (LUT + sliders) applies only where the window says. Track subject follows what's under it.")
                                 .small()
                                 .color(egui::Color32::from_gray(140)),
                         );
@@ -1055,6 +1112,31 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         ui.label(RichText::new("• applied on export").small().color(theme::EMBER));
                     }
                 });
+                // A grade is a look — carry it between clips, or stamp it
+                // on the whole edit as the project's look.
+                ui.horizontal(|ui| {
+                    if ui.small_button("Copy grade").on_hover_text(
+                        "Copy the colour work (trims, levels, balance, HSL, LUT, curves) — not fades or reframe",
+                    ).clicked() {
+                        app.grade_clipboard = Some(fx);
+                    }
+                    if let Some(g) = app.grade_clipboard {
+                        if ui.small_button("Paste grade").clicked() {
+                            fx.copy_grade_from(&g);
+                        }
+                        if ui.small_button("Paste to ALL clips").on_hover_text(
+                            "Apply the copied grade to every video clip — the project look",
+                        ).clicked() {
+                            app.editor.push_undo(&app.project);
+                            for t in &mut app.project.tracks {
+                                for c in &mut t.clips {
+                                    c.effects.copy_grade_from(&g);
+                                }
+                            }
+                            app.editor.mark_changed();
+                        }
+                    }
+                });
                 if fx != before {
                     // One undo step per gesture, not per pixel of slider drag.
                     if !ui.ctx().input(|i| i.pointer.any_down()) || app.editor.fx_gesture != Some(id) {
@@ -1166,10 +1248,22 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             let label = if app.show_scopes { "Hide" } else { "Show" };
             if ui.small_button(label).clicked() {
                 app.show_scopes = !app.show_scopes;
+                app.scroll_to_scopes = app.show_scopes;
             }
         });
         if app.show_scopes {
-            scopes(ui, app);
+            let drew = scopes(ui, app);
+            if app.scroll_to_scopes {
+                // Bring the freshly opened scopes into view — they live far
+                // down a panel that is taller than most windows. Keep
+                // scrolling until a real picture fills them (the first
+                // frames draw a placeholder a fraction of the height).
+                let r = ui.min_rect();
+                ui.scroll_to_rect(Rect::from_min_max(r.left_bottom() - Vec2::new(0.0, 1.0), r.left_bottom()), Some(egui::Align::Max));
+                if drew {
+                    app.scroll_to_scopes = false;
+                }
+            }
         }
 
         // ── Captions ────────────────────────────────────────────────────
@@ -2023,14 +2117,14 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
 /// a luma waveform. CPU on a downsampled grid — a preview frame is already
 /// CPU-visible on the mpv software path, so this costs a fraction of a
 /// millisecond and updates live during playback.
-fn scopes(ui: &mut egui::Ui, app: &ReelApp) {
+fn scopes(ui: &mut egui::Ui, app: &ReelApp) -> bool {
     let Some(frame) = app.player.as_ref().and_then(|p| p.current.as_ref()) else {
         ui.label(RichText::new("No picture yet.").small().color(egui::Color32::from_gray(120)));
-        return;
+        return false;
     };
     let (w, h) = (frame.width as usize, frame.height as usize);
     if frame.data.len() < w * h * 4 || w == 0 || h == 0 {
-        return;
+        return false;
     }
     // Sample a ~120×68 grid: plenty for scopes, nothing for the CPU.
     let (gx, gy) = (120usize.min(w), 68usize.min(h));
@@ -2113,11 +2207,80 @@ fn scopes(ui: &mut egui::Ui, app: &ReelApp) {
             Stroke::new(1.2, theme::CYAN),
         );
     }
+    // RGB parade: three side-by-side waveforms, one per channel — where a
+    // colour cast shows as one channel's envelope riding high.
+    let (prect, _) = ui.allocate_exact_size(Vec2::new(width, 56.0), Sense::hover());
+    let pp = ui.painter_at(prect);
+    pp.rect_filled(prect, 4.0, theme::VOID_2);
+    const PCOLS: usize = 32;
+    let mut pmin = [[255u8; PCOLS]; 3];
+    let mut pmax = [[0u8; PCOLS]; 3];
+    for iy in 0..gy {
+        let y = iy * h / gy;
+        for ix in 0..gx {
+            let x = ix * w / gx;
+            let i = (y * w + x) * 4;
+            let col = ix * PCOLS / gx;
+            for ch in 0..3 {
+                let v = frame.data[i + ch];
+                pmin[ch][col] = pmin[ch][col].min(v);
+                pmax[ch][col] = pmax[ch][col].max(v);
+            }
+        }
+    }
+    let third = prect.width() / 3.0;
+    let pto_y = |v: f32| prect.bottom() - 2.0 - (v / 255.0) * (prect.height() - 4.0);
+    for ch in 0..3 {
+        let x0 = prect.left() + ch as f32 * third + 2.0;
+        let cw = (third - 4.0) / PCOLS as f32;
+        for c in 0..PCOLS {
+            let x = x0 + c as f32 * cw + cw * 0.5;
+            pp.line_segment(
+                [egui::pos2(x, pto_y(pmin[ch][c] as f32)), egui::pos2(x, pto_y(pmax[ch][c] as f32))],
+                Stroke::new(cw.max(1.0), colors[ch]),
+            );
+        }
+    }
+
+    // Vectorscope: chroma (Cb, Cr) scatter — hue is the angle, saturation
+    // the radius. Skin tones gather on the classic ~123° line.
+    let vs = 72.0f32;
+    let (vrect, _) = ui.allocate_exact_size(Vec2::new(width, vs), Sense::hover());
+    let vp = ui.painter_at(vrect);
+    vp.rect_filled(vrect, 4.0, theme::VOID_2);
+    let centre = vrect.center();
+    let radius = (vs * 0.5 - 4.0).max(10.0);
+    vp.circle_stroke(centre, radius, Stroke::new(1.0, Color32::from_gray(60)));
+    vp.circle_stroke(centre, radius * 0.5, Stroke::new(0.5, Color32::from_gray(50)));
+    // Skin-tone line (I axis, ~123° in vectorscope convention).
+    let skin = egui::Vec2::angled(-123.0f32.to_radians()) * radius;
+    vp.line_segment([centre, centre + skin], Stroke::new(0.5, Color32::from_gray(70)));
+    for iy in 0..gy {
+        let y = iy * h / gy;
+        for ix in 0..gx {
+            let x = ix * w / gx;
+            let i = (y * w + x) * 4;
+            let (r, g, b) = (
+                frame.data[i] as f32 / 255.0,
+                frame.data[i + 1] as f32 / 255.0,
+                frame.data[i + 2] as f32 / 255.0,
+            );
+            // BT.709 chroma differences, scaled so saturated primaries land
+            // near the outer ring.
+            let cb = (b - (0.2126 * r + 0.7152 * g + 0.0722 * b)) / 1.8556;
+            let cr = (r - (0.2126 * r + 0.7152 * g + 0.0722 * b)) / 1.5748;
+            let px = centre + egui::vec2(cb * 2.0 * radius, -cr * 2.0 * radius);
+            if vrect.contains(px) {
+                vp.circle_filled(px, 0.8, Color32::from_rgba_unmultiplied(140, 230, 240, 90));
+            }
+        }
+    }
     ui.label(
-        RichText::new("Histogram (RGB) · waveform (luma, column by column)")
+        RichText::new("Histogram · luma waveform · RGB parade · vectorscope")
             .small()
             .color(egui::Color32::from_gray(120)),
     );
+    true
 }
 
 fn checkerboard(painter: &egui::Painter, rect: Rect) {

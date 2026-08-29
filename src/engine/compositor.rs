@@ -589,7 +589,10 @@ mod tests {
             master: [0.0, 0.15, 0.5, 0.85, 1.0], // classic S
             ..Default::default()
         };
-        let lattice = crate::lut::bake_grade(None, Some(&curves));
+        let lattice = crate::lut::bake_grade(
+            None,
+            &crate::effects::Effects { curves: Some(curves), ..Default::default() },
+        );
         let input = [64u8, 128, 200];
         let scene = Scene {
             layers: vec![Layer {

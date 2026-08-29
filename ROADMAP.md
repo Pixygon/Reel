@@ -77,20 +77,31 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 - [x] `reel bench MEDIA`: probe, first frame, scrub median, export speed
       measured on this machine — table or `--json`.
 
-## D. Grading depth
+## D. Grading depth — shipped in v1.3.0 (one item open)
 
-- [ ] Levels (black/white points + gamma) and white balance (temp/tint) —
-      same lattice bake, so they stay one texture sample.
-- [ ] HSL qualifiers (select by hue/sat/luma range, then push) — the
-      secondary-correction half of a color page.
+- [x] Levels (black/white/gamma) and white balance (temp/tint) — baked
+      into the grade lattice (`Effects::grade_reference` → `bake_grade`),
+      so the preview cost stays one texture sample and every pipeline
+      agrees by construction. Preview verified pixel-exact against the
+      formula under Xvfb.
+- [x] HSL qualifiers: hue/sat/lightness window (soft edges) + push
+      (hue shift, sat/light multipliers) — same lattice.
+      BONUS: the graph fallback now applies the WHOLE grade via a baked
+      lut3d .cube (parity-tested against grade_reference through real
+      ffmpeg) instead of warning that it dropped LUTs/curves.
 - [ ] Bezier handles on the keyframe curve editor; the full-width timeline
-      curve lane.
-- [ ] **Auto tracking for power windows**: template-match a region across
-      frames, write mask-x/y keyframes (the mask is already animatable —
-      tracking is a keyframe generator).
-- [ ] Vectorscope and RGB parade in the scopes panel.
-- [ ] Grade copy/paste between clips; a project-level "look" applied to
-      many clips at once.
+      curve lane. (Deferred — belongs with a keyframe-editor rework.)
+- [x] **Auto tracking for power windows** (`track.rs`): zero-mean NCC
+      template matching at 10 Hz on a 192×108 grid, patch 1.5× the window
+      so the subject's edges are the feature; stops when correlation
+      collapses instead of wandering. Writes MaskX/MaskY keyframes.
+      `reel track` + a Track subject button. Proven end to end: a tracked
+      window follows a moving square through a real render (76 vs 255).
+- [x] Vectorscope and RGB parade in the scopes panel (+ scroll-to-scopes
+      when opened).
+- [x] Grade copy/paste between clips (Copy/Paste grade buttons; colour
+      work only — fades/reframe stay per-shot) and "Paste to ALL clips"
+      as the project look. CLI: `effects --like N [--like-all]`.
 
 ## E. Audio depth
 

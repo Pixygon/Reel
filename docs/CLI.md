@@ -178,11 +178,25 @@ Colour, fades and reframing for one clip
 | `--mask-feather` | `0..1` | Soft edge width (default 0.05) |
 | `--mask-invert` | — | Grade outside the window instead |
 | `--lut-off` | — | Remove the LUT |
+| `--black` | `0..0.5` | Levels input black point (0 = unchanged) |
+| `--white` | `0.5..1.5` | Levels input white point (1 = unchanged) |
+| `--gamma` | `N` | Levels mid gamma; >1 brightens (1 = unchanged) |
+| `--temp` | `-1..1` | White balance: + warms, - cools |
+| `--tint` | `-1..1` | White balance: + magenta, - green |
+| `--hsl-hue` | `DEG` | HSL qualifier: window centre hue 0..360 (creates the qualifier) |
+| `--hsl-width` | `DEG` | Hue window half-width (default 40) |
+| `--hsl-push-hue` | `DEG` | Hue shift inside the window |
+| `--hsl-push-sat` | `N` | Saturation multiplier inside the window |
+| `--hsl-push-lum` | `N` | Lightness multiplier inside the window |
+| `--hsl-off` | — | Remove the qualifier |
+| `--like` | `CLIP` | Copy another clip's grade (colour only, not fades/reframe) |
+| `--like-all` | — | With --like: stamp that grade on EVERY video clip |
 | `--key-color` | `RRGGBB` | Chroma key: knock this colour out (e.g. 00b140) |
 | `--key-similarity` | `0..1` | How far from the key colour still counts (default 0.3) |
 | `--key-softness` | `0..1` | Soft edge width beyond similarity (default 0.1) |
 | `--key-off` | — | Stop keying |
 | `--reset` | — | Back to no effects |
+| `--json` | — | Print the result as JSON |
 
 ### `reel keyframe PROJECT`
 
@@ -276,6 +290,15 @@ Flag a position in the timeline
 | `--at` | `SECONDS` | Where to put it |
 | `--remove` | — | Take it away instead |
 | `--list` | — | Show the markers |
+
+### `reel track PROJECT`
+
+Follow the subject under the clip's power window and keyframe the window onto its path
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id (needs a power window — see effects --mask) |
+| `--json` | — | Print the result as JSON |
 
 ### `reel stabilize PROJECT`
 

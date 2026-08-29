@@ -313,10 +313,7 @@ pub fn render_still(
                             .lut
                             .and_then(|i| overlays.luts.get(i as usize))
                             .and_then(|p| crate::lut::load(p).ok());
-                        comp.lut_texture(&crate::lut::bake_grade(
-                            base.as_deref(),
-                            fx.curves.as_ref(),
-                        ))
+                        comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), &fx))
                     }),
                 },
             ));
@@ -360,10 +357,7 @@ pub fn render_still(
                             .lut
                             .and_then(|i| overlays.luts.get(i as usize))
                             .and_then(|p| crate::lut::load(p).ok());
-                        comp.lut_texture(&crate::lut::bake_grade(
-                            base.as_deref(),
-                            o.effects.curves.as_ref(),
-                        ))
+                        comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), &o.effects))
                     }),
                 },
             ));
@@ -584,7 +578,7 @@ fn run(
             if !fx.has_lattice() {
                 return None;
             }
-            let key = crate::lut::grade_key(fx.lut, fx.curves.as_ref());
+            let key = crate::lut::grade_key(&fx);
             grade_views
                 .entry(key)
                 .or_insert_with(|| {
@@ -592,10 +586,7 @@ fn run(
                         .lut
                         .and_then(|i| lut_table.get(i as usize))
                         .and_then(|p| crate::lut::load(p).ok());
-                    Some(comp.lut_texture(&crate::lut::bake_grade(
-                        base.as_deref(),
-                        fx.curves.as_ref(),
-                    )))
+                    Some(comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), fx)))
                 })
                 .clone()
         };
