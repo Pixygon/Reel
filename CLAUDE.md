@@ -376,6 +376,14 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   curve, which the test catches. `bake_grade` composes LUT∘curves into one
   33³ lattice; `grade_key` (lut idx + curve bits) keys per-device texture
   caches in BOTH pipelines — never resolve a lattice by LUT index alone.
+- ONE TRUTH OF TIME: `edit_spans`/`timeline_to_edit`/`edit_to_timeline` map
+  timeline ↔ edit (render) time. The static map is TWO-SHEETED around
+  transitions (sequential on the timeline, simultaneous in the edit) — the
+  incoming clip owns the overlap on the inverse, and playback continuity
+  comes from RESUMING past a transition's head (it already played under the
+  fade). Scrubber + readout display edit time; playhead stays timeline
+  internally. `app.user_rate` is the USER's dial; effective mpv rate =
+  user_rate × clip rate — never let clip speed hijack the control again.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

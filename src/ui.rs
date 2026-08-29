@@ -261,14 +261,29 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             player.shuttle_stop();
             shuttle_note = Some("paused".into());
         }
+        // In the editor the effective mpv rate is user_rate × the active
+        // clip's own rate — so the keys drive the USER's dial, and a sped
+        // clip never swallows the adjustment.
         if k.speed_up {
-            player.set_speed(player.speed + 0.25);
+            if app.mode == Mode::Editor {
+                app.user_rate = (app.user_rate + 0.25).min(4.0);
+            } else {
+                player.set_speed(player.speed + 0.25);
+            }
         }
         if k.speed_down {
-            player.set_speed(player.speed - 0.25);
+            if app.mode == Mode::Editor {
+                app.user_rate = (app.user_rate - 0.25).max(0.25);
+            } else {
+                player.set_speed(player.speed - 0.25);
+            }
         }
         if k.speed_reset {
-            player.set_speed(1.0);
+            if app.mode == Mode::Editor {
+                app.user_rate = 1.0;
+            } else {
+                player.set_speed(1.0);
+            }
         }
         if k.viz && player.supports_visualizer() {
             player.set_visualizer(player.visualizer.next());
@@ -2083,7 +2098,10 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         0.0
     };
     if editing {
-        let mut pos = app.editor.playhead.min(edit_len);
+        // The scrubber speaks EDIT time — the render's clock, gaps skipped
+        // and overlaps collapsed — mapped to timeline positions only at the
+        // seek. One truth of time: 8 s of edit is 8 s of scrubber.
+        let mut pos = app.project.timeline_to_edit(app.editor.playhead).min(edit_len);
         let normal_slider = ui.spacing().slider_width;
         ui.spacing_mut().slider_width = ui.available_width();
         let resp = ui.add(
@@ -2091,7 +2109,8 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         );
         ui.spacing_mut().slider_width = normal_slider;
         if resp.dragged() || resp.drag_stopped() {
-            app.seek_timeline(pos);
+            let t = app.project.edit_to_timeline(pos);
+            app.seek_timeline(t);
         }
         if resp.drag_stopped() {
             resp.surrender_focus();
@@ -2200,7 +2219,11 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
             }
             let Some(player) = app.player.as_mut() else { return };
             let time_text = if editing {
-                format!("{} / {}", fmt_time(app.editor.playhead), fmt_time(edit_len))
+                format!(
+                    "{} / {}",
+                    fmt_time(app.project.timeline_to_edit(app.editor.playhead)),
+                    fmt_time(edit_len)
+                )
             } else {
                 format!("{} / {}", fmt_time(player.position), fmt_time(player.info.duration))
             };
@@ -2243,8 +2266,11 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
 
-            // Speed.
-            let mut speed = player.speed;
+            // Speed: the control shows the USER's rate. In the editor the
+            // active clip's own rate multiplies in underneath (a badge
+            // says so), instead of hijacking this dial.
+            let editing_here = app.mode == Mode::Editor;
+            let mut speed = if editing_here { app.user_rate } else { player.speed };
             egui::ComboBox::from_id_salt("speed")
                 .selected_text(format!("{speed}×"))
                 .width(64.0)
@@ -2253,7 +2279,25 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                         ui.selectable_value(&mut speed, s, format!("{s}×"));
                     }
                 });
-            if speed != player.speed {
+            if editing_here {
+                if (speed - app.user_rate).abs() > 1e-9 {
+                    app.user_rate = speed;
+                }
+                let clip_rate = app
+                    .editor
+                    .active_clip
+                    .and_then(|id| app.project.clip(id))
+                    .map(|c| c.source_len() / c.duration.max(1e-9))
+                    .unwrap_or(1.0);
+                if (clip_rate - 1.0).abs() > 0.01 {
+                    ui.label(
+                        RichText::new(format!("clip {clip_rate:.2}×"))
+                            .small()
+                            .color(theme::EMBER),
+                    )
+                    .on_hover_text("This clip has its own playback rate; it multiplies with yours.");
+                }
+            } else if speed != player.speed {
                 player.set_speed(speed);
             }
 

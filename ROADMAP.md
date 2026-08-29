@@ -28,18 +28,21 @@ The deepest 1.x item. The editor timeline keeps gaps and uncollapsed
 transition overlaps; render time collapses both. Today the scrubber can
 read `10.00 / 8.00` at the end of a transitioned edit.
 
-- [ ] Define **edit time** (what the scrubber, playhead, markers and
-      captions address) as render time: gaps skipped, overlaps collapsed —
-      one mapping module with the same rigor as `speed_integral`, unit-
-      tested both directions.
-- [ ] The preview plays through transitions in edit time (the incoming
-      pool already exists; the playhead should cross a 1 s fade in 1 s,
-      not 2 s).
+- [x] The timebase module (`edit_spans` / `timeline_to_edit` /
+      `edit_to_timeline`): totals equal `render_duration` to the bit, gaps
+      collapse, the overlap belongs to the incoming clip, round trips
+      tested. (The static map is honestly two-sheeted around transitions —
+      a's tail and b's head are sequential on the timeline but simultaneous
+      in the edit; what is monotone is the PLAYBACK PATH.)
+- [x] The scrubber and the time readout speak edit time; seeks map back
+      through the inverse. `10.00 / 8.00` is gone.
+- [x] Playback resumes the incoming clip PAST a transition's head (it
+      already played, blended over the outgoing tail) — edit time flows
+      continuously through a fade, tested as path continuity.
+- [x] The transport speed control shows the USER's rate again; the active
+      clip's own rate multiplies underneath and shows as a badge.
 - [ ] Markers/captions/titles authored against edit time survive
       re-timing edits upstream of them (anchor to clips where possible).
-- [ ] The clip-rate speed forcing stops hijacking the transport's rate
-      display: the control shows the USER rate; a small badge shows the
-      clip's own rate.
 
 ## B. Preview honesty debts
 

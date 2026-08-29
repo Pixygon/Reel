@@ -620,6 +620,19 @@ impl Default for Music {
     }
 }
 
+/// One V1 clip's coordinates in both clocks — see `Project::edit_spans`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EditSpan {
+    pub clip: u64,
+    /// Timeline window.
+    pub t0: f64,
+    pub t1: f64,
+    /// Edit-time window (overlaps its predecessor by `fade_in`).
+    pub e0: f64,
+    pub e1: f64,
+    pub fade_in: f64,
+}
+
 /// One audio-track (or overlay) clip, flattened for the export mix.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AudioClip {
@@ -1026,6 +1039,88 @@ impl Project {
 
     pub fn lut_path(&self, idx: u32) -> Option<&str> {
         self.luts.get(idx as usize).map(String::as_str)
+    }
+
+    /// The edit's spans: every V1 clip's place in BOTH clocks — timeline
+    /// time (where the clip sits, gaps and all) and EDIT time (what the
+    /// render plays: gaps skipped, transition overlaps collapsed). This is
+    /// the one-truth-of-time mapping; the scrubber, the time readout and
+    /// playback continuity all read it, and its total must equal
+    /// `render_duration` to the bit — tested.
+    pub fn edit_spans(&self) -> Vec<EditSpan> {
+        let mut clips: Vec<&Clip> = self
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .flat_map(|t| t.clips.iter())
+            .collect();
+        clips.sort_by(|a, b| a.start.total_cmp(&b.start));
+        let mut spans = Vec::with_capacity(clips.len());
+        let mut cursor = 0.0f64;
+        let mut prev_dur = 0.0f64;
+        for (i, c) in clips.iter().enumerate() {
+            let d = if i == 0 {
+                0.0
+            } else {
+                c.transition_in.min(prev_dur).min(c.duration)
+            };
+            let e0 = (cursor - d).max(0.0);
+            spans.push(EditSpan {
+                clip: c.id,
+                t0: c.start,
+                t1: c.end(),
+                e0,
+                e1: e0 + c.duration,
+                fade_in: d,
+            });
+            cursor = e0 + c.duration;
+            prev_dur = c.duration;
+        }
+        spans
+    }
+
+    /// Total edit (render) length. Equals `render_duration(export_segments())`.
+    pub fn edit_len(&self) -> f64 {
+        self.edit_spans().last().map(|s| s.e1).unwrap_or(0.0)
+    }
+
+    /// Timeline → edit time. Inside a clip it is a shift; inside a gap it
+    /// collapses to the next clip's entry (the gap does not exist in the
+    /// edit); past the end it is the edit's end.
+    pub fn timeline_to_edit(&self, t: f64) -> f64 {
+        let spans = self.edit_spans();
+        if spans.is_empty() {
+            return 0.0;
+        }
+        for s in &spans {
+            if t < s.t0 {
+                return s.e0; // in the gap before this clip
+            }
+            if t < s.t1 {
+                return s.e0 + (t - s.t0);
+            }
+        }
+        spans.last().map(|s| s.e1).unwrap_or(0.0)
+    }
+
+    /// Edit → timeline time. During a transition overlap two timeline
+    /// moments share one edit moment; the INCOMING clip wins, matching how
+    /// the render treats the overlap as the new clip's head.
+    pub fn edit_to_timeline(&self, e: f64) -> f64 {
+        let spans = self.edit_spans();
+        if spans.is_empty() {
+            return 0.0;
+        }
+        let mut best = spans[0].t0;
+        for s in &spans {
+            if e >= s.e0 && e <= s.e1 {
+                best = s.t0 + (e - s.e0); // later spans overwrite: incoming wins
+            }
+        }
+        if e > spans.last().unwrap().e1 {
+            best = spans.last().unwrap().t1;
+        }
+        best
     }
 
     /// Make sure a track of this kind exists, creating it if not. Overlay
@@ -1922,6 +2017,61 @@ mod tests {
         assert!(!c.clear_key(Param::Exposure, 0.5), "already gone");
         assert!(c.clear_key(Param::Exposure, 2.0));
         assert!(c.key_track(Param::Exposure).is_none(), "empty tracks are removed");
+    }
+
+    /// One truth of time: totals equal render_duration to the bit, gaps
+    /// collapse to the next entry, the overlap belongs to the incoming
+    /// clip, round trips hold off-overlap — and the PLAYBACK PATH (which
+    /// skips a transition's replayed head) is continuous in edit time.
+    /// The static map is deliberately two-sheeted around transitions:
+    /// a's tail and b's head are sequential on the timeline but
+    /// simultaneous in the edit, and no honest function can hide that.
+    #[test]
+    fn the_timebase_maps_both_ways_and_agrees_with_the_render() {
+        let mut p = Project::default();
+        //   a: timeline 0..4
+        //   b: timeline 4..7, butting a, 1 s crossfade in
+        //   gap 7..8
+        //   c: timeline 8..10, hard cut
+        let _a = p.add_clip("/tmp/a.mp4", TrackKind::Video, 0.0, 0.0, 4.0);
+        let b = p.add_clip("/tmp/b.mp4", TrackKind::Video, 4.0, 0.0, 3.0);
+        let _c = p.add_clip("/tmp/c.mp4", TrackKind::Video, 8.0, 0.0, 2.0);
+        p.clip_mut(b).unwrap().transition_in = 1.0;
+
+        // Totals agree to the bit: 4 + 3 + 2 − 1 = 8.
+        let want = render_duration(&p.export_segments());
+        assert!((p.edit_len() - want).abs() < 1e-12, "{} vs {want}", p.edit_len());
+        assert!((p.edit_len() - 8.0).abs() < 1e-9);
+
+        // Identity inside a; shifted inside b; the gap collapses to c's
+        // entry; the end clamps.
+        assert!((p.timeline_to_edit(2.0) - 2.0).abs() < 1e-9);
+        assert!((p.timeline_to_edit(4.5) - 3.5).abs() < 1e-9, "b's head rides the overlap");
+        assert!((p.timeline_to_edit(7.5) - 6.0).abs() < 1e-9, "gaps do not exist in the edit");
+        assert!((p.timeline_to_edit(8.5) - 6.5).abs() < 1e-9);
+        assert!((p.timeline_to_edit(99.0) - 8.0).abs() < 1e-9);
+
+        // The overlap belongs to the INCOMING clip: edit 3.5 is both a's
+        // 3.5 and b's 4.5 — scrubbing there must land in b.
+        assert!((p.edit_to_timeline(3.5) - 4.5).abs() < 1e-9);
+        // Round trips hold at every point owned by a single clip.
+        for e in [0.5, 2.9, 3.5, 4.5, 5.9, 6.5, 7.9] {
+            let t = p.edit_to_timeline(e);
+            assert!(
+                (p.timeline_to_edit(t) - e).abs() < 1e-9,
+                "round trip broke at edit {e}: t={t}"
+            );
+        }
+
+        // The PLAYBACK PATH is continuous: a plays to its end (edit 4.0),
+        // and the jump target after a transition — b at timeline start +
+        // fade — is the SAME edit moment.
+        let end_of_a = p.timeline_to_edit(4.0 - 1e-9);
+        let resume_in_b = p.timeline_to_edit(4.0 + 1.0); // b.start + d
+        assert!(
+            (end_of_a - resume_in_b).abs() < 1e-6,
+            "playback would jump in edit time: {end_of_a} vs {resume_in_b}"
+        );
     }
 
     /// The mixer's routing rules: track gain composes with clip gain in dB,

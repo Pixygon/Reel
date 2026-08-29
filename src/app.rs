@@ -96,6 +96,10 @@ pub struct ReelApp {
     pub show_scopes: bool,
     /// Which tone curve the panel edits: 0 master, 1 R, 2 G, 3 B.
     pub curve_channel: usize,
+    /// The USER's playback rate (the [ ] keys and the transport control).
+    /// In the editor the effective mpv rate is `user_rate × clip rate`, so
+    /// a clip's speed never hijacks the user's own control.
+    pub user_rate: f64,
     /// Baked grade lattices on the preview device, keyed by grade content.
     lut_previews: std::collections::HashMap<u64, Option<wgpu::TextureView>>,
     pub caption_model: crate::captions::Model,
@@ -172,6 +176,7 @@ impl ReelApp {
             user_muted: false,
             show_scopes: false,
             curve_channel: 0,
+            user_rate: 1.0,
             lut_previews: std::collections::HashMap::new(),
             caption_model: crate::captions::Model::BaseEn,
             picker: None,
@@ -1424,7 +1429,8 @@ impl ReelApp {
         // ramp approximates with its average (the render walks the true
         // curve). Without this the picture ambles at 1× while the timeline
         // crawls or sprints.
-        let want_rate = (clip.source_len() / clip.duration.max(1e-9)).clamp(0.05, 20.0);
+        let clip_rate = (clip.source_len() / clip.duration.max(1e-9)).clamp(0.05, 20.0);
+        let want_rate = (clip_rate * self.user_rate).clamp(0.05, 20.0);
         if (player_speed - want_rate).abs() > 0.01 {
             if let Some(p) = self.player.as_mut() {
                 p.set_speed(want_rate);
@@ -1452,16 +1458,26 @@ impl ReelApp {
         } else {
             match self.project.clip_after(TrackKind::Video, clip.start).cloned() {
                 Some(next) => {
-                    self.editor.playhead = next.start;
+                    // A transition's head already PLAYED — blended over this
+                    // clip's tail by the transition preview. Resume the next
+                    // clip past it, so edit time flows continuously instead
+                    // of replaying the overlap. (One truth of time.)
+                    let d = next
+                        .transition_in
+                        .min(clip.duration)
+                        .min(next.duration)
+                        .max(0.0);
+                    let skip_src = next.source_offset_at(d);
+                    self.editor.playhead = next.start + d;
                     self.editor.active_clip = Some(next.id);
                     let path = self.proxies.preview_path(&next.source);
                     let player = self.player.as_mut().unwrap();
                     if path == player.path {
-                        player.seek(next.in_point);
+                        player.seek(next.in_point + skip_src);
                     } else {
                         // Multi-source timeline: roll the preview onto the
                         // next clip's file without rebuilding the player.
-                        player.switch_source(&path, next.in_point);
+                        player.switch_source(&path, next.in_point + skip_src);
                     }
                 }
                 None => {
