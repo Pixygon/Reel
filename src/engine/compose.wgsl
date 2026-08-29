@@ -21,7 +21,36 @@ struct Uniforms {
     key: vec4<f32>,
     // The uv window shown across rect (min x, min y, max x, max y).
     uvr: vec4<f32>,
+    // Power window; see mask_factor.
+    mask: vec4<f32>,
+    mask2: vec4<f32>,
 };
+// The grade-limiting window: how much of the LUT + trims applies at uv `q`.
+// mask = cx, cy, half-w, half-h; mask2 = feather, invert, shape (1=rect),
+// enable.
+fn mask_factor(q: vec2<f32>) -> f32 {
+    if (u.mask2.w < 0.5) {
+        return 1.0;
+    }
+    let f = max(u.mask2.x, 0.001);
+    var m: f32;
+    if (u.mask2.z > 0.5) {
+        // Rectangle: distance beyond the box edge, feathered.
+        let d = abs(q - u.mask.xy) - u.mask.zw;
+        let outside = max(d.x, d.y);
+        m = 1.0 - smoothstep(0.0, f, outside);
+    } else {
+        // Ellipse: normalised radial distance 1.0 at the rim.
+        let n = (q - u.mask.xy) / max(u.mask.zw, vec2<f32>(0.001));
+        let r = length(n);
+        m = 1.0 - smoothstep(1.0, 1.0 + f / max(min(u.mask.z, u.mask.w), 0.001), r);
+    }
+    if (u.mask2.y > 0.5) {
+        m = 1.0 - m;
+    }
+    return m;
+}
+
 
 fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
     let ya = dot(a, vec3<f32>(0.299, 0.587, 0.114));
@@ -107,6 +136,7 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         rgb = srgb_to_linear(mix(enc, spilled, 1.0 - alpha * alpha));
         a_src = a_src * alpha;
     }
+    let graded_from = rgb;
     if (u.reframe.w > 0.5) {
         // LUTs address sRGB-encoded colour; sample at texel centres so the
         // lattice's ends land exactly on 0 and 1.
@@ -118,6 +148,8 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     if (u.params.y > 0.5) {
         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
     }
+    // The power window: grade only where the mask says.
+    rgb = mix(graded_from, rgb, mask_factor(in.uv));
     let a = a_src * u.params.z;
     // Premultiplied out; a fade therefore fades to whatever is beneath —
     // black for the base layer, the base picture for overlays.

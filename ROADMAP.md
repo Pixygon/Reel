@@ -294,9 +294,11 @@ within the phase by editor-workflow importance:
       reach/soften controls, CLI flags, and a pixel test compositing a
       red-on-green overlay over a blue base. The PiP inset now draws
       through the video pass, so a keyed inset previews keyed.
-- [ ] Masks on any effect (from 1.1) + **point tracking** to drive them
-      (track a region, attach a mask/PiP/title to the track). Classic
-      template matching first; optical flow upgrade later.
+- [~] **Power windows**: ellipse/rectangle masks with feather and invert,
+      limiting the grade (LUT + trims) to a region — one shader block in
+      both pipelines, pixel-tested inside/outside/inverted, and the
+      geometry is keyframable (mask-x/y/w/h), so an animated window is a
+      hand-tracked one. Automatic point tracking still open.
 - [x] Stabilization: vidstab two-pass with the analysis cached per
       source-window, spliced ahead of tone/fit in the frame server. The
       test MEASURES it: a synthetically shaky clip's inter-frame shake

@@ -89,6 +89,9 @@ not the finished tool, but real, honest software you can build and run today.
 - **Scopes, chapters, stills.** A live histogram and waveform while you
   grade; markers become real MP4 chapters on export; and one button saves
   the composed frame under the playhead as a PNG.
+- **Power windows.** Limit any grade to an ellipse or rectangle — feathered,
+  invertible, and keyframable, so the window can follow a face across the
+  shot. Pixel-tested inside, outside and inverted.
 - **Grade through LUTs.** Load any .cube 3D LUT per clip — sampled on the
   GPU, previewed exactly as rendered, applied before your trims, and never
   colouring the letterbox bars.

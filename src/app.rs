@@ -999,6 +999,7 @@ impl ReelApp {
                 overlays: self.project.overlay_segments(),
                 markers: self.project.markers.clone(),
                 luts: self.project.luts.clone(),
+                audio_clips: self.project.audio_clips(),
             }
         } else {
             let Some(path) = self.media_path() else { return };
@@ -1204,6 +1205,7 @@ impl ReelApp {
             overlays: &overlays_owned,
             markers: &[],
             luts: &self.project.luts,
+            audio_clips: &[],
         };
         match crate::engine::render::render_still(
             &segments,

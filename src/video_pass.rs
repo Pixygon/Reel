@@ -35,6 +35,10 @@ struct Uniforms {
     /// Chroma key: r, g, b of the key colour; w = similarity. Softness rides
     /// in params.z; params.w = 1 enables keying.
     key: [f32; 4],
+    /// Power window: cx, cy, half-w, half-h.
+    mask: [f32; 4],
+    /// feather, invert, shape (1 = rect), enable.
+    mask2: [f32; 4],
 }
 
 pub struct VideoPass {
@@ -195,6 +199,19 @@ impl CallbackTrait for VideoDraw {
                     .effects
                     .and_then(|e| e.key_color.map(|c| [c[0], c[1], c[2], e.key_similarity]))
                     .unwrap_or([0.0, 0.0, 0.0, 0.0]),
+            mask: self.effects
+                .and_then(|e| e.mask)
+                .map(|m| [m.cx, m.cy, m.w, m.h])
+                .unwrap_or([0.0; 4]),
+            mask2: self.effects
+                .and_then(|e| e.mask)
+                .map(|m| [
+                    m.feather,
+                    if m.invert { 1.0 } else { 0.0 },
+                    if m.shape == crate::effects::MaskShape::Rect { 1.0 } else { 0.0 },
+                    1.0,
+                ])
+                .unwrap_or([0.0; 4]),
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });

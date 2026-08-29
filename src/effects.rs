@@ -61,6 +61,50 @@ pub struct Effects {
     /// look first, adjust after.
     #[serde(default)]
     pub lut: Option<u32>,
+    /// A power window: the colour grade (LUT + trims) applies only inside
+    /// this shape (or outside, inverted). Everything is frame fractions.
+    #[serde(default)]
+    pub mask: Option<Mask>,
+}
+
+/// The grade-limiting window. `w`/`h` are HALF-extents from the centre.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Mask {
+    pub shape: MaskShape,
+    pub cx: f32,
+    pub cy: f32,
+    pub w: f32,
+    pub h: f32,
+    /// Soft edge width, as a fraction of the frame.
+    #[serde(default = "default_feather")]
+    pub feather: f32,
+    /// Grade OUTSIDE the shape instead of inside.
+    #[serde(default)]
+    pub invert: bool,
+}
+
+fn default_feather() -> f32 {
+    0.05
+}
+
+impl Default for Mask {
+    fn default() -> Self {
+        Self {
+            shape: MaskShape::Ellipse,
+            cx: 0.5,
+            cy: 0.5,
+            w: 0.25,
+            h: 0.25,
+            feather: default_feather(),
+            invert: false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum MaskShape {
+    Rect,
+    Ellipse,
 }
 
 fn default_key_similarity() -> f32 {
@@ -90,6 +134,7 @@ impl Default for Effects {
             key_similarity: default_key_similarity(),
             key_softness: default_key_softness(),
             lut: None,
+            mask: None,
         }
     }
 }
@@ -107,6 +152,7 @@ impl Effects {
             && !self.has_reframe()
             && self.key_color.is_none()
             && self.lut.is_none()
+            && self.mask.is_none()
     }
 
     pub fn has_reframe(&self) -> bool {

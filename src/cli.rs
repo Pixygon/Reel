@@ -201,6 +201,13 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "pan-x", value: Some("N"), help: "-1..1, where the zoom sits" },
             Flag { name: "pan-y", value: Some("N"), help: "-1..1" },
             Flag { name: "lut", value: Some("FILE.cube"), help: "Grade through a 3D LUT (applied before the trims)" },
+            Flag { name: "mask", value: Some("SHAPE"), help: "Limit the grade to a window: ellipse, rect, or off" },
+            Flag { name: "mask-x", value: Some("0..1"), help: "Window centre across the frame" },
+            Flag { name: "mask-y", value: Some("0..1"), help: "Window centre down the frame" },
+            Flag { name: "mask-w", value: Some("0..1"), help: "Half-width of the window" },
+            Flag { name: "mask-h", value: Some("0..1"), help: "Half-height of the window" },
+            Flag { name: "mask-feather", value: Some("0..1"), help: "Soft edge width (default 0.05)" },
+            Flag { name: "mask-invert", value: None, help: "Grade outside the window instead" },
             Flag { name: "lut-off", value: None, help: "Remove the LUT" },
             Flag { name: "key-color", value: Some("RRGGBB"), help: "Chroma key: knock this colour out (e.g. 00b140)" },
             Flag { name: "key-similarity", value: Some("0..1"), help: "How far from the key colour still counts (default 0.3)" },
@@ -1043,6 +1050,41 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         if p.on("lut-off") {
             c.effects.lut = None;
         }
+        if let Some(shape) = p.str("mask") {
+            match shape {
+                "off" | "none" => c.effects.mask = None,
+                "ellipse" | "rect" => {
+                    let mut m = c.effects.mask.unwrap_or_default();
+                    m.shape = if shape == "rect" {
+                        crate::effects::MaskShape::Rect
+                    } else {
+                        crate::effects::MaskShape::Ellipse
+                    };
+                    c.effects.mask = Some(m);
+                }
+                other => bail!("--mask wants ellipse, rect or off — got {other:?}"),
+            }
+        }
+        if let Some(m) = &mut c.effects.mask {
+            if let Some(v) = p.num::<f32>("mask-x")? {
+                m.cx = v;
+            }
+            if let Some(v) = p.num::<f32>("mask-y")? {
+                m.cy = v;
+            }
+            if let Some(v) = p.num::<f32>("mask-w")? {
+                m.w = v;
+            }
+            if let Some(v) = p.num::<f32>("mask-h")? {
+                m.h = v;
+            }
+            if let Some(v) = p.num::<f32>("mask-feather")? {
+                m.feather = v;
+            }
+            if p.on("mask-invert") {
+                m.invert = !m.invert;
+            }
+        }
         c.effects
     };
     if let Some(lut) = p.str("lut").map(String::from) {
@@ -1695,6 +1737,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             overlays: &proj.overlay_segments(),
             markers: &[],
             luts: &proj.luts,
+            audio_clips: &[],
         };
         let (rgba, w, h) = crate::engine::render::render_still(
             &segments,
@@ -1759,6 +1802,7 @@ fn cmd_render(p: &Parsed) -> Result<Output> {
             overlays: &proj.overlay_segments(),
             markers: &proj.markers,
             luts: &proj.luts,
+            audio_clips: &proj.audio_clips(),
         },
     )?;
     await_job(job, p.on("quiet") || p.on("json"))?;

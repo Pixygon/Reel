@@ -680,6 +680,18 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 crate::edit::Param::PipY => pip2.y,
                                 crate::edit::Param::PipScale => pip2.scale,
                                 crate::edit::Param::Speed => c.speed,
+                                crate::edit::Param::MaskX => {
+                                    fx2.mask.map(|m| m.cx).unwrap_or(0.5)
+                                }
+                                crate::edit::Param::MaskY => {
+                                    fx2.mask.map(|m| m.cy).unwrap_or(0.5)
+                                }
+                                crate::edit::Param::MaskW => {
+                                    fx2.mask.map(|m| m.w).unwrap_or(0.25)
+                                }
+                                crate::edit::Param::MaskH => {
+                                    fx2.mask.map(|m| m.h).unwrap_or(0.25)
+                                }
                             };
                             c.set_key(param, local, v, crate::edit::Interp::Linear);
                         }
@@ -767,6 +779,55 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         }
                     }
                 });
+
+                // ── Power window ────────────────────────────────────────
+                {
+                    let mut fxm = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
+                    let before_m = fxm;
+                    let mut kind = match fxm.mask {
+                        None => 0,
+                        Some(m) if m.shape == crate::effects::MaskShape::Ellipse => 1,
+                        Some(_) => 2,
+                    };
+                    egui::ComboBox::from_id_salt("maskkind")
+                        .selected_text(["No mask", "Ellipse mask", "Rectangle mask"][kind])
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut kind, 0, "No mask");
+                            ui.selectable_value(&mut kind, 1, "Ellipse mask");
+                            ui.selectable_value(&mut kind, 2, "Rectangle mask");
+                        });
+                    match kind {
+                        0 => fxm.mask = None,
+                        k => {
+                            let mut m = fxm.mask.unwrap_or_default();
+                            m.shape = if k == 1 {
+                                crate::effects::MaskShape::Ellipse
+                            } else {
+                                crate::effects::MaskShape::Rect
+                            };
+                            fxm.mask = Some(m);
+                        }
+                    }
+                    if let Some(m) = &mut fxm.mask {
+                        ui.add(egui::Slider::new(&mut m.cx, 0.0..=1.0).text("Across"));
+                        ui.add(egui::Slider::new(&mut m.cy, 0.0..=1.0).text("Down"));
+                        ui.add(egui::Slider::new(&mut m.w, 0.02..=0.8).text("Width"));
+                        ui.add(egui::Slider::new(&mut m.h, 0.02..=0.8).text("Height"));
+                        ui.add(egui::Slider::new(&mut m.feather, 0.0..=0.3).text("Feather"));
+                        ui.checkbox(&mut m.invert, "Grade outside instead");
+                        ui.label(
+                            RichText::new("The colour grade (LUT + sliders) applies only where the window says. Animate mask-x/y/w/h to track a subject.")
+                                .small()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                    }
+                    if fxm != before_m {
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.effects = fxm;
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
 
                 // ── Stabilise ───────────────────────────────────────────
                 {
@@ -2439,6 +2500,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         overlays: &app.project.overlay_segments(),
                         markers: &app.project.markers,
                         luts: &app.project.luts,
+                        audio_clips: &app.project.audio_clips(),
                     },
                 ) {
                     Ok(job) => app.export = Some(job),

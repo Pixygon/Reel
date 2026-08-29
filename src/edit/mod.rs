@@ -83,6 +83,12 @@ pub enum Param {
     /// slot on the timeline stays fixed; how much source it eats becomes the
     /// integral of this curve.
     Speed,
+    /// The power window's centre and half-extents — an animated mask is a
+    /// hand-tracked one.
+    MaskX,
+    MaskY,
+    MaskW,
+    MaskH,
 }
 
 impl Param {
@@ -97,10 +103,12 @@ impl Param {
             Param::PipX | Param::PipY => (0.0, 1.0),
             Param::PipScale => (0.05, 1.0),
             Param::Speed => (0.25, 4.0),
+            Param::MaskX | Param::MaskY => (0.0, 1.0),
+            Param::MaskW | Param::MaskH => (0.02, 0.8),
         }
     }
 
-    pub const ALL: [Param; 11] = [
+    pub const ALL: [Param; 15] = [
         Param::Exposure,
         Param::Contrast,
         Param::Saturation,
@@ -112,6 +120,10 @@ impl Param {
         Param::PipY,
         Param::PipScale,
         Param::Speed,
+        Param::MaskX,
+        Param::MaskY,
+        Param::MaskW,
+        Param::MaskH,
     ];
 
     pub fn name(self) -> &'static str {
@@ -127,6 +139,10 @@ impl Param {
             Param::PipY => "pip-y",
             Param::PipScale => "pip-scale",
             Param::Speed => "speed",
+            Param::MaskX => "mask-x",
+            Param::MaskY => "mask-y",
+            Param::MaskW => "mask-w",
+            Param::MaskH => "mask-h",
         }
     }
 
@@ -375,6 +391,26 @@ impl Clip {
                 // Speed is a time-warp, not a per-instant look — the mapping
                 // functions (source_offset_at) own it.
                 Param::Speed => {}
+                Param::MaskX => {
+                    if let Some(m) = &mut fx.mask {
+                        m.cx = v;
+                    }
+                }
+                Param::MaskY => {
+                    if let Some(m) = &mut fx.mask {
+                        m.cy = v;
+                    }
+                }
+                Param::MaskW => {
+                    if let Some(m) = &mut fx.mask {
+                        m.w = v;
+                    }
+                }
+                Param::MaskH => {
+                    if let Some(m) = &mut fx.mask {
+                        m.h = v;
+                    }
+                }
             }
         }
         (fx, pip, opacity)
@@ -529,6 +565,26 @@ impl Segment {
                 Param::PanX => fx.pan_x = v.clamp(-1.0, 1.0),
                 Param::PanY => fx.pan_y = v.clamp(-1.0, 1.0),
                 Param::Opacity => opacity = v.clamp(0.0, 1.0),
+                Param::MaskX => {
+                    if let Some(m) = &mut fx.mask {
+                        m.cx = v;
+                    }
+                }
+                Param::MaskY => {
+                    if let Some(m) = &mut fx.mask {
+                        m.cy = v;
+                    }
+                }
+                Param::MaskW => {
+                    if let Some(m) = &mut fx.mask {
+                        m.w = v;
+                    }
+                }
+                Param::MaskH => {
+                    if let Some(m) = &mut fx.mask {
+                        m.h = v;
+                    }
+                }
                 _ => {}
             }
         }
@@ -562,6 +618,20 @@ impl Default for Music {
     fn default() -> Self {
         Self { source: String::new(), start: 0.0, gain_db: -12.0, duck: true, fade: 1.0 }
     }
+}
+
+/// One audio-track (or overlay) clip, flattened for the export mix.
+#[derive(Clone, Debug, PartialEq)]
+pub struct AudioClip {
+    pub source: String,
+    /// TIMELINE position.
+    pub at: f64,
+    pub in_point: f64,
+    pub duration: f64,
+    pub gain_db: f32,
+    pub fade_in: f64,
+    pub fade_out: f64,
+    pub speed: f32,
 }
 
 /// One overlay placement, flattened for rendering.
@@ -991,6 +1061,33 @@ impl Project {
                 gain_db: c.gain_db,
                 effects: c.effects,
                 keys: c.keys.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.at.total_cmp(&b.at));
+        out
+    }
+
+    /// Clips on AUDIO tracks (voice-over, sound effects), flattened for the
+    /// export mix: each plays at its TIMELINE position with its own gain and
+    /// fades. Overlay clips' audio rides along too — a PiP's sound belongs
+    /// in the mix just like its picture belongs on screen.
+    pub fn audio_clips(&self) -> Vec<AudioClip> {
+        let mut out: Vec<AudioClip> = self
+            .tracks
+            .iter()
+            .filter(|t| {
+                matches!(t.kind, TrackKind::Audio | TrackKind::Overlay) && !t.muted
+            })
+            .flat_map(|t| t.clips.iter())
+            .map(|c| AudioClip {
+                source: c.source.clone(),
+                at: c.start,
+                in_point: c.in_point,
+                duration: c.duration,
+                gain_db: c.gain_db,
+                fade_in: c.effects.fade_in,
+                fade_out: c.effects.fade_out,
+                speed: c.speed,
             })
             .collect();
         out.sort_by(|a, b| a.at.total_cmp(&b.at));

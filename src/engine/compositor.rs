@@ -26,6 +26,10 @@ struct Uniforms {
     key: [f32; 4],
     /// The uv window of the layer shown across `rect` — wipes crop both.
     uvr: [f32; 4],
+    /// Power window: cx, cy, half-w, half-h.
+    mask: [f32; 4],
+    /// feather, invert, shape (1 = rect), enable.
+    mask2: [f32; 4],
 }
 
 pub struct Compositor {
@@ -289,6 +293,19 @@ impl Compositor {
                 .map(|c| [c[0], c[1], c[2], l.effects.key_similarity])
                 .unwrap_or([0.0; 4]),
             uvr: l.uv,
+            mask: Some(l.effects)
+                .and_then(|e| e.mask)
+                .map(|m| [m.cx, m.cy, m.w, m.h])
+                .unwrap_or([0.0; 4]),
+            mask2: Some(l.effects)
+                .and_then(|e| e.mask)
+                .map(|m| [
+                    m.feather,
+                    if m.invert { 1.0 } else { 0.0 },
+                    if m.shape == crate::effects::MaskShape::Rect { 1.0 } else { 0.0 },
+                    1.0,
+                ])
+                .unwrap_or([0.0; 4]),
         }
     }
 
@@ -437,6 +454,58 @@ mod tests {
             mixed[0] > 170 && mixed[0] < 205 && mixed[2] > 170 && mixed[2] < 205,
             "half-opacity red over blue should meet in linear light, got {mixed:?}"
         );
+    }
+
+    /// A power window grades only where it says: exposure doubled inside a
+    /// left-half rectangle must brighten the left and leave the right alone,
+    /// with a soft edge between.
+    #[test]
+    fn a_mask_limits_the_grade_to_its_window() {
+        let Some(c) = comp() else { return };
+        let scene = Scene {
+            layers: vec![Layer {
+                view: solid(&c, [100, 100, 100, 255], 8, 8),
+                rect: [0.0, 0.0, 1.0, 1.0],
+                uv: [0.0, 0.0, 1.0, 1.0],
+                opacity: 1.0,
+                effects: Effects {
+                    exposure: 2.0,
+                    mask: Some(crate::effects::Mask {
+                        shape: crate::effects::MaskShape::Rect,
+                        cx: 0.25,
+                        cy: 0.5,
+                        w: 0.25,
+                        h: 0.5,
+                        feather: 0.02,
+                        invert: false,
+                    }),
+                    ..Default::default()
+                },
+                use_src_alpha: false,
+                lut: None,
+            }],
+        };
+        let target = c.target(200, 100);
+        c.render(&scene, &target);
+        let px = c.read_back(&target);
+        let at = |x: u32, y: u32| px[((y * 200 + x) * 4) as usize];
+        let inside = at(50, 50);
+        let outside = at(150, 50);
+        assert!(inside > 190, "inside the window: doubled exposure, got {inside}");
+        assert!(
+            (outside as i32 - 100).abs() <= 3,
+            "outside the window the picture must be untouched, got {outside}"
+        );
+        // Inverted, the roles swap.
+        let mut inv = scene;
+        if let Some(m) = &mut inv.layers[0].effects.mask {
+            m.invert = true;
+        }
+        c.render(&inv, &target);
+        let px = c.read_back(&target);
+        let at = |x: u32, y: u32| px[((y * 200 + x) * 4) as usize];
+        assert!((at(50, 50) as i32 - 100).abs() <= 3, "inverted: inside untouched");
+        assert!(at(150, 50) > 190, "inverted: outside graded");
     }
 
     /// The LUT sampled on the GPU must match the CPU reference lattice walk

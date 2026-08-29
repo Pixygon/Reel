@@ -356,6 +356,16 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   in ~/.cache/reel/stab keyed by file+window; the transform splices BEFORE
   tone/fit. Preview stays raw (a full decode per analysis) — the UI says
   so. The test measures shake energy (tblend=difference + signalstats).
+- MASKS (power windows): `Effects.mask` (shape/cx/cy/half-w/half-h/feather/
+  invert, all fractions) → uniform vec4 pair `mask`/`mask2` in BOTH
+  pipelines; the shader mixes graded↔ungraded by `mask_factor`, so the
+  window gates LUT + trims but not keying. Geometry is keyframable
+  (Param::MaskX/Y/W/H mutate the mask only when one exists).
+- AUDIO-TRACK CLIPS RENDER: `Project::audio_clips()` (A1 + overlay audio)
+  flows through Overlays into the wav pass — trimmed, tempo'd, faded,
+  adelay'd to its TIMELINE position, amixed with normalize=0. The live
+  mixer had made these audible in preview while the export dropped them;
+  the beep-at-2s band test pins the fix.
 - Tests are capped at 8 threads (`.cargo/config.toml`): the suite runs real
   ffmpeg/GPU/mpv work, and at full parallelism the live-decode tests starve.
   `REEL_DEBUG_PLAY=1` autoplays once media lands — the Xvfb hook for

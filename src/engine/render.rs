@@ -181,6 +181,7 @@ pub fn start_timeline(
         segments,
         with_audio,
         overlays.music,
+        overlays.audio_clips,
         settings.loudness,
         &format!("{output}.audio.wav"),
     );

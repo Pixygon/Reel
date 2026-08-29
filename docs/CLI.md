@@ -170,6 +170,13 @@ Colour, fades and reframing for one clip
 | `--pan-x` | `N` | -1..1, where the zoom sits |
 | `--pan-y` | `N` | -1..1 |
 | `--lut` | `FILE.cube` | Grade through a 3D LUT (applied before the trims) |
+| `--mask` | `SHAPE` | Limit the grade to a window: ellipse, rect, or off |
+| `--mask-x` | `0..1` | Window centre across the frame |
+| `--mask-y` | `0..1` | Window centre down the frame |
+| `--mask-w` | `0..1` | Half-width of the window |
+| `--mask-h` | `0..1` | Half-height of the window |
+| `--mask-feather` | `0..1` | Soft edge width (default 0.05) |
+| `--mask-invert` | — | Grade outside the window instead |
 | `--lut-off` | — | Remove the LUT |
 | `--key-color` | `RRGGBB` | Chroma key: knock this colour out (e.g. 00b140) |
 | `--key-similarity` | `0..1` | How far from the key colour still counts (default 0.3) |

@@ -842,6 +842,10 @@ pub struct Overlays<'a> {
     pub markers: &'a [f64],
     /// The project's LUT table — `Effects.lut` indexes into it.
     pub luts: &'a [String],
+    /// Audio-track and overlay clips mixed into the export — the live mixer
+    /// already plays these; a render that dropped them would be a preview
+    /// that lies.
+    pub audio_clips: &'a [crate::edit::AudioClip],
 }
 
 /// Start a timeline (edit) export, burning any captions and titles into the
@@ -1051,11 +1055,14 @@ pub(crate) fn build_timeline_audio_wav_args(
     segments: &[Segment],
     with_audio: bool,
     music: Option<&crate::edit::Music>,
+    audio_clips: &[crate::edit::AudioClip],
     loudness: Option<f32>,
     wav_out: &str,
 ) -> Option<Vec<String>> {
     let music = music.filter(|m| !m.source.is_empty());
-    if !with_audio && music.is_none() {
+    let audio_clips: Vec<&crate::edit::AudioClip> =
+        audio_clips.iter().filter(|c| has_audio_stream(&c.source)).collect();
+    if !with_audio && music.is_none() && audio_clips.is_empty() {
         return None;
     }
     let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
@@ -1075,6 +1082,13 @@ pub(crate) fn build_timeline_audio_wav_args(
         a.extend(["-i".into(), m.source.clone()]);
         sources.len()
     });
+    let clip_inputs: Vec<usize> = audio_clips
+        .iter()
+        .map(|c| {
+            a.extend(["-i".into(), c.source.clone()]);
+            a.iter().filter(|x| *x == "-i").count() - 1
+        })
+        .collect();
 
     let mut graph = String::new();
     let mut audio_out: Option<String> = None;
@@ -1163,6 +1177,72 @@ pub(crate) fn build_timeline_audio_wav_args(
         }
         audio_out = Some("[acat]".into());
     }
+    // Audio-track clips: trim each window, tempo/gain/fades, delay to its
+    // TIMELINE position, then mix everything as one bed with the cut.
+    if !audio_clips.is_empty() {
+        if graph.is_empty() {
+            graph.push_str("anullsrc=r=48000:cl=stereo:d=0.001[zz];[zz]anullsink");
+        }
+        let mut labels: Vec<String> = Vec::new();
+        for (j, (c, idx)) in audio_clips.iter().zip(&clip_inputs).enumerate() {
+            let rate = (c.speed as f64).clamp(0.05, 20.0);
+            let src_len = c.duration * rate;
+            let delay_ms = (c.at.max(0.0) * 1000.0).round() as u64;
+            let gain = if c.gain_db.abs() > 0.01 {
+                format!(",volume={:.2}dB", c.gain_db)
+            } else {
+                String::new()
+            };
+            let mut fades = String::new();
+            if c.fade_in > 0.0 {
+                fades.push_str(&format!(",afade=t=in:st=0:d={:.3}", c.fade_in));
+            }
+            if c.fade_out > 0.0 {
+                fades.push_str(&format!(
+                    ",afade=t=out:st={:.3}:d={:.3}",
+                    (c.duration - c.fade_out).max(0.0),
+                    c.fade_out
+                ));
+            }
+            let label = format!("ac{j}");
+            graph.push_str(&format!(
+                ";[{idx}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}{fades},adelay={delay_ms}|{delay_ms}[{label}]",
+                c.in_point,
+                atempo_chain(rate),
+            ));
+            labels.push(label);
+        }
+        // Mix the voice/SFX bed with (or as) the cut's audio. normalize=0,
+        // as ever — the default halves everything.
+        match &audio_out {
+            Some(cut) => {
+                graph.push_str(&format!(";{cut}"));
+                for l in &labels {
+                    graph.push_str(&format!("[{l}]"));
+                }
+                graph.push_str(&format!(
+                    "amix=inputs={}:duration=first:normalize=0:dropout_transition=0[awtracks]",
+                    labels.len() + 1
+                ));
+                audio_out = Some("[awtracks]".into());
+            }
+            None => {
+                if labels.len() == 1 {
+                    audio_out = Some(format!("[{}]", labels[0]));
+                } else {
+                    for l in &labels {
+                        graph.push_str(&format!("[{l}]"));
+                    }
+                    graph.push_str(&format!(
+                        ";amix=inputs={}:normalize=0[awtracks]",
+                        labels.len()
+                    ));
+                    audio_out = Some("[awtracks]".into());
+                }
+            }
+        }
+    }
+
     if let (Some(idx), Some(m)) = (music_input, music) {
         if graph.is_empty() {
             // push_music_mix writes ";[idx:a]…" — valid mid-graph, not at
@@ -1308,6 +1388,7 @@ pub enum Job {
         overlays: Vec<crate::edit::OverlaySegment>,
         markers: Vec<f64>,
         luts: Vec<String>,
+        audio_clips: Vec<crate::edit::AudioClip>,
     },
 }
 
@@ -1398,7 +1479,7 @@ impl Queue {
                     }
                     Job::Timeline {
                         segments, project, captions, caption_size, titles, music, overlays,
-                        markers, luts,
+                        markers, luts, audio_clips,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1412,6 +1493,7 @@ impl Queue {
                             overlays,
                             markers,
                             luts,
+                            audio_clips,
                         },
                     ),
                 };
@@ -2193,6 +2275,75 @@ mod tests {
         let _ = std::fs::remove_file(&src);
     }
 
+    /// The live mixer plays audio-track clips; the render must too — this
+    /// pins the fix for a preview-lies bug where A1 audio existed only in
+    /// the editor. A 700 Hz beep placed at 2 s on the audio track must
+    /// sound at 2 s in the export, and nowhere before.
+    #[test]
+    fn audio_track_clips_sound_in_the_export() {
+        let dir = std::env::temp_dir();
+        let vid = dir.join(format!("reel-atr-vid-{}.mp4", std::process::id()));
+        let beep = dir.join(format!("reel-atr-beep-{}.wav", std::process::id()));
+        let out = dir.join(format!("reel-atr-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        // The cut itself: video with a quiet 200 Hz hum.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "color=c=gray:size=160x120:rate=25:duration=6",
+                   "-f", "lavfi", "-i", "sine=frequency=200:duration=6",
+                   "-af", "volume=-20dB",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest",
+                   &vid.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "sine=frequency=700:duration=1.5", &beep.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+
+        let segs = vec![seg(&vid.to_string_lossy(), 0.0, 6.0)];
+        let clips = vec![crate::edit::AudioClip {
+            source: beep.to_string_lossy().into(),
+            at: 2.0,
+            in_point: 0.0,
+            duration: 1.5,
+            gain_db: 0.0,
+            fade_in: 0.0,
+            fade_out: 0.0,
+            speed: 1.0,
+        }];
+        let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
+        let job = start_timeline_with_captions(
+            &segs,
+            &out.to_string_lossy(),
+            &s,
+            (160, 120, 25.0),
+            Overlays { audio_clips: &clips, ..Default::default() },
+        )
+        .expect("start render");
+        let deadline = Instant::now() + Duration::from_secs(120);
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "render failed: {:?}", st.error);
+                break;
+            }
+            assert!(Instant::now() < deadline, "render timed out");
+            std::thread::sleep(Duration::from_millis(50));
+        }
+
+        // 700 Hz band level before (0.5–1.5 s) vs during (2.2–3.2 s).
+        let before = band_level(&out, 0.5, 1.5, 700);
+        let during = band_level(&out, 2.2, 3.2, 700);
+        assert!(
+            during - before > 20.0,
+            "the audio-track beep is missing from the export: {before:.1} dB → {during:.1} dB"
+        );
+
+        for f in [&vid, &beep, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// Loudness delivery: ask for −16 LUFS and the finished file must
     /// MEASURE −16 (±1.5). ebur128 on the real output is the only honest
     /// referee here.
@@ -2886,7 +3037,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], luts: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], luts: &[], audio_clips: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);
