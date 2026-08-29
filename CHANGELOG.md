@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [0.37.0] — 2026-08-29
+
+### Added
+- New power windows let you limit any colour grade (LUT and trims) to an ellipse or rectangle region — feathered at the edge, invertible, and keyframable so the window can follow a subject across the shot. Available both in the editor and via new --mask/--mask-x/--mask-y/--mask-w/--mask-h/--mask-feather/--mask-invert CLI flags. _(bb4d38d)_
+
+### Fixed
+- Audio-track clips (voice-overs and sound effects) and overlay audio now render correctly on export. Previously these were audible in the live preview but silently dropped from the final exported file. _(bb4d38d)_
+
+
 ## [0.36.0] — 2026-08-29
 
 ### Added
