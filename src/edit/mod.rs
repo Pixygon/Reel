@@ -61,6 +61,96 @@ pub struct Clip {
     /// The preview shows the raw footage — stabilisation happens on export.
     #[serde(default)]
     pub stabilize: bool,
+    /// Audio processing for this clip: pan, tone, dynamics, repair. ONE
+    /// definition consumed by the export chain and the live mixer alike.
+    #[serde(default)]
+    pub audio: AudioFx,
+}
+
+/// Per-clip audio processing. Defaults are identity; every field is
+/// `serde(default)` so older `.reel` documents keep loading. The export
+/// renders these through ffmpeg filters and the live mixer through its own
+/// DSP — behaviourally matched, measured by tests on both sides.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct AudioFx {
+    /// Stereo balance, -1 (left) .. 1 (right). Balance law: the far channel
+    /// attenuates, the centre is untouched.
+    #[serde(default)]
+    pub pan: f32,
+    /// Low shelf at 120 Hz, dB.
+    #[serde(default)]
+    pub eq_low: f32,
+    /// Peaking bell, dB, at `eq_mid_freq`.
+    #[serde(default)]
+    pub eq_mid: f32,
+    /// The bell's centre frequency, Hz.
+    #[serde(default = "default_mid_freq")]
+    pub eq_mid_freq: f32,
+    /// High shelf at 8 kHz, dB.
+    #[serde(default)]
+    pub eq_high: f32,
+    /// Compressor on?
+    #[serde(default)]
+    pub comp: bool,
+    /// Compressor threshold, dBFS.
+    #[serde(default = "default_comp_thresh")]
+    pub comp_thresh: f32,
+    /// Compressor ratio (N:1).
+    #[serde(default = "default_comp_ratio")]
+    pub comp_ratio: f32,
+    /// "Fix voice": the repair chain (high-pass, denoise, de-click) at
+    /// render time. The preview stays raw — repair is a real FFT pass.
+    #[serde(default)]
+    pub voice_fix: bool,
+}
+
+fn default_mid_freq() -> f32 {
+    1000.0
+}
+fn default_comp_thresh() -> f32 {
+    -18.0
+}
+fn default_comp_ratio() -> f32 {
+    3.0
+}
+
+impl Default for AudioFx {
+    fn default() -> Self {
+        Self {
+            pan: 0.0,
+            eq_low: 0.0,
+            eq_mid: 0.0,
+            eq_mid_freq: default_mid_freq(),
+            eq_high: 0.0,
+            comp: false,
+            comp_thresh: default_comp_thresh(),
+            comp_ratio: default_comp_ratio(),
+            voice_fix: false,
+        }
+    }
+}
+
+impl AudioFx {
+    pub fn is_identity(&self) -> bool {
+        self.pan.abs() < 1e-4 && !self.has_tone() && !self.comp && !self.voice_fix
+    }
+
+    pub fn has_tone(&self) -> bool {
+        self.eq_low.abs() > 0.01 || self.eq_mid.abs() > 0.01 || self.eq_high.abs() > 0.01
+    }
+
+    /// Balance-law channel gains: centre (1, 1); full right (0, 1).
+    pub fn pan_gains(&self) -> (f32, f32) {
+        let p = self.pan.clamp(-1.0, 1.0);
+        ((1.0 - p.max(0.0)), (1.0 + p.min(0.0)))
+    }
+
+    /// Fold a track-level pan into this clip's (clamped sum — panning the
+    /// track right moves every clip right).
+    pub fn with_track_pan(mut self, track_pan: f32) -> Self {
+        self.pan = (self.pan + track_pan).clamp(-1.0, 1.0);
+        self
+    }
 }
 
 /// A parameter that can be animated. The address half of the keyframe
@@ -528,6 +618,8 @@ pub struct Segment {
     /// frame server.
     pub keys: Vec<(Param, Vec<Keyframe>)>,
     pub stabilize: bool,
+    /// Audio processing (pan/EQ/compressor/repair), track pan folded in.
+    pub audio: AudioFx,
 }
 
 impl Segment {
@@ -645,6 +737,7 @@ pub struct AudioClip {
     pub fade_in: f64,
     pub fade_out: f64,
     pub speed: f32,
+    pub audio: AudioFx,
 }
 
 /// One overlay placement, flattened for rendering.
@@ -697,6 +790,9 @@ pub struct Track {
     /// Solo: when ANY track is soloed, only soloed tracks sound.
     #[serde(default)]
     pub solo: bool,
+    /// Track-level stereo balance, folded into every clip's pan.
+    #[serde(default)]
+    pub pan: f32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -746,8 +842,8 @@ impl Default for Project {
             width: 1920,
             height: 1080,
             tracks: vec![
-                Track { id: 1, name: "V1".into(), kind: TrackKind::Video, clips: vec![], muted: false, gain_db: 0.0, solo: false },
-                Track { id: 2, name: "A1".into(), kind: TrackKind::Audio, clips: vec![], muted: false, gain_db: 0.0, solo: false },
+                Track { id: 1, name: "V1".into(), kind: TrackKind::Video, clips: vec![], muted: false, gain_db: 0.0, solo: false, pan: 0.0 },
+                Track { id: 2, name: "A1".into(), kind: TrackKind::Audio, clips: vec![], muted: false, gain_db: 0.0, solo: false, pan: 0.0 },
             ],
             captions: Vec::new(),
             caption_size: default_caption_size(),
@@ -827,6 +923,7 @@ impl Project {
                 speed: 1.0,
                 pip: Pip::default(),
                 keys: Vec::new(),
+                audio: AudioFx::default(),
                 stabilize: false,
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -988,14 +1085,29 @@ impl Project {
                 }
             }
         }
+        self.cut_holes(holes)
+    }
+
+    /// Remove a set of TIMELINE windows and close up — the machinery behind
+    /// `tighten` and filler-word removal. Cuts from the END backwards so
+    /// earlier hole positions stay valid. Returns (cuts, seconds removed).
+    pub fn cut_holes(&mut self, mut holes: Vec<(f64, f64)>) -> (usize, f64) {
         if holes.is_empty() {
             return (0, 0.0);
         }
         holes.sort_by(|a, b| a.0.total_cmp(&b.0));
+        // Merge overlapping holes so a window is never cut twice.
+        let mut merged: Vec<(f64, f64)> = Vec::new();
+        for (a, b) in holes {
+            match merged.last_mut() {
+                Some((_, e)) if a <= *e + 0.005 => *e = e.max(b),
+                _ => merged.push((a, b)),
+            }
+        }
         // Cut from the END backwards so earlier hole positions stay valid.
         let mut removed = 0.0;
         let mut cuts = 0;
-        for (t0, t1) in holes.iter().rev() {
+        for (t0, t1) in merged.iter().rev() {
             self.split_at(*t0);
             self.split_at(*t1);
             // Everything fully inside [t0, t1] goes; the ripple closes up.
@@ -1006,9 +1118,7 @@ impl Project {
                 .filter(|c| c.start >= t0 - 0.01 && c.end() <= t1 + 0.01)
                 .map(|c| c.id)
                 .collect();
-            let mut span = 0.0f64;
             for id in doomed {
-                span = span.max(self.clip(id).map(|c| c.duration).unwrap_or(0.0));
                 self.delete_clip(id);
             }
             // Close the hole on every track.
@@ -1023,9 +1133,42 @@ impl Project {
             }
             removed += gap;
             cuts += 1;
-            let _ = span;
         }
         (cuts, removed)
+    }
+
+    /// The timeline windows occupied by filler words, ready for
+    /// `cut_holes`. `cues` are WORD-level cues in SOURCE time of `source`;
+    /// `words` is the filler list (lowercase). Pure — the whisper half
+    /// lives in captions; this half is unit-tested.
+    pub fn filler_holes(
+        &self,
+        source: &str,
+        cues: &[crate::captions::Cue],
+        words: &[String],
+        pad: f64,
+    ) -> Vec<(f64, f64)> {
+        let mut holes = Vec::new();
+        for cue in cues {
+            let word: String = cue
+                .text
+                .trim()
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '\'')
+                .collect();
+            if word.is_empty() || !words.iter().any(|w| *w == word) {
+                continue;
+            }
+            for (t0, t1) in
+                self.map_source_window(source, (cue.start - pad).max(0.0), cue.end + pad)
+            {
+                if t1 - t0 > 0.02 {
+                    holes.push((t0, t1));
+                }
+            }
+        }
+        holes
     }
 
     /// Register a LUT file (deduplicated) and return its index.
@@ -1144,6 +1287,7 @@ impl Project {
             muted: false,
             gain_db: 0.0,
             solo: false,
+            pan: 0.0,
         };
         // Overlays sit above the base video, audio below — the order lanes
         // are drawn in.
@@ -1191,8 +1335,8 @@ impl Project {
                     && !t.muted
                     && (!soloing || t.solo)
             })
-            .flat_map(|t| t.clips.iter().map(move |c| (t.gain_db, c)))
-            .map(|(track_gain, c)| AudioClip {
+            .flat_map(|t| t.clips.iter().map(move |c| (t.gain_db, t.pan, c)))
+            .map(|(track_gain, track_pan, c)| AudioClip {
                 source: c.source.clone(),
                 at: c.start,
                 in_point: c.in_point,
@@ -1202,6 +1346,7 @@ impl Project {
                 fade_in: c.effects.fade_in,
                 fade_out: c.effects.fade_out,
                 speed: c.speed,
+                audio: c.audio.with_track_pan(track_pan),
             })
             .collect();
         out.sort_by(|a, b| a.at.total_cmp(&b.at));
@@ -1580,6 +1725,12 @@ impl Project {
         let lo = range_in.unwrap_or(f64::NEG_INFINITY);
         let hi = range_out.unwrap_or(f64::INFINITY);
         let (v_gain, v_silent) = self.video_audio_state();
+        let v_pan = self
+            .tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Video)
+            .map(|t| t.pan)
+            .unwrap_or(0.0);
         let mut clips: Vec<&Clip> = self
             .tracks
             .iter()
@@ -1609,6 +1760,7 @@ impl Project {
                     speed: c.speed,
                     keys: c.keys.clone(),
                     stabilize: c.stabilize,
+                    audio: c.audio.with_track_pan(v_pan),
                 })
             })
             .collect()
@@ -2122,6 +2274,48 @@ mod tests {
     /// Tighten finds the quiet spans and closes them: the definition of the
     /// podcast jump-cut. Envelope in, shorter timeline out — with the pads
     /// protecting word edges and everything after each hole sliding up.
+    #[test]
+    fn fillers_cut_only_the_umms_and_close_up() {
+        let mut p = one_clip_project(); // one clip, source "a.mp4", 0..10s
+        let src = p.tracks[0].clips[0].source.clone();
+        let cue = |t0: f64, t1: f64, text: &str| crate::captions::Cue {
+            start: t0,
+            end: t1,
+            text: text.into(),
+        };
+        // Word-level cues: real words, two fillers (one with punctuation).
+        let cues = vec![
+            cue(1.0, 1.2, "so"),
+            cue(2.0, 2.4, "Um,"),
+            cue(3.0, 3.3, "today"),
+            cue(5.0, 5.5, "uh…"),
+            cue(6.0, 6.4, "great"),
+        ];
+        let words: Vec<String> = ["um", "uh"].iter().map(|w| w.to_string()).collect();
+        let holes = p.filler_holes(&src, &cues, &words, 0.05);
+        assert_eq!(holes.len(), 2, "exactly the two fillers: {holes:?}");
+        assert!((holes[0].0 - 1.95).abs() < 0.01 && (holes[0].1 - 2.45).abs() < 0.01);
+
+        let before = render_duration(&p.export_segments());
+        let (cuts, removed) = p.cut_holes(holes);
+        let after = render_duration(&p.export_segments());
+        assert_eq!(cuts, 2);
+        assert!((removed - 1.1).abs() < 0.02, "0.5 + 0.6 with pads = 1.1s, got {removed}");
+        assert!((before - after - removed).abs() < 0.01, "the edit shortens by what was cut");
+        // Real words survive: "today" (was at 3.0) still exists in the cut —
+        // the source second 3.1 must still be reachable on the timeline.
+        assert!(
+            !p.map_source_window(&src, 3.05, 3.25).is_empty(),
+            "the word 'today' must survive the de-um"
+        );
+        // And overlapping holes never double-cut.
+        let overlapping = vec![(1.0, 2.0), (1.5, 2.5)];
+        let mut q = one_clip_project();
+        let (c2, r2) = q.cut_holes(overlapping);
+        assert_eq!(c2, 1, "merged into one hole");
+        assert!((r2 - 1.5).abs() < 0.01, "1.0..2.5 once, got {r2}");
+    }
+
     #[test]
     fn tighten_removes_the_quiet_air_and_closes_up() {
         let mut p = one_clip_project(); // 0..10s

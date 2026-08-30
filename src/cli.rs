@@ -188,6 +188,28 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Set a clip's audio level",
     },
     Cmd {
+        name: "audio",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (omit with --track for track-level pan)" },
+            Flag { name: "track", value: Some("NAME"), help: "Track name (V1/A1/V2) for --pan at track level" },
+            Flag { name: "pan", value: Some("-1..1"), help: "Stereo balance: -1 left, 0 centre, 1 right" },
+            Flag { name: "eq-low", value: Some("DB"), help: "Low shelf at 120 Hz" },
+            Flag { name: "eq-mid", value: Some("DB"), help: "Peaking bell (see --eq-mid-freq)" },
+            Flag { name: "eq-mid-freq", value: Some("HZ"), help: "The bell's centre (default 1000)" },
+            Flag { name: "eq-high", value: Some("DB"), help: "High shelf at 8 kHz" },
+            Flag { name: "comp", value: None, help: "Compressor on (threshold/ratio below)" },
+            Flag { name: "comp-thresh", value: Some("DB"), help: "Threshold, dBFS (default -18)" },
+            Flag { name: "comp-ratio", value: Some("N"), help: "Ratio N:1 (default 3)" },
+            Flag { name: "comp-off", value: None, help: "Compressor off" },
+            Flag { name: "fix", value: None, help: "Fix voice on export: rumble/hum off, noise down, clicks patched" },
+            Flag { name: "fix-off", value: None, help: "Stop fixing" },
+            Flag { name: "reset", value: None, help: "Back to untouched audio" },
+            F_JSON,
+        ],
+        help: "A clip's audio processing: pan, EQ, compressor, repair — live mix and export alike",
+    },
+    Cmd {
         name: "effects",
         args: &["PROJECT"],
         flags: &[
@@ -361,6 +383,30 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Sync one clip to another by their AUDIO — multicam without clap sticks",
+    },
+    Cmd {
+        name: "beats",
+        args: &["TARGET"],
+        flags: &[
+            Flag { name: "source", value: Some("FILE"), help: "Detect in this file (default: the project's music bed)" },
+            Flag { name: "every", value: Some("N"), help: "Keep every Nth beat (default 1)" },
+            Flag { name: "replace", value: None, help: "Clear existing markers first" },
+            F_JSON,
+        ],
+        help: "Find the beats and drop a marker on each — cuts can snap to the music. TARGET is a .reel or a media file",
+    },
+    Cmd {
+        name: "fillers",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "words", value: Some("LIST"), help: "Comma-separated fillers (default um,uh,uhm,er,erm,hmm)" },
+            Flag { name: "pad", value: Some("SECONDS"), help: "Extra trimmed around each word (default 0.04)" },
+            Flag { name: "model", value: Some("NAME"), help: "tiny, base (default) or small" },
+            Flag { name: "dry-run", value: None, help: "List what would be cut without cutting" },
+            Flag { name: "quiet", value: None, help: "Don't print progress" },
+            F_JSON,
+        ],
+        help: "Transcribe word-by-word and cut the ums and uhs out of the edit",
     },
     Cmd {
         name: "tighten",
@@ -605,6 +651,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "remove" => cmd_remove(p),
         "gap" => cmd_gap(p),
         "gain" => cmd_gain(p),
+        "audio" => cmd_audio(p),
         "effects" => cmd_effects(p),
         "keyframe" => cmd_keyframe(p),
         "pip" => cmd_pip(p),
@@ -618,6 +665,8 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "stabilize" => cmd_stabilize(p),
         "align" => cmd_align(p),
         "tighten" => cmd_tighten(p),
+        "fillers" => cmd_fillers(p),
+        "beats" => cmd_beats(p),
         "captions" => cmd_captions(p),
         "bench" => cmd_bench(p),
         "frame" => cmd_frame(p),
@@ -1043,6 +1092,72 @@ fn cmd_gain(p: &Parsed) -> Result<Output> {
     Ok(Output::new(
         format!("Clip {id} at {db:+.1} dB"),
         serde_json::json!({ "clip": id, "gain_db": db }),
+    ))
+}
+
+fn cmd_audio(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    // Track-level: just the pan, on the named track.
+    if let Some(name) = p.str("track") {
+        let pan: f32 = p.need_num("pan")?;
+        let t = proj
+            .tracks
+            .iter_mut()
+            .find(|t| t.name.eq_ignore_ascii_case(name))
+            .ok_or_else(|| anyhow!("no track named {name}"))?;
+        t.pan = pan.clamp(-1.0, 1.0);
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!("Track {name} panned {:+.2}", pan),
+            serde_json::json!({ "track": name, "pan": pan }),
+        ));
+    }
+    let id: u64 = p.need_num("clip")?;
+    let afx = {
+        let c = find_clip_mut(&mut proj, id)?;
+        if p.on("reset") {
+            c.audio = Default::default();
+        }
+        if let Some(v) = p.num::<f32>("pan")? {
+            c.audio.pan = v.clamp(-1.0, 1.0);
+        }
+        if let Some(v) = p.num::<f32>("eq-low")? {
+            c.audio.eq_low = v.clamp(-24.0, 24.0);
+        }
+        if let Some(v) = p.num::<f32>("eq-mid")? {
+            c.audio.eq_mid = v.clamp(-24.0, 24.0);
+        }
+        if let Some(v) = p.num::<f32>("eq-mid-freq")? {
+            c.audio.eq_mid_freq = v.clamp(100.0, 12000.0);
+        }
+        if let Some(v) = p.num::<f32>("eq-high")? {
+            c.audio.eq_high = v.clamp(-24.0, 24.0);
+        }
+        if p.on("comp") {
+            c.audio.comp = true;
+        }
+        if let Some(v) = p.num::<f32>("comp-thresh")? {
+            c.audio.comp_thresh = v.clamp(-60.0, 0.0);
+        }
+        if let Some(v) = p.num::<f32>("comp-ratio")? {
+            c.audio.comp_ratio = v.clamp(1.0, 20.0);
+        }
+        if p.on("comp-off") {
+            c.audio.comp = false;
+        }
+        if p.on("fix") {
+            c.audio.voice_fix = true;
+        }
+        if p.on("fix-off") {
+            c.audio.voice_fix = false;
+        }
+        c.audio
+    };
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Updated clip {id}'s audio"),
+        serde_json::json!({ "clip": id, "audio": afx }),
     ))
 }
 
@@ -1677,6 +1792,147 @@ fn cmd_tighten(p: &Parsed) -> Result<Output> {
             proj.duration()
         ),
         serde_json::json!({ "cuts": cuts, "removed": removed, "duration": proj.duration() }),
+    ))
+}
+
+fn cmd_beats(p: &Parsed) -> Result<Output> {
+    let target = p.at(0)?;
+    let every = p.num::<usize>("every")?.unwrap_or(1).max(1);
+    // Bare media: just report the beats.
+    if !target.ends_with(".reel") {
+        if !std::path::Path::new(target).exists() {
+            bail!("no such file: {target}");
+        }
+        let beats: Vec<f64> = crate::beats::detect(target)?
+            .into_iter()
+            .step_by(every)
+            .collect();
+        return Ok(Output::new(
+            format!("{} beat(s) in {target}", beats.len()),
+            serde_json::json!({ "beats": beats }),
+        ));
+    }
+    let mut proj = load(target)?;
+    // Which file carries the rhythm: --source, else the music bed.
+    let (source, offset) = match p.str("source") {
+        Some(s) => (s.to_string(), None),
+        None => match &proj.music {
+            Some(m) if !m.source.is_empty() => (m.source.clone(), Some(m.start)),
+            _ => bail!("no music bed on this project — pass --source FILE"),
+        },
+    };
+    let beats: Vec<f64> = crate::beats::detect(&source)?
+        .into_iter()
+        .step_by(every)
+        .collect();
+    if beats.is_empty() {
+        bail!("no beats found in {source}");
+    }
+    // Map to the timeline: the music bed plays from its start offset; a
+    // timeline source maps through its clips (a beat in trimmed-away
+    // material lands nowhere).
+    let total = crate::edit::render_duration(&proj.export_segments());
+    let cap = if total > 0.0 { total } else { f64::MAX };
+    let mut times: Vec<f64> = match offset {
+        Some(at) => beats.iter().map(|b| at + b).filter(|t| *t <= cap).collect(),
+        None => beats
+            .iter()
+            .flat_map(|b| {
+                proj.map_source_window(&source, *b, b + 0.001)
+                    .first()
+                    .map(|(t0, _)| *t0)
+            })
+            .collect(),
+    };
+    if times.is_empty() {
+        bail!("no beat landed on the timeline — is {source} in the edit?");
+    }
+    if p.on("replace") {
+        proj.markers.clear();
+    }
+    let n = times.len();
+    proj.markers.append(&mut times);
+    proj.markers.sort_by(|a, b| a.total_cmp(b));
+    proj.markers.dedup_by(|a, b| (*a - *b).abs() < 0.02);
+    save(&proj, target)?;
+    Ok(Output::new(
+        format!("{n} beat marker(s) dropped — cuts and Ctrl+←/→ snap to them"),
+        serde_json::json!({ "markers": n, "beats": beats }),
+    ))
+}
+
+fn cmd_fillers(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let quiet = p.on("quiet") || p.on("json");
+    let words: Vec<String> = p
+        .str("words")
+        .unwrap_or("um,uh,uhm,er,erm,hmm")
+        .split(',')
+        .map(|w| w.trim().to_lowercase())
+        .filter(|w| !w.is_empty())
+        .collect();
+    let pad = p.num::<f64>("pad")?.unwrap_or(0.04);
+    let model = match p.str("model").unwrap_or("base") {
+        "tiny" => crate::captions::Model::TinyEn,
+        "base" => crate::captions::Model::BaseEn,
+        "small" => crate::captions::Model::SmallEn,
+        other => bail!("--model wants tiny, base or small — got {other:?}"),
+    };
+    let mut proj = load(path)?;
+    let sources: Vec<String> = {
+        let mut v: Vec<String> = Vec::new();
+        for t in proj.tracks.iter().filter(|t| t.kind == crate::edit::TrackKind::Video) {
+            for c in &t.clips {
+                if !v.contains(&c.source) {
+                    v.push(c.source.clone());
+                }
+            }
+        }
+        v
+    };
+    if sources.is_empty() {
+        bail!("the timeline is empty — nothing to de-um");
+    }
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    let set = |stage: &str, _f: f32| {
+        if !quiet {
+            eprintln!("{stage}");
+        }
+    };
+    let mut holes: Vec<(f64, f64)> = Vec::new();
+    let mut found: Vec<serde_json::Value> = Vec::new();
+    for src in &sources {
+        if !quiet {
+            eprintln!("listening to {src}…");
+        }
+        let cues = crate::captions::transcribe_words(src, model, &set, &cancel)?;
+        for cue in &cues {
+            let norm: String = cue
+                .text
+                .trim()
+                .to_lowercase()
+                .chars()
+                .filter(|c| c.is_alphanumeric() || *c == '\'')
+                .collect();
+            if words.iter().any(|w| *w == norm) {
+                found.push(serde_json::json!({
+                    "word": norm, "source": src, "at": cue.start
+                }));
+            }
+        }
+        holes.extend(proj.filler_holes(src, &cues, &words, pad));
+    }
+    if p.on("dry-run") {
+        return Ok(Output::new(
+            format!("{} filler(s) found (dry run — nothing cut)", found.len()),
+            serde_json::json!({ "found": found, "cut": false }),
+        ));
+    }
+    let (cuts, removed) = proj.cut_holes(holes);
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Cut {cuts} filler(s) — the edit is {removed:.2}s shorter"),
+        serde_json::json!({ "cuts": cuts, "removed": removed, "found": found }),
     ))
 }
 

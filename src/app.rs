@@ -88,6 +88,11 @@ pub struct ReelApp {
     /// track. The video clock stays master; this chases it.
     #[cfg(target_os = "linux")]
     pub mixer: Option<crate::audio::Mixer>,
+    /// The voice recorder (Linux, PipeWire) — opened on first punch-in.
+    #[cfg(target_os = "linux")]
+    pub voice_rec: Option<crate::audio::Recorder>,
+    /// A punch-in in progress: the timeline position recording began at.
+    pub punch_in_at: Option<f64>,
     /// Whether we've tried to open the mixer (it opens lazily on first
     /// entering the editor — an audio stream at app start would tax the
     /// cold-open budget for people who only came to watch something).
@@ -188,6 +193,9 @@ impl ReelApp {
             audition: None,
             grade_clipboard: None,
             tracking: None,
+            #[cfg(target_os = "linux")]
+            voice_rec: None,
+            punch_in_at: None,
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
@@ -869,12 +877,14 @@ impl ReelApp {
         if stale {
             self.mix_built_at = std::time::Instant::now();
             let mut plan = crate::audio::Plan::default();
+            plan.buses = self.project.tracks.len();
             let soloing = self.project.tracks.iter().any(|t| t.solo);
-            let clips: Vec<(f32, crate::edit::Clip)> = self
+            let clips: Vec<(f32, f32, usize, crate::edit::Clip)> = self
                 .project
                 .tracks
                 .iter()
-                .filter(|t| {
+                .enumerate()
+                .filter(|(_, t)| {
                     !t.muted
                         && (!soloing || t.solo)
                         && matches!(
@@ -884,9 +894,11 @@ impl ReelApp {
                                 | crate::edit::TrackKind::Overlay
                         )
                 })
-                .flat_map(|t| t.clips.iter().cloned().map(move |c| (t.gain_db, c)))
+                .flat_map(|(ti, t)| {
+                    t.clips.iter().cloned().map(move |c| (t.gain_db, t.pan, ti, c))
+                })
                 .collect();
-            for (track_gain, c) in clips {
+            for (track_gain, track_pan, bus, c) in clips {
                 let Some(pcm) = self.samples.get(&c.source) else { continue };
                 let avg = (c.source_len() / c.duration.max(1e-9)).max(0.01);
                 plan.clips.push(crate::audio::PlanClip {
@@ -898,6 +910,8 @@ impl ReelApp {
                     fade_in: c.effects.fade_in,
                     fade_out: c.effects.fade_out,
                     speed: avg,
+                    fx: c.audio.with_track_pan(track_pan),
+                    bus,
                 });
             }
             if let Some(m) = &self.project.music {
@@ -1392,6 +1406,80 @@ impl ReelApp {
             Ok(job) => self.audition = Some((job, out, clip_id)),
             Err(e) => log::error!("audition failed to start: {e:#}"),
         }
+    }
+
+    /// Punch in: arm the recorder at the playhead and roll the timeline —
+    /// you speak over the cut and the take lands exactly where you started.
+    #[cfg(target_os = "linux")]
+    pub fn toggle_record_voice(&mut self) {
+        if self.punch_in_at.is_some() {
+            self.finish_record_voice();
+            return;
+        }
+        if self.voice_rec.is_none() {
+            self.voice_rec = crate::audio::Recorder::open();
+        }
+        let Some(rec) = &self.voice_rec else {
+            log::warn!("no microphone available to record from");
+            return;
+        };
+        rec.start();
+        self.punch_in_at = Some(self.editor.playhead);
+        // Roll playback so the take is spoken against the cut.
+        if let Some(p) = self.player.as_mut() {
+            if !p.playing {
+                p.toggle_play();
+            }
+        }
+    }
+
+    /// Stop the take, write the WAV beside the project, drop it on A1 at
+    /// the punch-in point.
+    #[cfg(target_os = "linux")]
+    pub fn finish_record_voice(&mut self) {
+        let Some(at) = self.punch_in_at.take() else { return };
+        let Some(rec) = &self.voice_rec else { return };
+        let samples = rec.stop();
+        let seconds = samples.len() as f64 / (crate::audio::RATE as usize * 2) as f64;
+        if seconds < 0.2 {
+            log::warn!("take too short ({seconds:.2}s) — nothing added");
+            return;
+        }
+        // Somewhere to put the file: beside the project when it has a home.
+        let dir = self
+            .editor
+            .project_path
+            .as_ref()
+            .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
+            .unwrap_or_else(|| {
+                let d = std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default())
+                    .join(".local/share/reel/recordings");
+                let _ = std::fs::create_dir_all(&d);
+                d
+            });
+        let n = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .filter(|c| c.name.starts_with("voiceover"))
+            .count()
+            + 1;
+        let path = dir.join(format!("voiceover-{n}.wav"));
+        if let Err(e) = crate::audio::write_wav(&path, &samples) {
+            log::error!("could not write the take: {e}");
+            return;
+        }
+        self.editor.push_undo(&self.project);
+        self.project.add_clip(
+            &path.to_string_lossy(),
+            crate::edit::TrackKind::Audio,
+            at,
+            0.0,
+            seconds,
+        );
+        self.editor.mark_changed();
+        log::info!("voiceover: {:.2}s onto A1 at {at:.2}s ({})", seconds, path.display());
     }
 
     /// Kick off a subject track for the clip's power window on a worker —

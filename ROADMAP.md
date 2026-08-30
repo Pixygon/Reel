@@ -103,16 +103,35 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       work only — fades/reframe stay per-shot) and "Paste to ALL clips"
       as the project look. CLI: `effects --like N [--like-all]`.
 
-## E. Audio depth
+## E. Audio depth — shipped in v1.4.0
 
-- [ ] Pan per track/clip (live + export).
-- [ ] Meters on the mixer strips; a LUFS meter on the master.
-- [ ] Parametric EQ and a compressor as insert effects — measured tests,
-      like the ducker.
-- [ ] The repair set: noise reduction, de-hum, de-click ("Fix voice").
-- [ ] Filler-word removal driven by word-level caption timestamps.
-- [ ] Beat detection → beat-snapped cut points.
-- [ ] Voice recording straight into A1, with punch-in.
+- [x] Pan per clip AND per track (`AudioFx.pan` + `Track.pan`, balance
+      law, composed clamped). Live mixer applies channel gains; the export
+      renders `pan=stereo|…` — both measured (astats per channel).
+- [x] Meters on the mixer strips (decaying peaks per track bus + music)
+      and momentary LUFS on the master (BS.1770 K-weighting, calibrated
+      against a 997 Hz sine in a unit test). Meters silence on stop —
+      a frozen bar is a lie.
+- [x] EQ (low shelf 120 Hz, parametric bell, high shelf 8 kHz) and a
+      compressor per clip. ONE model (`Clip.audio`): the live mixer runs
+      real biquads + a feed-forward compressor (attack/release matched to
+      the export's acompressor); the export renders bass/equalizer/treble/
+      acompressor. Both sides measured: shelf depth, compression amount,
+      below-threshold identity.
+- [x] "Fix voice": 2× highpass 80 Hz (one leaves too much 50 Hz standing)
+      + afftdn + adeclick at render time, honestly labelled export-only.
+      Measured: steady hum guts >10 dB while bursty voice survives.
+- [x] Filler-word removal: whisper `-ml 1` word-level cues →
+      `filler_holes` (pure, tested) → `cut_holes` (extracted from tighten,
+      now merges overlaps). `reel fillers [--words --pad --dry-run]`.
+- [x] Beat detection (`beats.rs`): energy-flux onsets, adaptive threshold,
+      pure detector tested on synthetic clicks AND a real rendered
+      metronome. `reel beats` drops markers (music bed or any source);
+      cuts and Ctrl+←/→ already snap to markers.
+- [x] Voice recording straight into A1 with punch-in: PipeWire capture
+      stream (same one-thread Rc architecture as the mixer), ⏺ Record
+      voice rolls the timeline from the playhead and the take lands on A1
+      where it started. Hand-rolled WAV writer, ffprobe-verified.
 
 ## F. Editorial workflow
 

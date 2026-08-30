@@ -1058,6 +1058,57 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     app.editor.mark_changed();
                 }
 
+                // Audio processing — pan, tone, dynamics, repair. One
+                // model (Clip.audio) feeding the live mix and the export.
+                {
+                    let mut afx = app.project.clip(id).map(|c| c.audio).unwrap_or_default();
+                    let before_afx = afx;
+                    ui.collapsing("Audio", |ui| {
+                        ui.add(egui::Slider::new(&mut afx.pan, -1.0..=1.0).text("Pan"));
+                        ui.add(egui::Slider::new(&mut afx.eq_low, -18.0..=18.0).text("Low (dB)"));
+                        ui.add(egui::Slider::new(&mut afx.eq_mid, -18.0..=18.0).text("Mid (dB)"));
+                        if afx.eq_mid.abs() > 0.01 {
+                            ui.add(
+                                egui::Slider::new(&mut afx.eq_mid_freq, 200.0..=8000.0)
+                                    .logarithmic(true)
+                                    .text("Mid freq (Hz)"),
+                            );
+                        }
+                        ui.add(egui::Slider::new(&mut afx.eq_high, -18.0..=18.0).text("High (dB)"));
+                        ui.checkbox(&mut afx.comp, "Compressor").on_hover_text(
+                            "Even out the level: quiet parts stay, loud parts come down",
+                        );
+                        if afx.comp {
+                            ui.add(
+                                egui::Slider::new(&mut afx.comp_thresh, -40.0..=0.0)
+                                    .text("Threshold (dB)"),
+                            );
+                            ui.add(egui::Slider::new(&mut afx.comp_ratio, 1.5..=10.0).text("Ratio"));
+                        }
+                        ui.checkbox(&mut afx.voice_fix, "Fix voice on export")
+                            .on_hover_text(
+                                "Rumble/hum off, background noise down, clicks patched. \
+                                 A render-time FFT pass — the preview plays without it.",
+                            );
+                        if ui.small_button("reset audio").clicked() {
+                            afx = Default::default();
+                        }
+                    });
+                    if afx != before_afx {
+                        // One undo step per gesture, like the look sliders.
+                        if !ui.ctx().input(|i| i.pointer.any_down())
+                            || app.editor.fx_gesture != Some(id)
+                        {
+                            app.editor.push_undo(&app.project);
+                            app.editor.fx_gesture = Some(id);
+                        }
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.audio = afx;
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+
                 // Crossfade from the previous clip. Only meaningful when
                 // there IS a previous clip on the same track.
                 let has_prev = app
@@ -1157,16 +1208,52 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.separator();
         ui.label(RichText::new("Mixer").color(theme::CYAN));
         {
-            let track_rows: Vec<(u64, String)> = app
+            // Live levels from the mixer, when it runs (Linux + PipeWire).
+            let levels = app.mixer.as_ref().map(|m| m.levels());
+            if std::env::var("REEL_DEBUG_METER").is_ok() {
+                if let Some(lv) = &levels {
+                    eprintln!("METER buses={:?} master={:?} lufs={:.1}", lv.buses, lv.master, lv.lufs);
+                }
+            }
+            let meter = |ui: &mut egui::Ui, peak: f32| {
+                let (rect, _) = ui.allocate_exact_size(Vec2::new(46.0, 8.0), Sense::hover());
+                let p = ui.painter_at(rect);
+                p.rect_filled(rect, 2.0, theme::VOID_2);
+                // dB scale, -48..0 across the bar.
+                let db = 20.0 * peak.max(1e-6).log10();
+                let frac = ((db + 48.0) / 48.0).clamp(0.0, 1.0);
+                if frac > 0.0 {
+                    let w = rect.width() * frac;
+                    let color = if db > -6.0 {
+                        theme::EMBER
+                    } else {
+                        Color32::from_rgb(80, 220, 140)
+                    };
+                    p.rect_filled(
+                        Rect::from_min_size(rect.min, Vec2::new(w, rect.height())),
+                        2.0,
+                        color,
+                    );
+                }
+            };
+            let track_rows: Vec<(usize, u64, String)> = app
                 .project
                 .tracks
                 .iter()
-                .map(|t| (t.id, t.name.clone()))
+                .enumerate()
+                .map(|(i, t)| (i, t.id, t.name.clone()))
                 .collect();
             let mut changed = false;
-            for (tid, name) in track_rows {
+            for (ti, tid, name) in track_rows {
                 ui.horizontal(|ui| {
+                    // Two sliders + meter + M/S must fit the panel width —
+                    // width-greedy sliders push the rest off the edge.
+                    let w = ui.available_width();
+                    ui.spacing_mut().slider_width = ((w - 200.0) / 2.0).clamp(36.0, 110.0);
                     ui.label(RichText::new(name).small().color(egui::Color32::from_gray(170)));
+                    if let Some(lv) = &levels {
+                        meter(ui, lv.buses.get(ti).copied().unwrap_or(0.0));
+                    }
                     let Some(t) = app.project.tracks.iter_mut().find(|t| t.id == tid) else {
                         return;
                     };
@@ -1195,10 +1282,69 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         t.solo = so;
                         changed = true;
                     }
+                    let mut pan = t.pan;
+                    if ui
+                        .add(
+                            egui::Slider::new(&mut pan, -1.0..=1.0)
+                                .show_value(false)
+                                .text(""),
+                        )
+                        .on_hover_text(format!("Pan {:+.2}", t.pan))
+                        .changed()
+                    {
+                        t.pan = pan;
+                        changed = true;
+                    }
                 });
+            }
+            // The master: stereo peaks and momentary loudness — the number
+            // delivery specs ask about, live while you listen.
+            if let Some(lv) = &levels {
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("out").small().color(egui::Color32::from_gray(170)));
+                    meter(ui, lv.master[0]);
+                    meter(ui, lv.master[1]);
+                    let lufs = if lv.lufs < -70.0 {
+                        "–".to_string()
+                    } else {
+                        format!("{:+.1} LUFS", lv.lufs)
+                    };
+                    ui.label(RichText::new(lufs).small().monospace());
+                });
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
             }
             if changed {
                 app.editor.mark_changed();
+            }
+        }
+
+        // ── Voice recording ─────────────────────────────────────────────
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(at) = app.punch_in_at {
+                let secs = app.voice_rec.as_ref().map(|r| r.seconds()).unwrap_or(0.0);
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new("⏺").color(theme::EMBER));
+                    ui.label(
+                        RichText::new(format!("recording… {secs:.1}s (from {})", fmt_time(at)))
+                            .small()
+                            .color(theme::EMBER),
+                    );
+                    if ui.button("Stop").clicked() {
+                        app.finish_record_voice();
+                    }
+                });
+                ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
+            } else if ui
+                .button("⏺ Record voice")
+                .on_hover_text(
+                    "Punch in: the timeline rolls from the playhead and your \
+                     microphone records over it — the take lands on A1 where \
+                     you started. Press again to stop.",
+                )
+                .clicked()
+            {
+                app.toggle_record_voice();
             }
         }
 

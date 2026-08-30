@@ -154,6 +154,28 @@ Set a clip's audio level
 | `--clip` | `ID` | Clip id |
 | `--db` | `DECIBELS` | Level change, e.g. -6 or 3 |
 
+### `reel audio PROJECT`
+
+A clip's audio processing: pan, EQ, compressor, repair — live mix and export alike
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id (omit with --track for track-level pan) |
+| `--track` | `NAME` | Track name (V1/A1/V2) for --pan at track level |
+| `--pan` | `-1..1` | Stereo balance: -1 left, 0 centre, 1 right |
+| `--eq-low` | `DB` | Low shelf at 120 Hz |
+| `--eq-mid` | `DB` | Peaking bell (see --eq-mid-freq) |
+| `--eq-mid-freq` | `HZ` | The bell's centre (default 1000) |
+| `--eq-high` | `DB` | High shelf at 8 kHz |
+| `--comp` | — | Compressor on (threshold/ratio below) |
+| `--comp-thresh` | `DB` | Threshold, dBFS (default -18) |
+| `--comp-ratio` | `N` | Ratio N:1 (default 3) |
+| `--comp-off` | — | Compressor off |
+| `--fix` | — | Fix voice on export: rumble/hum off, noise down, clicks patched |
+| `--fix-off` | — | Stop fixing |
+| `--reset` | — | Back to untouched audio |
+| `--json` | — | Print the result as JSON |
+
 ### `reel effects PROJECT`
 
 Colour, fades and reframing for one clip
@@ -318,6 +340,30 @@ Sync one clip to another by their AUDIO — multicam without clap sticks
 | `--clip` | `ID` | The clip to move |
 | `--to` | `ID` | The clip to sync against |
 | `--window` | `SECONDS` | Largest offset to search (default 90) |
+
+### `reel beats TARGET`
+
+Find the beats and drop a marker on each — cuts can snap to the music. TARGET is a .reel or a media file
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--source` | `FILE` | Detect in this file (default: the project's music bed) |
+| `--every` | `N` | Keep every Nth beat (default 1) |
+| `--replace` | — | Clear existing markers first |
+| `--json` | — | Print the result as JSON |
+
+### `reel fillers PROJECT`
+
+Transcribe word-by-word and cut the ums and uhs out of the edit
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--words` | `LIST` | Comma-separated fillers (default um,uh,uhm,er,erm,hmm) |
+| `--pad` | `SECONDS` | Extra trimmed around each word (default 0.04) |
+| `--model` | `NAME` | tiny, base (default) or small |
+| `--dry-run` | — | List what would be cut without cutting |
+| `--quiet` | — | Don't print progress |
+| `--json` | — | Print the result as JSON |
 
 ### `reel tighten PROJECT`
 

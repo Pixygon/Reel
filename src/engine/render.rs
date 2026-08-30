@@ -833,6 +833,7 @@ mod tests {
             transition_in: fade,
             transition_kind: Default::default(),
             stabilize: false,
+            audio: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),

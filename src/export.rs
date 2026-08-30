@@ -1102,6 +1102,46 @@ fn push_music_mix(
 /// per-segment legs (trim, tempo, gain), the same concat/acrossfade chain,
 /// and the same music mix as the graph renderer. The frame server hands the
 /// result to its encoder. Returns None when the cut has no audio at all.
+/// The ffmpeg filters for one clip's audio processing, leading comma
+/// included. Order is fixed and mirrored by the live mixer: repair → EQ →
+/// compressor → pan (gain and fades ride elsewhere in the chain).
+fn audio_fx_chain(fx: &crate::edit::AudioFx) -> String {
+    let mut f = String::new();
+    if fx.voice_fix {
+        // The repair set: rumble and hum off (two cascaded high-passes =
+        // 24 dB/oct — one leaves too much 50 Hz standing), broadband noise
+        // down, clicks patched.
+        f.push_str(",highpass=f=80,highpass=f=80,afftdn=nr=12:nf=-40,adeclick");
+    }
+    if fx.eq_low.abs() > 0.01 {
+        f.push_str(&format!(",bass=g={:.2}:f=120", fx.eq_low.clamp(-24.0, 24.0)));
+    }
+    if fx.eq_mid.abs() > 0.01 {
+        f.push_str(&format!(
+            ",equalizer=f={:.1}:t=q:w=1.0:g={:.2}",
+            fx.eq_mid_freq.clamp(100.0, 12000.0),
+            fx.eq_mid.clamp(-24.0, 24.0)
+        ));
+    }
+    if fx.eq_high.abs() > 0.01 {
+        f.push_str(&format!(",treble=g={:.2}:f=8000", fx.eq_high.clamp(-24.0, 24.0)));
+    }
+    if fx.comp {
+        // acompressor's threshold is linear; ours is stated in dBFS.
+        let thresh = 10f32.powf(fx.comp_thresh.clamp(-60.0, 0.0) / 20.0);
+        f.push_str(&format!(
+            ",acompressor=threshold={:.6}:ratio={:.2}:attack=20:release=250",
+            thresh,
+            fx.comp_ratio.clamp(1.0, 20.0)
+        ));
+    }
+    if fx.pan.abs() > 1e-4 {
+        let (l, r) = fx.pan_gains();
+        f.push_str(&format!(",pan=stereo|c0={l:.4}*c0|c1={r:.4}*c1"));
+    }
+    f
+}
+
 pub(crate) fn build_timeline_audio_wav_args(
     segments: &[Segment],
     with_audio: bool,
@@ -1191,16 +1231,18 @@ pub(crate) fn build_timeline_audio_wav_args(
                     graph.push_str(&format!("[{l}]"));
                 }
                 graph.push_str(&format!(
-                    "concat=n={}:v=0:a=1{gain}[a{k}];",
-                    labels.len()
+                    "concat=n={}:v=0:a=1{}{gain}[a{k}];",
+                    labels.len(),
+                    audio_fx_chain(&seg.audio)
                 ));
             } else {
                 let rate = seg.speed.clamp(0.05, 20.0) as f64;
                 let src_len = seg.duration * rate;
                 graph.push_str(&format!(
-                    "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}[a{k}];",
+                    "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{}{gain}[a{k}];",
                     seg.in_point,
-                    atempo_chain(rate)
+                    atempo_chain(rate),
+                    audio_fx_chain(&seg.audio)
                 ));
             }
         }
@@ -1257,9 +1299,10 @@ pub(crate) fn build_timeline_audio_wav_args(
             }
             let label = format!("ac{j}");
             graph.push_str(&format!(
-                ";[{idx}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{gain}{fades},adelay={delay_ms}|{delay_ms}[{label}]",
+                ";[{idx}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{}{gain}{fades},adelay={delay_ms}|{delay_ms}[{label}]",
                 c.in_point,
                 atempo_chain(rate),
+                audio_fx_chain(&c.audio),
             ));
             labels.push(label);
         }
@@ -1582,6 +1625,7 @@ mod tests {
             transition_in: 0.0,
             transition_kind: Default::default(),
             stabilize: false,
+            audio: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2120,6 +2164,114 @@ mod tests {
     }
 
     /// Mean volume of one frequency band over a time window, in dBFS.
+    /// Per-channel RMS in dB, from astats.
+    fn channel_levels(file: &Path) -> (f32, f32) {
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-v", "info", "-i", &file.to_string_lossy(),
+                   "-af", "astats=metadata=0", "-f", "null", "-"])
+            .output()
+            .expect("run astats");
+        let text = String::from_utf8_lossy(&out.stderr);
+        let mut rms: Vec<f32> = Vec::new();
+        for line in text.lines() {
+            if let Some(v) = line.split("RMS level dB:").nth(1) {
+                if let Ok(x) = v.trim().parse::<f32>() {
+                    rms.push(x);
+                }
+            }
+        }
+        // Channel 1, Channel 2, then Overall — take the first two.
+        assert!(rms.len() >= 2, "astats gave {} RMS lines:\n{text}", rms.len());
+        (rms[0], rms[1])
+    }
+
+    /// Pan renders as a balance: a full-right pan silences the left channel
+    /// of the exported mix and leaves the right at its level.
+    #[test]
+    fn pan_lands_in_the_export() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-pan-src-{}.mp4", std::process::id()));
+        let wav = dir.join(format!("reel-pan-{}.wav", std::process::id()));
+        for f in [&src, &wav] {
+            let _ = std::fs::remove_file(f);
+        }
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=2",
+                   "-f", "lavfi", "-i", "sine=frequency=500:duration=2",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 1.5);
+        sg.audio.pan = 1.0;
+        let args = build_timeline_audio_wav_args(&[sg], true, None, &[], None, &wav.to_string_lossy())
+            .expect("wav args");
+        assert!(std::process::Command::new("ffmpeg").args(&args)
+            .status().map(|s| s.success()).unwrap_or(false), "wav render failed");
+        let (l, r) = channel_levels(&wav);
+        assert!(l < -60.0, "left must be silent after a full-right pan, got {l} dB");
+        assert!(r > -30.0, "right keeps the signal, got {r} dB");
+        assert!(r - l > 30.0, "the two channels must be far apart, got L {l} / R {r}");
+        for f in [&src, &wav] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// "Fix voice": a steady 50 Hz hum under bursty speech-like tone. The
+    /// repair chain guts the hum band and keeps the voice band.
+    #[test]
+    fn voice_fix_removes_hum_and_keeps_the_voice() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-fix-src-{}.mp4", std::process::id()));
+        let wav = dir.join(format!("reel-fix-{}.wav", std::process::id()));
+        for f in [&src, &wav] {
+            let _ = std::fs::remove_file(f);
+        }
+        // Voice = 1 kHz gated on/off at 2 Hz (non-stationary, so the
+        // denoiser must not treat it as noise); hum = steady 50 Hz.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30:duration=4",
+                   "-f", "lavfi", "-i",
+                   "sine=frequency=1000:duration=4,volume=volume='0.4*gt(sin(2*PI*t*2),0)':eval=frame",
+                   "-f", "lavfi", "-i", "sine=frequency=50:duration=4,volume=0.3",
+                   "-filter_complex", "[1][2]amix=inputs=2:normalize=0[a]",
+                   "-map", "0:v", "-map", "[a]",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        // Render twice: raw and fixed.
+        let raw = seg(&src.to_string_lossy(), 0.0, 3.5);
+        let mut fixed = raw.clone();
+        fixed.audio.voice_fix = true;
+        let wav_raw = dir.join(format!("reel-fixraw-{}.wav", std::process::id()));
+        let _ = std::fs::remove_file(&wav_raw);
+        for (sg, out) in [(&raw, &wav_raw), (&fixed, &wav)] {
+            let args = build_timeline_audio_wav_args(
+                std::slice::from_ref(sg), true, None, &[], None, &out.to_string_lossy())
+                .expect("wav args");
+            assert!(std::process::Command::new("ffmpeg").args(&args)
+                .status().map(|s| s.success()).unwrap_or(false), "wav render failed");
+        }
+        let hum_before = band_level(&wav_raw, 0.2, 3.2, 50);
+        let hum_after = band_level(&wav, 0.2, 3.2, 50);
+        let voice_before = band_level(&wav_raw, 0.2, 3.2, 1000);
+        let voice_after = band_level(&wav, 0.2, 3.2, 1000);
+        let hum_drop = hum_before - hum_after;
+        let voice_drop = voice_before - voice_after;
+        assert!(
+            hum_drop > 10.0,
+            "the fix must gut the hum (before {hum_before}, after {hum_after})"
+        );
+        assert!(
+            voice_drop < 6.0,
+            "the voice must survive the fix (before {voice_before}, after {voice_after})"
+        );
+        for f in [&src, &wav, &wav_raw] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     fn band_level(file: &Path, from: f64, to: f64, freq: u32) -> f32 {
         let out = std::process::Command::new("ffmpeg")
             .args([
@@ -2172,6 +2324,7 @@ mod tests {
             transition_in: 0.0,
             transition_kind: Default::default(),
             stabilize: false,
+            audio: Default::default(),
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2428,6 +2581,7 @@ mod tests {
             fade_in: 0.0,
             fade_out: 0.0,
             speed: 1.0,
+            audio: Default::default(),
         }];
         let s = ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() };
         let job = start_timeline_with_captions(
@@ -3118,6 +3272,7 @@ mod tests {
             transition_in: 0.0,
             transition_kind: Default::default(),
             stabilize: false,
+            audio: Default::default(),
             gain_db: 0.0,
             speed: 2.0,
             keys: Vec::new(),

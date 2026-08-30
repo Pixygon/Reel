@@ -280,11 +280,33 @@ pub fn start(media: &str, model: Model) -> Job {
     Job { state, cancel }
 }
 
+/// Word-level transcription: one cue per word, timed. The engine's `-ml 1`
+/// splits segments at token granularity — what filler-word removal needs.
+/// Blocking; call from a worker or the CLI.
+pub fn transcribe_words(
+    media: &str,
+    model: Model,
+    set: &dyn Fn(&str, f32),
+    cancel: &AtomicBool,
+) -> Result<Vec<Cue>> {
+    run_with(media, model, set, cancel, true)
+}
+
 fn run(
     media: &str,
     model: Model,
     set: &dyn Fn(&str, f32),
     cancel: &AtomicBool,
+) -> Result<Vec<Cue>> {
+    run_with(media, model, set, cancel, false)
+}
+
+fn run_with(
+    media: &str,
+    model: Model,
+    set: &dyn Fn(&str, f32),
+    cancel: &AtomicBool,
+    word_level: bool,
 ) -> Result<Vec<Cue>> {
     let engine = ensure_engine(set, cancel)?;
     if cancel.load(Ordering::Relaxed) {
@@ -315,17 +337,22 @@ fn run(
 
     set("Listening…", 0.0);
     let prefix = tmp.to_string_lossy().to_string();
+    let mut args: Vec<String> = vec![
+        "-m".into(), model.path().to_string_lossy().into_owned(),
+        "-f".into(), wav.to_string_lossy().into_owned(),
+        "-osrt".into(),           // write <prefix>.srt
+        "-of".into(), prefix.clone(),
+        // NB: do NOT pass -nt here. It reads like "don't print
+        // timestamps to the console", but it also strips them from the
+        // SRT writer: every segment collapses into one 30-second cue,
+        // so the captions stop following the speech entirely.
+    ];
+    if word_level {
+        // One token per segment → per-word timestamps in the SRT.
+        args.extend(["-ml".into(), "1".into()]);
+    }
     let out = Command::new(&engine)
-        .args([
-            "-m", &model.path().to_string_lossy(),
-            "-f", &wav.to_string_lossy(),
-            "-osrt",              // write <prefix>.srt
-            "-of", &prefix,
-            // NB: do NOT pass -nt here. It reads like "don't print
-            // timestamps to the console", but it also strips them from the
-            // SRT writer: every segment collapses into one 30-second cue,
-            // so the captions stop following the speech entirely.
-        ])
+        .args(&args)
         .output()
         .map_err(|e| anyhow!("caption engine failed to start: {e}"))?;
     let _ = std::fs::remove_file(&wav);

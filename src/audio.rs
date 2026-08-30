@@ -31,6 +31,170 @@ use std::sync::{Arc, Mutex};
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;
 
+// ── DSP: biquads, compressor, K-weighting ────────────────────────────────
+
+/// One biquad section, transposed direct form II. Coefficients from the RBJ
+/// cookbook; state persists across callbacks so the filters are continuous.
+#[derive(Clone, Copy, Default)]
+pub struct Biquad {
+    b0: f32,
+    b1: f32,
+    b2: f32,
+    a1: f32,
+    a2: f32,
+    z1: f32,
+    z2: f32,
+}
+
+impl Biquad {
+    #[inline]
+    pub fn process(&mut self, x: f32) -> f32 {
+        let y = self.b0 * x + self.z1;
+        self.z1 = self.b1 * x - self.a1 * y + self.z2;
+        self.z2 = self.b2 * x - self.a2 * y;
+        y
+    }
+
+    fn norm(b0: f32, b1: f32, b2: f32, a0: f32, a1: f32, a2: f32) -> Self {
+        Self { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0, z1: 0.0, z2: 0.0 }
+    }
+
+    /// From explicit coefficients (already normalised, a0 = 1).
+    pub fn from_coeffs(b: [f32; 3], a: [f32; 2]) -> Self {
+        Self { b0: b[0], b1: b[1], b2: b[2], a1: a[0], a2: a[1], z1: 0.0, z2: 0.0 }
+    }
+
+    pub fn low_shelf(f0: f32, gain_db: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * f0 / RATE as f32;
+        let (sw, cw) = (w.sin(), w.cos());
+        let alpha = sw / 2.0 * (2.0f32).sqrt(); // S = 1
+        let sq = 2.0 * a.sqrt() * alpha;
+        Self::norm(
+            a * ((a + 1.0) - (a - 1.0) * cw + sq),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cw),
+            a * ((a + 1.0) - (a - 1.0) * cw - sq),
+            (a + 1.0) + (a - 1.0) * cw + sq,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cw),
+            (a + 1.0) + (a - 1.0) * cw - sq,
+        )
+    }
+
+    pub fn high_shelf(f0: f32, gain_db: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * f0 / RATE as f32;
+        let (sw, cw) = (w.sin(), w.cos());
+        let alpha = sw / 2.0 * (2.0f32).sqrt();
+        let sq = 2.0 * a.sqrt() * alpha;
+        Self::norm(
+            a * ((a + 1.0) + (a - 1.0) * cw + sq),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cw),
+            a * ((a + 1.0) + (a - 1.0) * cw - sq),
+            (a + 1.0) - (a - 1.0) * cw + sq,
+            2.0 * ((a - 1.0) - (a + 1.0) * cw),
+            (a + 1.0) - (a - 1.0) * cw - sq,
+        )
+    }
+
+    pub fn peaking(f0: f32, q: f32, gain_db: f32) -> Self {
+        let a = 10f32.powf(gain_db / 40.0);
+        let w = 2.0 * std::f32::consts::PI * f0 / RATE as f32;
+        let (sw, cw) = (w.sin(), w.cos());
+        let alpha = sw / (2.0 * q);
+        Self::norm(
+            1.0 + alpha * a,
+            -2.0 * cw,
+            1.0 - alpha * a,
+            1.0 + alpha / a,
+            -2.0 * cw,
+            1.0 - alpha / a,
+        )
+    }
+}
+
+/// Per-clip runtime DSP state: the EQ chain (stereo pairs) and the
+/// compressor's envelope. Rebuilt whenever the plan changes; a seek keeps
+/// it (a few ms of filter transient beats a state machine).
+#[derive(Default)]
+pub struct ClipDsp {
+    eq: Vec<[Biquad; 2]>,
+    comp_env: f32,
+}
+
+impl ClipDsp {
+    fn for_fx(fx: &crate::edit::AudioFx) -> Self {
+        let mut eq = Vec::new();
+        if fx.eq_low.abs() > 0.01 {
+            let b = Biquad::low_shelf(120.0, fx.eq_low.clamp(-24.0, 24.0));
+            eq.push([b, b]);
+        }
+        if fx.eq_mid.abs() > 0.01 {
+            let b = Biquad::peaking(
+                fx.eq_mid_freq.clamp(100.0, 12000.0),
+                1.0,
+                fx.eq_mid.clamp(-24.0, 24.0),
+            );
+            eq.push([b, b]);
+        }
+        if fx.eq_high.abs() > 0.01 {
+            let b = Biquad::high_shelf(8000.0, fx.eq_high.clamp(-24.0, 24.0));
+            eq.push([b, b]);
+        }
+        Self { eq, comp_env: 0.0 }
+    }
+}
+
+/// Momentary loudness per BS.1770: K-weighting (shelf + RLB high-pass, the
+/// standard 48 kHz coefficients) into a 400 ms mean-square window.
+pub struct LufsMeter {
+    stages: [[Biquad; 2]; 2],
+    ring: Vec<f32>,
+    idx: usize,
+    sum: f64,
+}
+
+impl Default for LufsMeter {
+    fn default() -> Self {
+        let shelf = Biquad::from_coeffs(
+            [1.535_124_9, -2.691_696_2, 1.198_392_8],
+            [-1.690_659_3, 0.732_480_77],
+        );
+        let hp = Biquad::from_coeffs([1.0, -2.0, 1.0], [-1.990_047_5, 0.990_072_25]);
+        let n = (RATE as usize * 2) / 5; // 400 ms
+        Self { stages: [[shelf, shelf], [hp, hp]], ring: vec![0.0; n], idx: 0, sum: 0.0 }
+    }
+}
+
+impl LufsMeter {
+    #[inline]
+    fn push(&mut self, l: f32, r: f32) {
+        let sl = self.stages[0][0].process(l);
+        let kl = self.stages[1][0].process(sl);
+        let sr = self.stages[0][1].process(r);
+        let kr = self.stages[1][1].process(sr);
+        let e = kl * kl + kr * kr;
+        self.sum += (e - self.ring[self.idx]) as f64;
+        self.ring[self.idx] = e;
+        self.idx = (self.idx + 1) % self.ring.len();
+    }
+
+    /// Momentary LUFS. -inf-ish (-90) when silent.
+    pub fn momentary(&self) -> f32 {
+        let ms = (self.sum / self.ring.len() as f64).max(1e-12);
+        (-0.691 + 10.0 * ms.log10()) as f32
+    }
+}
+
+/// What the strips read: decaying peaks per bus, master peaks, momentary
+/// loudness. A snapshot type — cloned out under the lock.
+#[derive(Clone, Default)]
+pub struct Levels {
+    /// Peak per mixer bus (track), linear, decaying.
+    pub buses: Vec<f32>,
+    pub master: [f32; 2],
+    pub lufs: f32,
+}
+
 // ── Sample cache ─────────────────────────────────────────────────────────
 
 /// Decoded interleaved stereo f32 at 48 kHz.
@@ -142,6 +306,10 @@ pub struct PlanClip {
     /// Constant playback rate. Ramped clips pass their AVERAGE rate — the
     /// preview approximation; the render walks the true curve.
     pub speed: f64,
+    /// Pan/EQ/compressor for this clip (repair is export-only).
+    pub fx: crate::edit::AudioFx,
+    /// Which meter bus (track index) this clip reports to.
+    pub bus: usize,
 }
 
 pub struct PlanMusic {
@@ -158,6 +326,8 @@ pub struct PlanMusic {
 pub struct Plan {
     pub clips: Vec<PlanClip>,
     pub music: Option<PlanMusic>,
+    /// Bus (track) count for the meters; music meters separately.
+    pub buses: usize,
 }
 
 pub fn db_to_gain(db: f32) -> f32 {
@@ -200,6 +370,11 @@ pub struct MixState {
     pub master: f32,
     /// The ducker's smoothed gain-reduction state (1.0 = no reduction).
     duck_gain: f32,
+    /// Per-plan-clip DSP state, index-aligned with plan.clips.
+    dsp: Vec<ClipDsp>,
+    /// Live levels for the meter strips.
+    pub levels: Levels,
+    lufs: LufsMeter,
 }
 
 impl Default for MixState {
@@ -210,7 +385,23 @@ impl Default for MixState {
             playing: false,
             master: 1.0,
             duck_gain: 1.0,
+            dsp: Vec::new(),
+            levels: Levels::default(),
+            lufs: LufsMeter::default(),
         }
+    }
+}
+
+impl MixState {
+    /// Install a new plan and rebuild the aligned DSP state.
+    pub fn install(&mut self, plan: Plan) {
+        self.dsp = plan.clips.iter().map(|c| ClipDsp::for_fx(&c.fx)).collect();
+        // Keep meter continuity across the routine plan rebuilds — zeroing
+        // here made the bars flicker every 700 ms.
+        if self.levels.buses.len() != plan.buses + 1 {
+            self.levels.buses = vec![0.0; plan.buses + 1]; // +1: the music bus
+        }
+        self.plan = Arc::new(plan);
     }
 }
 
@@ -223,6 +414,10 @@ impl Default for MixState {
 pub fn render_into(state: &mut MixState, out: &mut [f32]) {
     if !state.playing {
         out.fill(0.0);
+        // A stopped mixer shows silent meters — a frozen bar is a lie.
+        state.levels.buses.iter_mut().for_each(|b| *b = 0.0);
+        state.levels.master = [0.0, 0.0];
+        state.levels.lufs = -90.0;
         return;
     }
     let plan = state.plan.clone();
@@ -230,11 +425,52 @@ pub fn render_into(state: &mut MixState, out: &mut [f32]) {
     // Ducker time constants, per sample.
     let attack = 1.0 - ((-1.0 / (0.020 * RATE as f64)) as f32).exp();
     let release = 1.0 - ((-1.0 / (0.400 * RATE as f64)) as f32).exp();
+    // Compressor time constants (match the export's acompressor settings:
+    // attack 20 ms, release 250 ms).
+    let c_att = 1.0 - (-1.0f32 / (0.020 * RATE as f32)).exp();
+    let c_rel = 1.0 - (-1.0f32 / (0.250 * RATE as f32)).exp();
+    let meter_decay = 1.0 - (-1.0f32 / (0.300 * RATE as f32)).exp();
+    if state.dsp.len() != plan.clips.len() {
+        state.dsp = plan.clips.iter().map(|c| ClipDsp::for_fx(&c.fx)).collect();
+    }
+    if state.levels.buses.len() != plan.buses + 1 {
+        state.levels.buses = vec![0.0; plan.buses + 1];
+    }
     let mut t = state.pos;
     for frame in out.chunks_exact_mut(2) {
         let (mut l, mut r) = (0.0f32, 0.0f32);
-        for c in &plan.clips {
-            let (cl, cr) = c.sample(t);
+        for (ci, c) in plan.clips.iter().enumerate() {
+            let (mut cl, mut cr) = c.sample(t);
+            if cl != 0.0 || cr != 0.0 || !state.dsp[ci].eq.is_empty() {
+                let dsp = &mut state.dsp[ci];
+                for band in &mut dsp.eq {
+                    cl = band[0].process(cl);
+                    cr = band[1].process(cr);
+                }
+                if c.fx.comp {
+                    // Feed-forward peak compressor, mirroring the export's
+                    // acompressor numbers in behaviour.
+                    let peak = cl.abs().max(cr.abs());
+                    let k = if peak > dsp.comp_env { c_att } else { c_rel };
+                    dsp.comp_env += (peak - dsp.comp_env) * k;
+                    let env_db = 20.0 * dsp.comp_env.max(1e-6).log10();
+                    let thresh = c.fx.comp_thresh.clamp(-60.0, 0.0);
+                    if env_db > thresh {
+                        let over = env_db - thresh;
+                        let reduce = over * (1.0 - 1.0 / c.fx.comp_ratio.clamp(1.0, 20.0));
+                        let g = 10f32.powf(-reduce / 20.0);
+                        cl *= g;
+                        cr *= g;
+                    }
+                }
+                let (pl, pr) = c.fx.pan_gains();
+                cl *= pl;
+                cr *= pr;
+            }
+            let peak = cl.abs().max(cr.abs());
+            if let Some(b) = state.levels.buses.get_mut(c.bus) {
+                *b = if peak > *b { peak } else { *b + (peak - *b) * meter_decay };
+            }
             l += cl;
             r += cr;
         }
@@ -261,15 +497,26 @@ pub fn render_into(state: &mut MixState, out: &mut [f32]) {
                         state.duck_gain += (target - state.duck_gain) * k;
                         g *= state.duck_gain;
                     }
-                    l += m.pcm.data[idx * 2] * g;
-                    r += m.pcm.data[idx * 2 + 1] * g;
+                    let (ml, mr) = (m.pcm.data[idx * 2] * g, m.pcm.data[idx * 2 + 1] * g);
+                    let peak = ml.abs().max(mr.abs());
+                    if let Some(b) = state.levels.buses.last_mut() {
+                        *b = if peak > *b { peak } else { *b + (peak - *b) * meter_decay };
+                    }
+                    l += ml;
+                    r += mr;
                 }
             }
         }
-        frame[0] = (l * state.master).clamp(-1.0, 1.0);
-        frame[1] = (r * state.master).clamp(-1.0, 1.0);
+        let (ol, or_) = ((l * state.master).clamp(-1.0, 1.0), (r * state.master).clamp(-1.0, 1.0));
+        state.lufs.push(ol, or_);
+        let m = &mut state.levels.master;
+        m[0] = if ol.abs() > m[0] { ol.abs() } else { m[0] + (ol.abs() - m[0]) * meter_decay };
+        m[1] = if or_.abs() > m[1] { or_.abs() } else { m[1] + (or_.abs() - m[1]) * meter_decay };
+        frame[0] = ol;
+        frame[1] = or_;
         t += dt;
     }
+    state.levels.lufs = state.lufs.momentary();
     state.pos = t;
 }
 
@@ -313,7 +560,12 @@ impl Mixer {
     }
 
     pub fn set_plan(&self, plan: Plan) {
-        self.state.lock().unwrap().plan = Arc::new(plan);
+        self.state.lock().unwrap().install(plan);
+    }
+
+    /// A snapshot of the live meters for the strips.
+    pub fn levels(&self) -> Levels {
+        self.state.lock().unwrap().levels.clone()
     }
 
     pub fn set_playing(&self, playing: bool) {
@@ -420,6 +672,170 @@ fn pw_playback(
     Ok(())
 }
 
+// ── Voice recording ──────────────────────────────────────────────────────
+//
+// A PipeWire capture stream on its own thread, same architecture as the
+// mixer: Rc objects stay on the thread, the app talks to shared state. The
+// recorder opens on the first punch-in and stays alive; `recording` gates
+// whether arriving samples are kept.
+
+/// Shared capture state.
+#[derive(Default)]
+pub struct RecState {
+    pub recording: bool,
+    pub samples: Vec<f32>,
+    /// Set when the stream is live and delivering.
+    pub alive: bool,
+}
+
+#[cfg(target_os = "linux")]
+pub struct Recorder {
+    pub state: Arc<Mutex<RecState>>,
+}
+
+#[cfg(target_os = "linux")]
+impl Recorder {
+    pub fn open() -> Option<Self> {
+        let state = Arc::new(Mutex::new(RecState::default()));
+        let thread_state = state.clone();
+        let (ready_tx, ready_rx) = mpsc::channel::<bool>();
+        std::thread::Builder::new()
+            .name("reel-record".into())
+            .spawn(move || {
+                if let Err(e) = pw_capture(thread_state, ready_tx.clone()) {
+                    log::warn!("voice recorder unavailable: {e}");
+                    let _ = ready_tx.send(false);
+                }
+            })
+            .ok()?;
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(true) => {
+                log::info!("voice recorder: PipeWire capture ready");
+                Some(Self { state })
+            }
+            _ => None,
+        }
+    }
+
+    /// Arm: start keeping samples (cleared first).
+    pub fn start(&self) {
+        let mut st = self.state.lock().unwrap();
+        st.samples.clear();
+        st.recording = true;
+    }
+
+    /// Disarm and take what was recorded.
+    pub fn stop(&self) -> Vec<f32> {
+        let mut st = self.state.lock().unwrap();
+        st.recording = false;
+        std::mem::take(&mut st.samples)
+    }
+
+    pub fn seconds(&self) -> f64 {
+        self.state.lock().unwrap().samples.len() as f64 / (RATE as usize * CHANNELS) as f64
+    }
+}
+
+/// Write interleaved stereo f32 as a 16-bit PCM WAV — the recording's file
+/// on disk. Hand-rolled 44-byte header; no dependency needed.
+pub fn write_wav(path: &std::path::Path, samples: &[f32]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
+    let data_len = (samples.len() * 2) as u32;
+    let byte_rate = RATE * CHANNELS as u32 * 2;
+    out.write_all(b"RIFF")?;
+    out.write_all(&(36 + data_len).to_le_bytes())?;
+    out.write_all(b"WAVEfmt ")?;
+    out.write_all(&16u32.to_le_bytes())?;
+    out.write_all(&1u16.to_le_bytes())?; // PCM
+    out.write_all(&(CHANNELS as u16).to_le_bytes())?;
+    out.write_all(&RATE.to_le_bytes())?;
+    out.write_all(&byte_rate.to_le_bytes())?;
+    out.write_all(&((CHANNELS * 2) as u16).to_le_bytes())?; // block align
+    out.write_all(&16u16.to_le_bytes())?; // bits
+    out.write_all(b"data")?;
+    out.write_all(&data_len.to_le_bytes())?;
+    for v in samples {
+        out.write_all(&((v.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn pw_capture(state: Arc<Mutex<RecState>>, ready: Sender<bool>) -> anyhow::Result<()> {
+    use anyhow::anyhow;
+    use pipewire as pw;
+    use pw::spa;
+    use spa::pod::serialize::PodSerializer;
+
+    pw::init();
+    let mainloop = pw::main_loop::MainLoopRc::new(None)?;
+    let context = pw::context::ContextRc::new(&mainloop, None)?;
+    let core = context.connect_rc(None)?;
+
+    let stream = pw::stream::StreamRc::new(
+        core,
+        "reel-voice-record",
+        pw::properties::properties! {
+            *pw::keys::MEDIA_TYPE => "Audio",
+            *pw::keys::MEDIA_CATEGORY => "Capture",
+            *pw::keys::MEDIA_ROLE => "Production",
+            *pw::keys::APP_NAME => "Reel",
+        },
+    )?;
+
+    let cb_state = state.clone();
+    let _listener = stream
+        .add_local_listener_with_user_data(())
+        .process(move |stream, _| {
+            let Some(mut buffer) = stream.dequeue_buffer() else { return };
+            let datas = buffer.datas_mut();
+            let Some(data) = datas.first_mut() else { return };
+            let n_bytes = data.chunk().size() as usize;
+            let Some(slice) = data.data() else { return };
+            let mut st = cb_state.lock().unwrap();
+            st.alive = true;
+            if !st.recording {
+                return;
+            }
+            let floats = &slice[..n_bytes.min(slice.len())];
+            for chunk in floats.chunks_exact(4) {
+                st.samples.push(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+            }
+        })
+        .register()?;
+
+    let mut audio_info = spa::param::audio::AudioInfoRaw::new();
+    audio_info.set_format(spa::param::audio::AudioFormat::F32LE);
+    audio_info.set_rate(RATE);
+    audio_info.set_channels(CHANNELS as u32);
+    let obj = spa::pod::Object {
+        type_: spa::utils::SpaTypes::ObjectParamFormat.as_raw(),
+        id: spa::param::ParamType::EnumFormat.as_raw(),
+        properties: audio_info.into(),
+    };
+    let values =
+        PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(obj))
+            .map_err(|e| anyhow!("pod serialize: {e:?}"))?
+            .0
+            .into_inner();
+    let mut params =
+        [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad audio format pod"))?];
+
+    stream.connect(
+        spa::utils::Direction::Input,
+        None,
+        pw::stream::StreamFlags::AUTOCONNECT
+            | pw::stream::StreamFlags::MAP_BUFFERS
+            | pw::stream::StreamFlags::RT_PROCESS,
+        &mut params,
+    )?;
+
+    let _ = ready.send(true);
+    mainloop.run();
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,9 +877,12 @@ mod tests {
                     fade_in: 0.0,
                     fade_out: 0.0,
                     speed: 1.0,
+                    fx: Default::default(),
+                    bus: 0,
                 },
             ],
             music: None,
+            buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };
 
@@ -493,8 +912,11 @@ mod tests {
                 fade_in: 1.0,
                 fade_out: 1.0,
                 speed: 1.0,
+                fx: Default::default(),
+                bus: 0,
             }],
             music: None,
+            buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };
         let early = rms(&pull(&mut st, 0.05, 0.1));
@@ -503,6 +925,159 @@ mod tests {
         assert!(early < mid * 0.3, "fade-in starts quiet ({early} vs {mid})");
         assert!(late < mid * 0.3, "fade-out ends quiet ({late} vs {mid})");
         assert!((mid - 0.8).abs() < 0.02);
+    }
+
+    fn sine(seconds: f64, freq: f64, amplitude: f32) -> Arc<Pcm> {
+        let n = (seconds * RATE as f64) as usize;
+        let mut data = Vec::with_capacity(n * 2);
+        for i in 0..n {
+            let v = amplitude * (2.0 * std::f64::consts::PI * freq * i as f64 / RATE as f64).sin() as f32;
+            data.push(v);
+            data.push(v);
+        }
+        Arc::new(Pcm { data })
+    }
+
+    fn clip_with_fx(pcm: Arc<Pcm>, fx: crate::edit::AudioFx) -> Plan {
+        Plan {
+            clips: vec![PlanClip {
+                pcm,
+                start: 0.0,
+                duration: 8.0,
+                in_point: 0.0,
+                gain: 1.0,
+                fade_in: 0.0,
+                fade_out: 0.0,
+                speed: 1.0,
+                fx,
+                bus: 0,
+            }],
+            music: None,
+            buses: 1,
+        }
+    }
+
+    fn channel_rms(buf: &[f32]) -> (f32, f32) {
+        let (mut l, mut r) = (0.0f64, 0.0f64);
+        for fr in buf.chunks_exact(2) {
+            l += (fr[0] * fr[0]) as f64;
+            r += (fr[1] * fr[1]) as f64;
+        }
+        let n = (buf.len() / 2) as f64;
+        ((l / n).sqrt() as f32, (r / n).sqrt() as f32)
+    }
+
+    /// Pan is a balance law: full right silences the left channel and
+    /// leaves the right untouched; centre changes nothing.
+    #[test]
+    fn pan_moves_the_sound_without_touching_the_centre() {
+        let fx = crate::edit::AudioFx { pan: 1.0, ..Default::default() };
+        let mut st = MixState::default();
+        st.install(clip_with_fx(tone(10.0, 0.5), fx));
+        let out = pull(&mut st, 1.0, 0.5);
+        let (l, r) = channel_rms(&out);
+        assert!(l < 1e-4, "full right: left silent, got {l}");
+        assert!((r - 0.5).abs() < 0.01, "right unchanged, got {r}");
+
+        let mut st = MixState::default();
+        st.install(clip_with_fx(tone(10.0, 0.5), Default::default()));
+        let (l, r) = channel_rms(&pull(&mut st, 1.0, 0.5));
+        assert!((l - 0.5).abs() < 0.01 && (r - 0.5).abs() < 0.01, "centre is untouched");
+    }
+
+    /// The EQ actually equalises: a low shelf cut takes a 100 Hz tone down
+    /// by roughly its dB and leaves a 5 kHz tone alone.
+    #[test]
+    fn the_low_shelf_cuts_lows_and_spares_highs() {
+        let fx = crate::edit::AudioFx { eq_low: -12.0, ..Default::default() };
+        // Deep below the 120 Hz corner the shelf shows its full depth.
+        let mut st = MixState::default();
+        st.install(clip_with_fx(sine(8.0, 40.0, 0.4), fx));
+        let _ = pull(&mut st, 0.0, 1.0); // let the filter settle
+        let (low, _) = channel_rms(&pull(&mut st, 1.0, 1.0));
+        let expect = 0.4 / std::f32::consts::SQRT_2; // sine rms
+        let cut_db = 20.0 * (low / expect).log10();
+        assert!(
+            (-14.0..=-9.5).contains(&cut_db),
+            "40 Hz through a -12 dB shelf at 120 Hz should drop ~12 dB, got {cut_db:.1}"
+        );
+
+        let mut st = MixState::default();
+        st.install(clip_with_fx(sine(8.0, 5000.0, 0.4), fx));
+        let _ = pull(&mut st, 0.0, 1.0);
+        let (high, _) = channel_rms(&pull(&mut st, 1.0, 1.0));
+        let high_db = 20.0 * (high / expect).log10();
+        assert!(high_db.abs() < 1.0, "5 kHz must pass the low shelf, moved {high_db:.1} dB");
+    }
+
+    /// The compressor squeezes above the threshold and idles below it.
+    #[test]
+    fn the_compressor_reduces_loud_and_ignores_quiet() {
+        let fx = crate::edit::AudioFx {
+            comp: true,
+            comp_thresh: -18.0,
+            comp_ratio: 4.0,
+            ..Default::default()
+        };
+        // Loud: -4 dBFS peak → 14 dB over → ~10.5 dB reduction expected.
+        let mut st = MixState::default();
+        st.install(clip_with_fx(sine(8.0, 500.0, 0.63), fx));
+        let _ = pull(&mut st, 0.0, 1.0);
+        let (loud, _) = channel_rms(&pull(&mut st, 1.0, 1.0));
+        let loud_db = 20.0 * (loud / (0.63 / std::f32::consts::SQRT_2)).log10();
+        assert!(
+            (-13.0..=-7.0).contains(&loud_db),
+            "loud tone should compress ~10 dB, moved {loud_db:.1}"
+        );
+        // Quiet: -30 dBFS → untouched.
+        let mut st = MixState::default();
+        st.install(clip_with_fx(sine(8.0, 500.0, 0.0316), fx));
+        let _ = pull(&mut st, 0.0, 1.0);
+        let (quiet, _) = channel_rms(&pull(&mut st, 1.0, 1.0));
+        let quiet_db = 20.0 * (quiet / (0.0316 / std::f32::consts::SQRT_2)).log10();
+        assert!(quiet_db.abs() < 1.0, "below threshold nothing happens, moved {quiet_db:.1}");
+    }
+
+    /// The LUFS meter reads a known sine at its known loudness: a 997 Hz
+    /// stereo tone at -12 dBFS is about -12.7 LUFS by BS.1770 arithmetic.
+    #[test]
+    fn the_lufs_meter_is_calibrated() {
+        let mut st = MixState::default();
+        st.install(clip_with_fx(sine(8.0, 997.0, 0.25), Default::default()));
+        let _ = pull(&mut st, 0.0, 2.0);
+        let lufs = st.levels.lufs;
+        assert!(
+            (lufs + 12.73).abs() < 1.5,
+            "997 Hz @ -12 dBFS should read ≈ -12.7 LUFS, got {lufs:.1}"
+        );
+        // And the meters saw the signal.
+        assert!(st.levels.buses[0] > 0.2, "bus meter moved");
+        assert!(st.levels.master[0] > 0.2, "master meter moved");
+    }
+
+    /// The WAV writer produces a file ffmpeg agrees about: right rate,
+    /// right channel count, right duration, right content level.
+    #[test]
+    fn the_wav_writer_writes_real_wavs() {
+        let path = std::env::temp_dir().join(format!("reel-recwav-{}.wav", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // 1 s of 0.5-amplitude stereo.
+        let samples: Vec<f32> = (0..RATE as usize * 2).map(|_| 0.5).collect();
+        write_wav(&path, &samples).expect("write wav");
+        let out = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "stream=sample_rate,channels",
+                   "-show_entries", "format=duration", "-of", "csv", &path.to_string_lossy()])
+            .output()
+            .expect("ffprobe");
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("48000,2"), "rate/channels wrong: {text}");
+        let dur: f64 = text
+            .lines()
+            .find_map(|l| l.strip_prefix("format,"))
+            .and_then(|v| v.trim().parse().ok())
+            .expect("duration");
+        assert!((dur - 1.0).abs() < 0.01, "1 s written, {dur} read");
+        let _ = std::fs::remove_file(&path);
     }
 
     /// The point of the ducker: music dives when the cut speaks, and comes
@@ -520,6 +1095,8 @@ mod tests {
                 fade_in: 0.0,
                 fade_out: 0.0,
                 speed: 1.0,
+                fx: Default::default(),
+                bus: 0,
             }],
             music: Some(PlanMusic {
                 pcm: tone(10.0, 0.4),
@@ -529,6 +1106,7 @@ mod tests {
                 fade: 0.0,
                 total: 8.0,
             }),
+            buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };
         let solo = rms(&pull(&mut st, 0.5, 0.5)); // music alone

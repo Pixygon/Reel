@@ -8,6 +8,7 @@
 
 mod app;
 mod audio;
+mod beats;
 mod captions;
 mod capture;
 mod cli;
