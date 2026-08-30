@@ -26,7 +26,9 @@ use std::collections::HashMap;
 use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+#[cfg(any(target_os = "linux", test))]
+use std::sync::Mutex;
 
 pub const RATE: u32 = 48_000;
 pub const CHANNELS: usize = 2;

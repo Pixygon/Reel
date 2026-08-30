@@ -96,6 +96,7 @@ pub struct ReelApp {
     /// Whether we've tried to open the mixer (it opens lazily on first
     /// entering the editor — an audio stream at app start would tax the
     /// cold-open budget for people who only came to watch something).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     mixer_attempted: bool,
     /// Decoded PCM per source for the mixer.
     pub samples: crate::audio::SampleCache,
@@ -103,6 +104,7 @@ pub struct ReelApp {
     /// and every analysis path keep the originals.
     pub proxies: crate::proxy::Cache,
     /// When the current mix plan was built — rebuilt after edits.
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
     mix_built_at: std::time::Instant,
     /// The user's mute intent — kept apart from `player.muted`, which the
     /// editor borrows while the mixer speaks for the timeline.

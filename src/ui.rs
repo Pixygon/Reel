@@ -1209,7 +1209,10 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new("Mixer").color(theme::CYAN));
         {
             // Live levels from the mixer, when it runs (Linux + PipeWire).
+            #[cfg(target_os = "linux")]
             let levels = app.mixer.as_ref().map(|m| m.levels());
+            #[cfg(not(target_os = "linux"))]
+            let levels: Option<crate::audio::Levels> = None;
             if std::env::var("REEL_DEBUG_METER").is_ok() {
                 if let Some(lv) = &levels {
                     eprintln!("METER buses={:?} master={:?} lufs={:.1}", lv.buses, lv.master, lv.lufs);

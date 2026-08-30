@@ -647,8 +647,14 @@ fn grade_cube(fx: &crate::effects::Effects, luts: &[String]) -> Option<String> {
             .and_then(|i| luts.get(i as usize))
             .and_then(|p| crate::lut::load(p).ok());
         let lattice = crate::lut::bake_grade(base.as_deref(), fx);
-        if let Err(e) = crate::lut::write_cube(&lattice, &path) {
+        // Atomic: a concurrent render (or test harness) must never read a
+        // half-written cube — write to a private temp, then rename.
+        let tmp = path.with_extension(format!("part-{}", std::process::id()));
+        if let Err(e) = crate::lut::write_cube(&lattice, &tmp) {
             log::warn!("could not write the grade lattice ({e}); the fallback skips this grade");
+            return None;
+        }
+        if std::fs::rename(&tmp, &path).is_err() && !path.exists() {
             return None;
         }
     }
@@ -1772,9 +1778,6 @@ mod tests {
         assert!(!a.join(" ").contains("-c:a"));
     }
 
-    /// The whole point: a two-piece cut with the middle removed must render
-    /// to a file whose duration is the SUM OF THE PIECES, not the source.
-    #[test]
     /// The graph fallback now carries the WHOLE lattice grade (levels, WB,
     /// HSL, curves) through a baked lut3d. Render a solid colour through it
     /// and check the pixel against grade_reference — the same contract the
@@ -1816,10 +1819,18 @@ mod tests {
         // Probe the middle frame's centre pixel.
         let png = dir.join(format!("reel-gradefall-{}.png", std::process::id()));
         let _ = std::fs::remove_file(&png);
-        assert!(std::process::Command::new("ffmpeg")
+        let probe = std::process::Command::new("ffmpeg")
             .args(["-y", "-v", "error", "-ss", "0.25", "-i", &out.to_string_lossy(),
                    "-frames:v", "1", &png.to_string_lossy()])
-            .status().map(|s| s.success()).unwrap_or(false));
+            .output().expect("spawn probe");
+        if !probe.status.success() {
+            let meta = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+            let render_err = String::from_utf8_lossy(&run.stderr);
+            panic!(
+                "probe failed: {}\nout size={meta}\nrender stderr: {render_err}\nargs: {args:?}",
+                String::from_utf8_lossy(&probe.stderr)
+            );
+        }
         let img = image::open(&png).unwrap().to_rgb8();
         let got = img.get_pixel(160, 120).0;
         // The lattice bakes grade_reference THEN the curves — expectation
@@ -1841,6 +1852,8 @@ mod tests {
         }
     }
 
+    /// The whole point: a two-piece cut with the middle removed must render
+    /// to a file whose duration is the SUM OF THE PIECES, not the source.
     #[test]
     fn renders_a_real_cut_from_the_fixture() {
         let out = std::env::temp_dir().join(format!("reel-cut-test-{}.mp4", std::process::id()));
