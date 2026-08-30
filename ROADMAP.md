@@ -156,23 +156,37 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 - [x] A keyboard-map overview — `?` or F1, four sections, everything
       from J-K-L to the trim modifiers.
 
-## G. Delivery refinements
+## G. Delivery refinements — shipped in v1.6.0
 
-- [ ] Per-output caption burn-in toggles and filename templating in
-      publish-everywhere.
-- [ ] YouTube chapter text export (the markers already become MP4 atoms).
-- [ ] `reel render --watch` (hot-render a project on change).
-- [ ] HDR-to-HDR passthrough export for the codecs that carry it.
+- [x] Publish-everywhere grew a filename template ({name}, {platform})
+      and per-platform caption burn-in checkboxes.
+- [x] Markers take names (`reel marker --label`, attached by TIME so
+      sorting never shuffles them); named markers name their MP4 chapters,
+      and `reel chapters` emits YouTube-ready text (0:00 first, MM:SS).
+- [x] `reel render --watch`: re-renders whenever the .reel changes —
+      autosave plus this = a preview file that keeps itself fresh.
+      Verified live (edit → automatic second render).
+- [x] `--hdr-passthrough` on `reel convert`: 10-bit H.265/AV1/VP9 with
+      the source's PQ/HLG tags restated (libx265 drops the generic
+      -color_* flags — x265-params carries them; and ffprobe's csv prints
+      fields in STRUCT order, not request order). ffprobe-verified.
+      Timeline renders refuse it honestly (8-bit SDR compositor).
 
 ## H. Platform
 
 - [ ] **macOS**: the build (VideoToolbox probing exists; ScreenCaptureKit;
-      notarized dmg via the self-hosted runner).
-- [ ] Windows capture backend (Windows.Graphics.Capture + WASAPI).
+      notarized dmg via the self-hosted runner). Needs Mac hardware/SDK.
+- [ ] Windows capture backend (Windows.Graphics.Capture). Needs a Windows
+      box to verify against.
 - [ ] Flatpak and AppImage; Windows file associations + installer.
-- [ ] Lift the mixer's Linux gate once the cross-build story for a
-      Windows audio backend is settled.
-- [ ] Wayland file-drop the moment winit lands it (upstream).
+- [x] Mixer's Linux gate LIFTED for Windows (v1.6.0): WASAPI through
+      cpal (the Linux objection — ALSA-only cpal on PipeWire desktops —
+      doesn't apply there). Same MixState/render_into core, so meters,
+      LUFS, EQ, pan all come along. Cross-compiles clean; untested on
+      real Windows hardware yet.
+- [ ] Wayland file-drop: UNBLOCKED upstream (winit PR #4571, a new DnD
+      API, merged for 0.31) — lands here when egui/egui-winit adopt
+      winit 0.31.
 
 ## I. 1.x hygiene
 

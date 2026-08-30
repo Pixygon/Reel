@@ -1,5 +1,2 @@
 # Enables the "Sponsor" button on the repository.
-# NOTE: GitHub Sponsors must also be enabled for the Pixygon organisation at
-# https://github.com/organizations/Pixygon/settings/sponsors — until then this
-# button will not appear.
 github: [Pixygon]

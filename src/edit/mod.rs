@@ -818,6 +818,11 @@ pub struct Project {
     /// marker you dropped yesterday should still be there today.
     #[serde(default)]
     pub markers: Vec<f64>,
+    /// Names for markers, attached by TIME (not index — markers get
+    /// sorted and appended to; an index pairing would silently shuffle).
+    /// A marker without an entry here is just a flag.
+    #[serde(default)]
+    pub marker_labels: Vec<(f64, String)>,
     /// The .cube files this project grades with; clips reference them by
     /// index (`Effects.lut`).
     #[serde(default)]
@@ -877,6 +882,7 @@ impl Default for Project {
             titles: Vec::new(),
             music: None,
             markers: Vec::new(),
+            marker_labels: Vec::new(),
             luts: Vec::new(),
             pool: Vec::new(),
             multicam: Vec::new(),
@@ -1307,6 +1313,23 @@ impl Project {
             .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_else(|| a.source.clone());
         true
+    }
+
+    /// The name attached to the marker at `t`, if any.
+    pub fn marker_label(&self, t: f64) -> Option<&str> {
+        self.marker_labels
+            .iter()
+            .find(|(lt, _)| (lt - t).abs() < 0.01)
+            .map(|(_, l)| l.as_str())
+    }
+
+    /// Name (or rename) the marker at `t`.
+    pub fn set_marker_label(&mut self, t: f64, label: &str) {
+        if let Some(e) = self.marker_labels.iter_mut().find(|(lt, _)| (lt - t).abs() < 0.01) {
+            e.1 = label.to_string();
+        } else {
+            self.marker_labels.push((t, label.to_string()));
+        }
     }
 
     /// Register a LUT file (deduplicated) and return its index.
@@ -1948,6 +1971,10 @@ pub struct EditorState {
     pub selected_title: Option<usize>,
     /// The copied clip, and which kind of track it came from.
     pub clipboard: Option<(Clip, TrackKind)>,
+    /// Track TARGETING: paste lands on this track (clicked in the lane
+    /// header) when its kind matches the copied clip's; None = the source
+    /// track's kind, the old behaviour.
+    pub target_track: Option<u64>,
     /// The parameter the keyframe controls in the side panel operate on.
     pub key_param: Param,
     /// The keyframe being dragged in the curve editor (index into the
@@ -1996,6 +2023,7 @@ impl Default for EditorState {
             fx_gesture: None,
             selected_title: None,
             clipboard: None,
+            target_track: None,
             key_param: Param::Exposure,
             curve_drag: None,
             multi: std::collections::HashSet::new(),

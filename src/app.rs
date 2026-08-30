@@ -90,7 +90,7 @@ pub struct ReelApp {
     /// The live timeline audio mix (editor mode): every sounding clip, the
     /// music bed, gains, fades and ducking — not just the main clip's own
     /// track. The video clock stays master; this chases it.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub mixer: Option<crate::audio::Mixer>,
     /// The voice recorder (Linux, PipeWire) — opened on first punch-in.
     #[cfg(target_os = "linux")]
@@ -106,6 +106,10 @@ pub struct ReelApp {
     pub src_mark_out: Option<f64>,
     /// The `?` keyboard-map overlay.
     pub show_keymap: bool,
+    /// Publish-everywhere filename template — {name}, {platform} expand.
+    pub publish_template: String,
+    /// Preset slugs whose publish render should NOT burn captions.
+    pub publish_no_captions: std::collections::HashSet<String>,
     /// Whether we've tried to open the mixer (it opens lazily on first
     /// entering the editor — an audio stream at app start would tax the
     /// cold-open budget for people who only came to watch something).
@@ -200,7 +204,7 @@ impl ReelApp {
             thumbs: crate::thumbs::Cache::default(),
             overlay_previews: std::collections::HashMap::new(),
             transition_preview: None,
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             mixer: None,
             mixer_attempted: false,
             samples: crate::audio::SampleCache::default(),
@@ -216,6 +220,8 @@ impl ReelApp {
             src_mark_in: None,
             src_mark_out: None,
             show_keymap: false,
+            publish_template: "{name}-{platform}".into(),
+            publish_no_captions: std::collections::HashSet::new(),
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
@@ -909,7 +915,7 @@ impl ReelApp {
     /// Keep the live audio mix in step with the editor: the plan tracks the
     /// project, playback tracks the main player, position chases the
     /// playhead, and the main player is muted while the mixer speaks.
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     fn sync_mixer(&mut self) {
         if self.mode == Mode::Editor && !self.mixer_attempted {
             self.mixer_attempted = true;
@@ -1049,7 +1055,7 @@ impl ReelApp {
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
         self.sync_overlay_previews(gpu, egui);
         self.sync_lut_previews(gpu);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "windows"))]
         self.sync_mixer();
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {
@@ -1140,6 +1146,7 @@ impl ReelApp {
                 music: self.project.music.clone(),
                 overlays: self.project.overlay_segments(),
                 markers: self.project.markers.clone(),
+                marker_labels: self.project.marker_labels.clone(),
                 luts: self.project.luts.clone(),
                 audio_clips: self.project.audio_clips(),
             }
@@ -1270,6 +1277,22 @@ impl ReelApp {
         };
         self.editor.push_undo(&self.project);
         let at = self.editor.playhead;
+        // Track targeting: a clicked lane of the SAME kind receives the
+        // paste (V1↔V2 count as the same family — both carry picture).
+        let kind = self
+            .editor
+            .target_track
+            .and_then(|tid| self.project.tracks.iter().find(|t| t.id == tid))
+            .filter(|t| {
+                use crate::edit::TrackKind::*;
+                matches!(
+                    (&t.kind, &kind),
+                    (Video, Video) | (Overlay, Overlay) | (Audio, Audio)
+                        | (Video, Overlay) | (Overlay, Video)
+                )
+            })
+            .map(|t| t.kind.clone())
+            .unwrap_or(kind);
         let id = self.project.paste_clip(&clip, at, kind);
         self.editor.selected = Some(id);
         self.editor.mark_changed();
@@ -1346,6 +1369,7 @@ impl ReelApp {
             music: None,
             overlays: &overlays_owned,
             markers: &[],
+            marker_labels: &[],
             luts: &self.project.luts,
             audio_clips: &[],
         };
@@ -1376,30 +1400,45 @@ impl ReelApp {
             .as_deref()
             .and_then(|p| std::path::Path::new(p).parent().map(|d| d.to_path_buf()))
             .unwrap_or_else(|| std::path::PathBuf::from("."));
+        // {name}: the project's stem; {platform}: the preset's slug.
+        let name = self
+            .editor
+            .project_path
+            .as_deref()
+            .and_then(|p| std::path::Path::new(p).file_stem().map(|s| s.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "publish".into());
         let mut queued = 0;
         for preset in export::Preset::ALL {
             let mut settings = self.export_settings.clone();
             preset.apply(&mut settings);
-            let slug: String = preset
-                .name
-                .to_lowercase()
-                .chars()
-                .map(|c| if c.is_alphanumeric() { c } else { '-' })
-                .collect();
-            let out = dir.join(format!("publish-{slug}.mp4"));
+            let slug = preset.slug();
+            let file = self
+                .publish_template
+                .replace("{name}", &name)
+                .replace("{platform}", &slug);
+            let file = if file.trim().is_empty() { format!("{name}-{slug}") } else { file };
+            let out = dir.join(format!("{file}.mp4"));
             if out.exists() {
                 continue;
             }
+            // Per-platform caption choice: a toggled-off platform renders
+            // clean, everything else burns the captions as usual.
+            let captions = if self.publish_no_captions.contains(&slug) {
+                Vec::new()
+            } else {
+                self.project.captions.clone()
+            };
             self.queue.push(export::Queued {
                 job: export::Job::Timeline {
                     segments: segments.clone(),
                     project: (self.project.width, self.project.height, self.project.fps),
-                    captions: self.project.captions.clone(),
+                    captions,
                     caption_size: self.project.caption_size,
                     titles: self.project.titles.clone(),
                     music: self.project.music.clone(),
                     overlays: self.project.overlay_segments(),
                     markers: self.project.markers.clone(),
+                    marker_labels: self.project.marker_labels.clone(),
                     luts: self.project.luts.clone(),
                     audio_clips: self.project.audio_clips(),
                 },
@@ -1447,6 +1486,7 @@ impl ReelApp {
             target: None,
             fit: export::Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let overlays = export::Overlays {
             captions: &[],
@@ -1455,6 +1495,7 @@ impl ReelApp {
             music: None,
             overlays: &[],
             markers: &[],
+            marker_labels: &[],
             luts: &self.project.luts,
             audio_clips: &[],
         };

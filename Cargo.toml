@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "1.5.0"
+version = "1.6.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -48,6 +48,12 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+# The Windows mixer speaks WASAPI through cpal. Linux deliberately does NOT
+# use cpal (its ALSA backend is dead on PipeWire-only desktops) — see
+# audio.rs for the native PipeWire stream.
+cpal = "0.16"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 ashpd = { version = "0.11", default-features = false, features = ["tokio"] }

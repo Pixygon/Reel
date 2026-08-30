@@ -305,13 +305,15 @@ ACTION is set or clear — a music bed under the whole edit
 
 ### `reel marker PROJECT`
 
-Flag a position in the timeline
+Flag a position in the timeline (named markers become chapters)
 
 | Flag | Value | Meaning |
 | --- | --- | --- |
 | `--at` | `SECONDS` | Where to put it |
+| `--label` | `TEXT` | Name it — named markers become named chapters |
 | `--remove` | — | Take it away instead |
 | `--list` | — | Show the markers |
+| `--json` | — | Print the result as JSON |
 
 ### `reel track PROJECT`
 
@@ -320,6 +322,15 @@ Follow the subject under the clip's power window and keyframe the window onto it
 | Flag | Value | Meaning |
 | --- | --- | --- |
 | `--clip` | `ID` | Clip id (needs a power window — see effects --mask) |
+| `--json` | — | Print the result as JSON |
+
+### `reel chapters PROJECT`
+
+The markers as YouTube-ready chapter text (00:00 first, MM:SS titles)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--out` | `FILE.txt` | Also write the list to a file |
 | `--json` | — | Print the result as JSON |
 
 ### `reel stabilize PROJECT`
@@ -448,6 +459,7 @@ Render the edit — captions, titles and music included
 | Flag | Value | Meaning |
 | --- | --- | --- |
 | `--preset` | `NAME` | A social preset: see `reel presets` |
+| `--hdr-passthrough` | — | Keep the source's HDR (PQ/HLG) and encode 10-bit — h265/av1/vp9, source exports only |
 | `--codec` | `NAME` | h264, h265, av1, vp9, remux, mp3, m4a, opus, flac, wav, png, jpeg, webp |
 | `--quality` | `NAME` | high, balanced, small, or a CRF number |
 | `--resolution` | `HEIGHT` | source, 2160, 1080, 720, 480 |
@@ -456,7 +468,9 @@ Render the edit — captions, titles and music included
 | `--loudness` | `LUFS` | Deliver audio at this integrated loudness (e.g. -14); presets set it automatically |
 | `--no-hardware` | — | Force the software encoder |
 | `--overwrite` | — | Replace the output file if it exists |
+| `--watch` | — | Keep going: re-render whenever the project file changes (Ctrl+C stops) |
 | `--quiet` | — | Don't print progress |
+| `--json` | — | Print the result as JSON |
 
 ### `reel convert MEDIA OUTPUT`
 

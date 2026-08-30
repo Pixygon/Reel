@@ -203,11 +203,18 @@ pub fn start_timeline(
         let mut meta = String::from(";FFMETADATA1\n");
         for (i, w) in cuts.iter().enumerate() {
             let end = cuts.get(i + 1).copied().unwrap_or(total);
+            // A named marker names its chapter; unnamed ones count up.
+            let title = overlays
+                .marker_labels
+                .iter()
+                .find(|(lt, _)| (lt - *w).abs() < 0.01)
+                .map(|(_, l)| l.clone())
+                .unwrap_or_else(|| format!("Chapter {}", i + 1));
             meta.push_str(&format!(
-                "[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle=Chapter {}\n",
+                "[CHAPTER]\nTIMEBASE=1/1000\nSTART={}\nEND={}\ntitle={}\n",
                 (*w * 1000.0) as u64,
                 (end * 1000.0) as u64,
-                i + 1
+                title.replace(['\n', '\r'], " ")
             ));
         }
         let path = format!("{output}.chapters.txt");

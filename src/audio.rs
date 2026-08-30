@@ -27,7 +27,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-#[cfg(any(target_os = "linux", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", test))]
 use std::sync::Mutex;
 
 pub const RATE: u32 = 48_000;
@@ -674,6 +674,100 @@ fn pw_playback(
     Ok(())
 }
 
+// ── The Windows shell ────────────────────────────────────────────────────
+//
+// WASAPI through cpal — the reason cpal was rejected on Linux (an ALSA-only
+// backend on PipeWire desktops) doesn't apply here. Same architecture: the
+// stream lives on its own thread; the app talks to shared MixState.
+
+#[cfg(target_os = "windows")]
+pub struct Mixer {
+    pub state: Arc<Mutex<MixState>>,
+}
+
+#[cfg(target_os = "windows")]
+impl Mixer {
+    pub fn open() -> Option<Self> {
+        use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+        let state = Arc::new(Mutex::new(MixState::default()));
+        let thread_state = state.clone();
+        let (ready_tx, ready_rx) = mpsc::channel::<bool>();
+        std::thread::Builder::new()
+            .name("reel-audio".into())
+            .spawn(move || {
+                let run = || -> anyhow::Result<cpal::Stream> {
+                    let host = cpal::default_host();
+                    let device = host
+                        .default_output_device()
+                        .ok_or_else(|| anyhow::anyhow!("no output device"))?;
+                    let config = cpal::StreamConfig {
+                        channels: CHANNELS as u16,
+                        sample_rate: cpal::SampleRate(RATE),
+                        buffer_size: cpal::BufferSize::Default,
+                    };
+                    let cb_state = thread_state.clone();
+                    let stream = device.build_output_stream(
+                        &config,
+                        move |out: &mut [f32], _| {
+                            let mut st = cb_state.lock().unwrap();
+                            render_into(&mut st, out);
+                        },
+                        |e| log::warn!("audio mixer stream error: {e}"),
+                        None,
+                    )?;
+                    stream.play()?;
+                    Ok(stream)
+                };
+                match run() {
+                    Ok(_stream) => {
+                        let _ = ready_tx.send(true);
+                        // The stream dies when dropped — park this thread
+                        // for the app's lifetime to keep it alive.
+                        loop {
+                            std::thread::park();
+                        }
+                    }
+                    Err(e) => {
+                        log::warn!("audio mixer unavailable: {e}");
+                        let _ = ready_tx.send(false);
+                    }
+                }
+            })
+            .ok()?;
+        match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(true) => {
+                log::info!("audio mixer: live timeline mix via WASAPI");
+                Some(Self { state })
+            }
+            _ => None,
+        }
+    }
+
+    pub fn set_plan(&self, plan: Plan) {
+        self.state.lock().unwrap().install(plan);
+    }
+
+    pub fn levels(&self) -> Levels {
+        self.state.lock().unwrap().levels.clone()
+    }
+
+    pub fn set_playing(&self, playing: bool) {
+        self.state.lock().unwrap().playing = playing;
+    }
+
+    pub fn set_master(&self, master: f32) {
+        self.state.lock().unwrap().master = master.clamp(0.0, 2.0);
+    }
+
+    pub fn position(&self) -> f64 {
+        self.state.lock().unwrap().pos
+    }
+
+    pub fn seek(&self, t: f64) {
+        self.state.lock().unwrap().pos = t.max(0.0);
+    }
+}
+
 // ── Voice recording ──────────────────────────────────────────────────────
 //
 // A PipeWire capture stream on its own thread, same architecture as the
@@ -682,6 +776,7 @@ fn pw_playback(
 // whether arriving samples are kept.
 
 /// Shared capture state.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 #[derive(Default)]
 pub struct RecState {
     pub recording: bool,
@@ -740,6 +835,7 @@ impl Recorder {
 
 /// Write interleaved stereo f32 as a 16-bit PCM WAV — the recording's file
 /// on disk. Hand-rolled 44-byte header; no dependency needed.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 pub fn write_wav(path: &std::path::Path, samples: &[f32]) -> std::io::Result<()> {
     use std::io::Write;
     let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);

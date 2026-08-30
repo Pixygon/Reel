@@ -1386,9 +1386,9 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new("Mixer").color(theme::CYAN));
         {
             // Live levels from the mixer, when it runs (Linux + PipeWire).
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "windows"))]
             let levels = app.mixer.as_ref().map(|m| m.levels());
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             let levels: Option<crate::audio::Levels> = None;
             if std::env::var("REEL_DEBUG_METER").is_ok() {
                 if let Some(lv) = &levels {
@@ -3104,6 +3104,30 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 // platform — the queue runs them in order while you keep
                 // editing.
                 if app.export_timeline {
+                    // Delivery knobs for the batch: filename template and
+                    // which platforms burn captions.
+                    ui.horizontal(|ui| {
+                        ui.label(RichText::new("Names").small().color(egui::Color32::from_gray(160)));
+                        ui.add(
+                            egui::TextEdit::singleline(&mut app.publish_template)
+                                .desired_width(ui.available_width())
+                        ).on_hover_text("{name} = project, {platform} = preset slug");
+                    });
+                    if !app.project.captions.is_empty() {
+                        ui.collapsing("Captions per platform", |ui| {
+                            for preset in export::Preset::ALL {
+                                let slug = preset.slug();
+                                let mut on = !app.publish_no_captions.contains(&slug);
+                                if ui.checkbox(&mut on, preset.name).changed() {
+                                    if on {
+                                        app.publish_no_captions.remove(&slug);
+                                    } else {
+                                        app.publish_no_captions.insert(slug);
+                                    }
+                                }
+                            }
+                        });
+                    }
                     let every = egui::Button::new(
                         RichText::new("Queue ALL platforms").color(theme::VOID),
                     )
@@ -3328,6 +3352,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         music: app.project.music.as_ref(),
                         overlays: &app.project.overlay_segments(),
                         markers: &app.project.markers,
+                        marker_labels: &app.project.marker_labels,
                         luts: &app.project.luts,
                         audio_clips: &app.project.audio_clips(),
                     },
@@ -3563,22 +3588,36 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
 
     // Lanes + clips (drawn from a snapshot; edits go through clip_mut).
     let mut snap_line: Option<f64> = None;
-    let track_data: Vec<(TrackKind, String, Vec<crate::edit::Clip>)> = app
+    let track_data: Vec<(u64, TrackKind, String, Vec<crate::edit::Clip>)> = app
         .project
         .tracks
         .iter()
-        .map(|tr| (tr.kind.clone(), tr.name.clone(), tr.clips.clone()))
+        .map(|tr| (tr.id, tr.kind.clone(), tr.name.clone(), tr.clips.clone()))
         .collect();
-    for (i, (kind, tname, clips)) in track_data.iter().enumerate() {
+    for (i, (tid, kind, tname, clips)) in track_data.iter().enumerate() {
         let top = full.top() + ruler_h + 4.0 + i as f32 * (lane_h + 4.0);
         let lane = Rect::from_min_size(egui::pos2(full.left(), top), Vec2::new(full.width(), lane_h));
         painter.rect_filled(lane, 4.0, theme::VOID_2);
+        // The lane's name doubles as the TARGET toggle: click it and
+        // Ctrl+V lands here (kind permitting).
+        let name_rect = Rect::from_min_size(
+            egui::pos2(lane.left() + 2.0, lane.top() + 2.0),
+            Vec2::new(30.0, 16.0),
+        );
+        let name_resp = ui.interact(name_rect, ui.id().with(("lane_target", *tid)), Sense::click());
+        let targeted = app.editor.target_track == Some(*tid);
+        if name_resp.clicked() {
+            app.editor.target_track = if targeted { None } else { Some(*tid) };
+        }
+        if targeted {
+            painter.rect_filled(name_rect, 3.0, Color32::from_rgba_unmultiplied(60, 180, 200, 40));
+        }
         painter.text(
             egui::pos2(lane.left() + 5.0, lane.center().y),
             egui::Align2::LEFT_CENTER,
             tname,
             egui::FontId::monospace(10.0),
-            Color32::from_gray(110),
+            if targeted { theme::CYAN } else { Color32::from_gray(110) },
         );
 
         let base = match kind {

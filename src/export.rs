@@ -313,6 +313,10 @@ pub struct ExportSettings {
     /// Deliver the audio at this integrated loudness (LUFS) — the platform
     /// targets (-14 for YouTube and the socials). None = leave levels alone.
     pub loudness: Option<f32>,
+    /// HDR-to-HDR passthrough: keep the source's transfer (PQ/HLG) and
+    /// encode 10-bit instead of squeezing into 8. Source-file exports only
+    /// — the timeline pipeline composites in 8-bit SDR.
+    pub hdr_passthrough: bool,
 }
 
 impl Default for ExportSettings {
@@ -329,6 +333,7 @@ impl Default for ExportSettings {
             // Presets pick Blur where a shape change is expected.
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         }
     }
 }
@@ -462,6 +467,29 @@ pub fn build_args(input: &str, output: &str, s: &ExportSettings) -> Vec<String> 
         a.extend(["-c".into(), "copy".into()]);
     } else {
         a.extend(video_encoder_args(s.codec, s.quality, s.hardware));
+        // HDR-to-HDR: 10 bits so PQ/HLG survive the encode without banding,
+        // and the source's colour tags restated explicitly — libx265 does
+        // NOT carry them through on its own (verified: they probe back as
+        // "unknown" without this).
+        if s.hdr_passthrough && matches!(s.codec, Codec::H265 | Codec::Av1 | Codec::Vp9) {
+            a.extend(["-pix_fmt".into(), "yuv420p10le".into()]);
+            if let Some((prim, trc, space)) = probe_color(input) {
+                if s.codec == Codec::H265 && !s.hardware {
+                    // libx265 ignores the generic -color_* flags (they
+                    // probe back "unknown") — its own params carry them.
+                    a.extend([
+                        "-x265-params".into(),
+                        format!("colorprim={prim}:transfer={trc}:colormatrix={space}"),
+                    ]);
+                } else {
+                    a.extend([
+                        "-color_primaries".into(), prim,
+                        "-color_trc".into(), trc,
+                        "-colorspace".into(), space,
+                    ]);
+                }
+            }
+        }
     }
     if s.codec != Codec::Remux {
         match s.audio {
@@ -590,6 +618,26 @@ pub(crate) fn video_encoder_args(codec: Codec, q: Quality, hw: bool) -> Vec<Stri
     }
     a.extend(["-crf".into(), codec.crf(q).to_string()]);
     a
+}
+
+/// The source's colour tags (primaries, transfer, matrix), when tagged —
+/// what HDR passthrough must restate on the encoder.
+fn probe_color(path: &str) -> Option<(String, String, String)> {
+    // `default` output, not csv: csv prints in the stream struct's own
+    // field order, not the requested order — a classic silent swap.
+    let out = std::process::Command::new("ffprobe")
+        .args(["-v", "error", "-select_streams", "v:0", "-show_entries",
+               "stream=color_primaries,color_transfer,color_space", "-of", "default=nw=1", path])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    let field = |k: &str| -> Option<String> {
+        text.lines()
+            .find_map(|l| l.strip_prefix(&format!("{k}=")))
+            .map(str::to_string)
+            .filter(|v| !v.is_empty() && v != "unknown")
+    };
+    Some((field("color_primaries")?, field("color_transfer")?, field("color_space")?))
 }
 
 /// Does the file have an audio stream? (Timeline export needs to know before
@@ -877,6 +925,8 @@ pub struct Overlays<'a> {
     /// Timeline markers — written into the output as CHAPTERS, so a long
     /// export lands on YouTube with its sections already named.
     pub markers: &'a [f64],
+    /// Names for markers, attached by time; unnamed ones become Chapter N.
+    pub marker_labels: &'a [(f64, String)],
     /// The project's LUT table — `Effects.lut` indexes into it.
     pub luts: &'a [String],
     /// Audio-track and overlay clips mixed into the export — the live mixer
@@ -1487,6 +1537,7 @@ pub enum Job {
         music: Option<crate::edit::Music>,
         overlays: Vec<crate::edit::OverlaySegment>,
         markers: Vec<f64>,
+        marker_labels: Vec<(f64, String)>,
         luts: Vec<String>,
         audio_clips: Vec<crate::edit::AudioClip>,
     },
@@ -1579,7 +1630,7 @@ impl Queue {
                     }
                     Job::Timeline {
                         segments, project, captions, caption_size, titles, music, overlays,
-                        markers, luts, audio_clips,
+                        markers, marker_labels, luts, audio_clips,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1592,6 +1643,7 @@ impl Queue {
                             music: music.as_ref(),
                             overlays,
                             markers,
+                            marker_labels,
                             luts,
                             audio_clips,
                         },
@@ -1660,6 +1712,7 @@ mod tests {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let a = build_args("in.mkv", "out.mp4", &s);
         let joined = a.join(" ");
@@ -1681,6 +1734,7 @@ mod tests {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let a = build_args("in.mp4", "out.mkv", &s);
         let joined = a.join(" ");
@@ -1700,6 +1754,7 @@ mod tests {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let a = build_args("in.mp4", "out.mp3", &s);
         let joined = a.join(" ");
@@ -1720,6 +1775,7 @@ mod tests {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let a = build_args("in.png", "out.jpg", &s);
         let joined = a.join(" ");
@@ -1848,6 +1904,58 @@ mod tests {
             assert!(delta <= 8, "channel {c}: fallback {} vs reference {e} (Δ{delta})", got[c]);
         }
         for f in [&src, &out, &png] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// HDR in, HDR out: a PQ/BT.2020 source converted with passthrough
+    /// keeps its transfer and gains 10 bits; the default 8-bit path is what
+    /// it always was. Codecs that can't carry it aren't given it.
+    #[test]
+    fn hdr_passthrough_keeps_the_transfer_and_ten_bits() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-hdrpass-src-{}.mp4", std::process::id()));
+        let out = dir.join(format!("reel-hdrpass-out-{}.mp4", std::process::id()));
+        for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        // A PQ/BT.2020-tagged 10-bit source.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i",
+                   "testsrc2=size=320x240:rate=30:duration=1",
+                   "-c:v", "libx265", "-preset", "ultrafast", "-pix_fmt", "yuv420p10le",
+                   "-x265-params", "colorprim=bt2020:transfer=smpte2084:colormatrix=bt2020nc",
+                   "-tag:v", "hvc1",
+                   &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let s = ExportSettings {
+            codec: Codec::H265,
+            quality: Quality::Small,
+            hardware: false,
+            audio: AudioMode::Copy,
+            hdr_passthrough: true,
+            ..Default::default()
+        };
+        let args = build_args(&src.to_string_lossy(), &out.to_string_lossy(), &s);
+        assert!(args.iter().any(|a| a == "yuv420p10le"), "10-bit asked for: {args:?}");
+        let enc = std::process::Command::new("ffmpeg").arg("-y").args(&args)
+            .output().expect("spawn encode");
+        assert!(enc.status.success(), "passthrough encode failed:\n{}",
+            String::from_utf8_lossy(&enc.stderr));
+        let probe = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-select_streams", "v", "-show_entries",
+                   "stream=pix_fmt,color_transfer,color_primaries", "-of", "csv=p=0",
+                   &out.to_string_lossy()])
+            .output().expect("ffprobe");
+        let text = String::from_utf8_lossy(&probe.stdout);
+        assert!(text.contains("yuv420p10le"), "still 10-bit: {text}");
+        assert!(text.contains("smpte2084"), "PQ survived: {text}");
+        assert!(text.contains("bt2020"), "primaries survived: {text}");
+        // H.264 (can't carry it in our chain) is never given the 10-bit flag.
+        let s264 = ExportSettings { codec: Codec::H264, hdr_passthrough: true, hardware: false, ..Default::default() };
+        let a264 = build_args(&src.to_string_lossy(), "x.mp4", &s264);
+        assert!(!a264.iter().any(|a| a == "yuv420p10le"), "{a264:?}");
+        for f in [&src, &out] {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -2653,6 +2761,7 @@ mod tests {
             quality: Quality::Small,
             hardware: false,
             loudness: Some(-16.0),
+            hdr_passthrough: false,
             ..Default::default()
         };
         let job = start_timeline_with_captions(
@@ -3383,7 +3492,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], luts: &[], audio_clips: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], marker_labels: &[], luts: &[], audio_clips: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);
@@ -3508,6 +3617,7 @@ mod tests {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let job = start(&fixture(), &out, &s, 2.0).expect("start export");
         let deadline = Instant::now() + Duration::from_secs(60);

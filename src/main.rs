@@ -7,7 +7,7 @@
 //! ROADMAP.md; this is the running foundation it builds on.
 
 mod app;
-#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
 mod audio;
 mod beats;
 mod captions;

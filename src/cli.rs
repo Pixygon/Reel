@@ -52,6 +52,7 @@ const F_JSON: Flag = Flag { name: "json", value: None, help: "Print the result a
 /// Render options, shared by `render` and `convert`.
 const RENDER_FLAGS: &[Flag] = &[
     Flag { name: "preset", value: Some("NAME"), help: "A social preset: see `reel presets`" },
+    Flag { name: "hdr-passthrough", value: None, help: "Keep the source's HDR (PQ/HLG) and encode 10-bit — h265/av1/vp9, source exports only" },
     Flag { name: "codec", value: Some("NAME"), help: "h264, h265, av1, vp9, remux, mp3, m4a, opus, flac, wav, png, jpeg, webp" },
     Flag { name: "quality", value: Some("NAME"), help: "high, balanced, small, or a CRF number" },
     Flag { name: "resolution", value: Some("HEIGHT"), help: "source, 2160, 1080, 720, 480" },
@@ -60,6 +61,23 @@ const RENDER_FLAGS: &[Flag] = &[
     Flag { name: "loudness", value: Some("LUFS"), help: "Deliver audio at this integrated loudness (e.g. -14); presets set it automatically" },
     Flag { name: "no-hardware", value: None, help: "Force the software encoder" },
     Flag { name: "overwrite", value: None, help: "Replace the output file if it exists" },
+    Flag { name: "quiet", value: None, help: "Don't print progress" },
+    F_JSON,
+];
+
+/// Render's own flags: everything convert has, plus watch mode.
+const RENDER_WATCH_FLAGS: &[Flag] = &[
+    Flag { name: "preset", value: Some("NAME"), help: "A social preset: see `reel presets`" },
+    Flag { name: "hdr-passthrough", value: None, help: "Keep the source's HDR (PQ/HLG) and encode 10-bit — h265/av1/vp9, source exports only" },
+    Flag { name: "codec", value: Some("NAME"), help: "h264, h265, av1, vp9, remux, mp3, m4a, opus, flac, wav, png, jpeg, webp" },
+    Flag { name: "quality", value: Some("NAME"), help: "high, balanced, small, or a CRF number" },
+    Flag { name: "resolution", value: Some("HEIGHT"), help: "source, 2160, 1080, 720, 480" },
+    Flag { name: "fit", value: Some("MODE"), help: "letterbox, crop or blur (how a mismatched aspect is filled)" },
+    Flag { name: "audio", value: Some("MODE"), help: "copy (pass the source audio through) or encode" },
+    Flag { name: "loudness", value: Some("LUFS"), help: "Deliver audio at this integrated loudness (e.g. -14); presets set it automatically" },
+    Flag { name: "no-hardware", value: None, help: "Force the software encoder" },
+    Flag { name: "overwrite", value: None, help: "Replace the output file if it exists" },
+    Flag { name: "watch", value: None, help: "Keep going: re-render whenever the project file changes (Ctrl+C stops)" },
     Flag { name: "quiet", value: None, help: "Don't print progress" },
     F_JSON,
 ];
@@ -348,11 +366,12 @@ pub static COMMANDS: &[Cmd] = &[
         args: &["PROJECT"],
         flags: &[
             Flag { name: "at", value: Some("SECONDS"), help: "Where to put it" },
+            Flag { name: "label", value: Some("TEXT"), help: "Name it — named markers become named chapters" },
             Flag { name: "remove", value: None, help: "Take it away instead" },
             Flag { name: "list", value: None, help: "Show the markers" },
             F_JSON,
         ],
-        help: "Flag a position in the timeline",
+        help: "Flag a position in the timeline (named markers become chapters)",
     },
     Cmd {
         name: "track",
@@ -362,6 +381,15 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Follow the subject under the clip's power window and keyframe the window onto its path",
+    },
+    Cmd {
+        name: "chapters",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "out", value: Some("FILE.txt"), help: "Also write the list to a file" },
+            F_JSON,
+        ],
+        help: "The markers as YouTube-ready chapter text (00:00 first, MM:SS titles)",
     },
     Cmd {
         name: "stabilize",
@@ -491,7 +519,7 @@ pub static COMMANDS: &[Cmd] = &[
     Cmd {
         name: "render",
         args: &["PROJECT", "OUTPUT"],
-        flags: RENDER_FLAGS,
+        flags: RENDER_WATCH_FLAGS,
         help: "Render the edit — captions, titles and music included",
     },
     Cmd {
@@ -697,6 +725,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "title" => cmd_title(p),
         "music" => cmd_music(p),
         "marker" => cmd_marker(p),
+        "chapters" => cmd_chapters(p),
         "track" => cmd_track(p),
         "stabilize" => cmd_stabilize(p),
         "align" => cmd_align(p),
@@ -1692,26 +1721,89 @@ fn cmd_marker(p: &Parsed) -> Result<Output> {
         let text = proj
             .markers
             .iter()
-            .map(|m| format!("  {m:.2}s"))
+            .map(|m| match proj.marker_label(*m) {
+                Some(l) => format!("  {m:.2}s  {l}"),
+                None => format!("  {m:.2}s"),
+            })
             .collect::<Vec<_>>()
             .join("\n");
-        return Ok(Output::new(text, serde_json::json!({ "markers": proj.markers })));
+        let rows: Vec<serde_json::Value> = proj
+            .markers
+            .iter()
+            .map(|m| serde_json::json!({ "at": m, "label": proj.marker_label(*m) }))
+            .collect();
+        return Ok(Output::new(text, serde_json::json!({ "markers": rows })));
     }
     let at: f64 = p.need_num("at")?;
     if p.on("remove") {
         let before = proj.markers.len();
         proj.markers.retain(|m| (m - at).abs() > 0.05);
+        proj.marker_labels.retain(|(lt, _)| (lt - at).abs() > 0.05);
         if proj.markers.len() == before {
             bail!("no marker near {at:.2}s");
         }
     } else {
-        proj.markers.push(at);
-        proj.markers.sort_by(|a, b| a.total_cmp(b));
+        if !proj.markers.iter().any(|m| (m - at).abs() < 0.01) {
+            proj.markers.push(at);
+            proj.markers.sort_by(|a, b| a.total_cmp(b));
+        }
+        if let Some(label) = p.str("label") {
+            proj.set_marker_label(at, label);
+        }
     }
     save(&proj, path)?;
     Ok(Output::new(
         format!("{} marker at {at:.2}s", if p.on("remove") { "Removed" } else { "Added" }),
         serde_json::json!({ "markers": proj.markers }),
+    ))
+}
+
+/// YouTube's chapter rules: the list must start at 0:00, ascending, at
+/// least three entries for YouTube to honour it (we warn, not refuse).
+fn cmd_chapters(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let proj = load(path)?;
+    if proj.markers.is_empty() {
+        bail!("no markers — drop some first (`reel marker --at T --label \"Name\"`)");
+    }
+    let mut cuts: Vec<f64> = proj.markers.clone();
+    cuts.sort_by(|a, b| a.total_cmp(b));
+    if !cuts.first().is_some_and(|f| *f < 0.001) {
+        cuts.insert(0, 0.0);
+    }
+    let fmt = |t: f64| -> String {
+        let s = t.round() as u64;
+        if s >= 3600 {
+            format!("{}:{:02}:{:02}", s / 3600, (s % 3600) / 60, s % 60)
+        } else {
+            format!("{}:{:02}", s / 60, s % 60)
+        }
+    };
+    let mut lines = Vec::new();
+    for (i, t) in cuts.iter().enumerate() {
+        let title = proj
+            .marker_label(*t)
+            .map(String::from)
+            .unwrap_or_else(|| if i == 0 && *t < 0.001 && proj.marker_label(0.0).is_none() {
+                "Intro".to_string()
+            } else {
+                format!("Chapter {}", i + 1)
+            });
+        lines.push(format!("{} {}", fmt(*t), title));
+    }
+    let text = lines.join("\n");
+    if let Some(out) = p.str("out") {
+        std::fs::write(out, format!("{text}\n"))
+            .map_err(|e| anyhow!("could not write {out}: {e}"))?;
+    }
+    let note = if lines.len() < 3 {
+        "\n(note: YouTube wants at least 3 chapters to show them)"
+    } else {
+        ""
+    };
+    Ok(Output::new(
+        format!("{text}{note}"),
+        serde_json::json!({ "chapters": lines }),
     ))
 }
 
@@ -2252,6 +2344,7 @@ fn settings_from(p: &Parsed, default_codec: Codec) -> Result<export::ExportSetti
         target: None,
         fit: Fit::Letterbox,
         loudness: None,
+        hdr_passthrough: p.on("hdr-passthrough"),
     };
     if let Some(name) = p.str("preset") {
         let found = export::Preset::ALL
@@ -2427,6 +2520,7 @@ fn cmd_bench(p: &Parsed) -> Result<Output> {
         target: None,
         fit: Fit::Letterbox,
         loudness: None,
+        hdr_passthrough: false,
     };
     let t0 = std::time::Instant::now();
     let job = export::start_timeline_with_captions(
@@ -2441,6 +2535,7 @@ fn cmd_bench(p: &Parsed) -> Result<Output> {
             music: None,
             overlays: &[],
             markers: &[],
+            marker_labels: &[],
             luts: &[],
             audio_clips: &[],
         },
@@ -2499,6 +2594,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             target: None,
             fit: Fit::Letterbox,
             loudness: None,
+            hdr_passthrough: false,
         };
         let overlays = export::Overlays {
             captions: &proj.captions,
@@ -2507,6 +2603,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             music: None,
             overlays: &proj.overlay_segments(),
             markers: &[],
+            marker_labels: &[],
             luts: &proj.luts,
             audio_clips: &[],
         };
@@ -2545,15 +2642,67 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
 }
 
 fn cmd_render(p: &Parsed) -> Result<Output> {
+    if p.on("watch") {
+        return cmd_render_watch(p);
+    }
+    render_once(p, false)
+}
+
+/// Hot-render: render now, then again every time the project file changes.
+/// The workflow this buys: edit in Reel (autosave writes the .reel), and a
+/// preview file keeps itself fresh for whatever is watching it.
+fn cmd_render_watch(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?.to_string();
+    let quiet = p.on("quiet") || p.on("json");
+    let mtime = |f: &str| std::fs::metadata(f).and_then(|m| m.modified()).ok();
+    let mut renders = 0u32;
+    let mut last = None;
+    loop {
+        let now = mtime(&path);
+        if now != last {
+            last = now;
+            match render_once(p, renders > 0) {
+                Ok(o) => {
+                    renders += 1;
+                    if !quiet {
+                        eprintln!("[watch] render #{renders}: {}", o.text);
+                    }
+                }
+                Err(e) => {
+                    // A half-saved project mid-autosave shouldn't kill the
+                    // watch — report and keep waiting.
+                    if !quiet {
+                        eprintln!("[watch] render failed: {e:#}");
+                    }
+                }
+            }
+            if !quiet {
+                eprintln!("[watch] watching {path} — Ctrl+C to stop");
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+}
+
+fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
     let path = p.at(0)?;
     let out = p.at(1)?;
+    if p.on("hdr-passthrough") {
+        bail!(
+            "--hdr-passthrough works on source exports (`reel convert`) — the timeline \
+             pipeline composites in 8-bit SDR and tone-maps HDR sources instead"
+        );
+    }
     let proj = load(path)?;
     let segments = proj.export_segments();
     if segments.is_empty() {
         bail!("the timeline is empty — add a clip first");
     }
     let settings = settings_from(p, Codec::H264)?;
-    prepare_output(out, p.on("overwrite"))?;
+    if overwrite {
+        let _ = std::fs::remove_file(out);
+    }
+    prepare_output(out, p.on("overwrite") || overwrite)?;
 
     let job = export::start_timeline_with_captions(
         &segments,
@@ -2567,6 +2716,7 @@ fn cmd_render(p: &Parsed) -> Result<Output> {
             music: proj.music.as_ref(),
             overlays: &proj.overlay_segments(),
             markers: &proj.markers,
+            marker_labels: &proj.marker_labels,
             luts: &proj.luts,
             audio_clips: &proj.audio_clips(),
         },
