@@ -30,6 +30,7 @@ mod portal;
 mod proxy;
 #[cfg(target_os = "linux")]
 mod runtime;
+mod serve;
 #[cfg(target_os = "linux")]
 mod tray;
 

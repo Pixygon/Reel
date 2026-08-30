@@ -252,6 +252,12 @@ unnecessary for video work, rival Photoshop for what creators actually do.
 **Download & docs: [reel.pixygon.io](https://reel.pixygon.io)** — one-line
 Linux install, AppImage, Arch repo, Windows zip.
 
+**Agents drive Reel natively**: every verb speaks `--json`, `reel serve`
+keeps one JSON-RPC session alive for many calls, and `reel mcp` exposes the
+whole CLI as Model Context Protocol tools — see
+[docs/RECIPES.md](docs/RECIPES.md) for real sequences and `reel schema` for
+the versioned project-file schema.
+
 Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md); CI runs the
 full measured-test suite (real ffmpeg encodes, real pixels) on every PR.
 If Reel saved you a subscription, there's a

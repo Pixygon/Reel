@@ -241,9 +241,62 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 
 ---
 
-The grand arc beyond 1.x — image editing that rivals Photoshop, the full
-DAW ambition, plugins, `reel serve`/MCP — lives on in the original phased
-plan (git history of this file, and the phases 5–7 sections it carried).
-Nothing there is abandoned; 1.x is the season of making what shipped
-*excellent* before widening again. When reality disagrees with this
-document, reality wins — and this document gets edited.
+# Season 2 — the grand arc (active)
+
+Restored from the original phased plan now that every 1.x theme is closed.
+Ordered by leverage; each lands with measured tests like everything above.
+
+## S2.A — The agent platform — shipped in v1.9.0
+
+- [x] `reel serve`: long-lived JSON-RPC 2.0 over stdio — every verb, no
+      process-per-command, concurrent requests (a render doesn't block a
+      probe). One message per line; tested by conversation.
+- [x] **MCP server mode** (`reel mcp`): the COMMANDS table projected as
+      MCP tools with real input schemas — a projection of the one table,
+      not a second implementation. initialize/tools-list/tools-call
+      tested against a live session.
+- [x] `.reel` JSON Schema (`reel schema`): generated from the live types
+      via a fully-featured document, versioned with the app; a test pins
+      the keys so model changes surface.
+- [x] Agent cookbook: docs/RECIPES.md — real, suite-exercised sequences.
+- [x] CLI parity as a standing rule (44 verbs and counting; docs enforced
+      by test).
+
+## S2.B — Extensibility
+
+- [x] Raw ffmpeg filter escape hatch per clip (`effects --raw-filter`,
+      v1.9.0): validated with a trial frame when set, spliced into the
+      decode in BOTH engines (negate-on-red pixel test each), honestly
+      labelled in the UI (live preview can't run it).
+- [x] Time-stretch music fitting (`music set --fit`, v1.9.0): rubberband
+      pitch-preserved at render, rate-matched (documented approximation)
+      live; band-measured test at the tail.
+- [ ] Effect plugins as WGSL fragments with a declared parameter block —
+      loaded from ~/.config/reel/effects, hot-reloaded, keyframable.
+- [ ] Title/motion preset format (keyframe templates as data) with an
+      in-app browser.
+- [ ] LADSPA/LV2 hosting for audio inserts.
+
+## S2.C — Images: rival Photoshop where creators live
+
+A still is a one-frame composition; the compositor, grade stack, masks,
+titles and adjustment layers already work on one. The plan (unchanged from
+the original Phase 5): layer stack for stills, selections & brush masks,
+crop/rotate/straighten/perspective, retouch (clone/heal), local-model
+background removal + upscale (the captions pattern: fetched once, local,
+never uploaded), text-on-image via titles, the thumbnail workflow, batch
+via CLI, RAW ingest.
+
+## S2.D — Capture, everywhere, properly
+
+Live capture preview, mic + system audio mixed by the audio engine,
+webcam as a source (PiP over screen = the streamer layout), replay buffer,
+Windows capture backend, virtual camera out.
+
+## S2.E — The rest of the DAW
+
+Spectrum overlay on the EQ, de-esser, room tone generation, fade handles
+with curve choice, LUFS meters everywhere delivery happens.
+
+When reality disagrees with this document, reality wins — and this
+document gets edited.

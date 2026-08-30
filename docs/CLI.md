@@ -48,6 +48,24 @@ reel render cut.reel out.mp4 --preset tiktok
 
 ## Commands
 
+### `reel serve`
+
+Long-lived JSON-RPC session on stdio: every verb, no process-per-command. One message per line
+
+
+### `reel mcp`
+
+Model Context Protocol server on stdio — agents drive Reel as native tools
+
+
+### `reel schema`
+
+The .reel document's JSON Schema — generated from the live types, versioned with the app
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--json` | — | Print the result as JSON |
+
 ### `reel info MEDIA`
 
 Duration, frame size and rate of a media file
@@ -211,6 +229,8 @@ Colour, fades and reframing for one clip
 | `--hsl-push-sat` | `N` | Saturation multiplier inside the window |
 | `--hsl-push-lum` | `N` | Lightness multiplier inside the window |
 | `--hsl-off` | — | Remove the qualifier |
+| `--raw-filter` | `CHAIN` | EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it) |
+| `--raw-filter-off` | — | Remove the raw filter |
 | `--like` | `CLIP` | Copy another clip's grade (colour only, not fades/reframe) |
 | `--like-all` | — | With --like: stamp that grade on EVERY video clip |
 | `--key-color` | `RRGGBB` | Chroma key: knock this colour out (e.g. 00b140) |
@@ -302,6 +322,8 @@ ACTION is set or clear — a music bed under the whole edit
 | `--gain-db` | `DECIBELS` | Level (default -12) |
 | `--no-duck` | — | Don't pull the music down under speech |
 | `--fade` | `SECONDS` | Fade in/out (default 1) |
+| `--fit` | — | Time-stretch the track to end exactly with the edit (pitch-preserved at render) |
+| `--json` | — | Print the result as JSON |
 
 ### `reel marker PROJECT`
 

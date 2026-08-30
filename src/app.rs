@@ -1009,13 +1009,21 @@ impl ReelApp {
             }
             if let Some(m) = &self.project.music {
                 if let Some(pcm) = self.samples.get(&m.source.clone()) {
+                    let total = crate::edit::render_duration(&self.project.export_segments());
+                    let rate = if m.fit {
+                        let src = pcm.frames() as f64 / crate::audio::RATE as f64;
+                        (src / (total - m.start).max(0.5)).clamp(0.25, 4.0)
+                    } else {
+                        1.0
+                    };
                     plan.music = Some(crate::audio::PlanMusic {
                         pcm,
                         start: m.start,
                         gain: crate::audio::db_to_gain(m.gain_db),
                         duck: m.duck,
                         fade: m.fade,
-                        total: crate::edit::render_duration(&self.project.export_segments()),
+                        total,
+                        rate,
                     });
                 }
             }

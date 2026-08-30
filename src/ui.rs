@@ -1264,6 +1264,33 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     app.editor.mark_changed();
                 }
 
+                // Expert escape hatch: raw ffmpeg filters on this clip.
+                {
+                    let current = app.project.clip(id).and_then(|c| c.raw_filter.clone());
+                    if let Some(raw) = &current {
+                        ui.horizontal(|ui| {
+                            ui.label(
+                                RichText::new(format!("ffmpeg: {raw}"))
+                                    .small()
+                                    .monospace()
+                                    .color(theme::EMBER),
+                            );
+                            if ui.small_button("off").clicked() {
+                                app.editor.push_undo(&app.project);
+                                if let Some(c) = app.project.clip_mut(id) {
+                                    c.raw_filter = None;
+                                }
+                                app.editor.mark_changed();
+                            }
+                        });
+                        ui.label(
+                            RichText::new("Expert filter — applied at render; the live preview plays without it.")
+                                .small()
+                                .color(egui::Color32::from_gray(140)),
+                        );
+                    }
+                }
+
                 // Audio processing — pan, tone, dynamics, repair. One
                 // model (Clip.audio) feeding the live mix and the export.
                 {

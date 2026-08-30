@@ -74,6 +74,12 @@ pub struct Clip {
     /// Reel notice the nested edit changed and refresh it.
     #[serde(default)]
     pub nested: Option<String>,
+    /// EXPERT: a raw ffmpeg video-filter chain spliced into this clip's
+    /// decode (before fit). Applied by the render and the frame export; the
+    /// LIVE preview cannot run ffmpeg filters and shows the clip without
+    /// it — the UI says so. Validated with a trial run when set.
+    #[serde(default)]
+    pub raw_filter: Option<String>,
 }
 
 /// Per-clip audio processing. Defaults are identity; every field is
@@ -677,6 +683,8 @@ pub struct Segment {
     pub stabilize: bool,
     /// Audio processing (pan/EQ/compressor/repair), track pan folded in.
     pub audio: AudioFx,
+    /// Expert raw ffmpeg filter, spliced into the decode. See Clip.
+    pub raw_filter: Option<String>,
 }
 
 impl Segment {
@@ -761,11 +769,17 @@ pub struct Music {
     /// Fade the bed in and out, in seconds (0 = hard start/stop).
     #[serde(default)]
     pub fade: f64,
+    /// Stretch the whole track to end exactly with the edit —
+    /// pitch-preserved at render time (rubberband); the live preview
+    /// approximates with a rate change (slightly pitched, like speed
+    /// previews — documented).
+    #[serde(default)]
+    pub fit: bool,
 }
 
 impl Default for Music {
     fn default() -> Self {
-        Self { source: String::new(), start: 0.0, gain_db: -12.0, duck: true, fade: 1.0 }
+        Self { source: String::new(), start: 0.0, gain_db: -12.0, duck: true, fade: 1.0, fit: false }
     }
 }
 
@@ -1039,6 +1053,7 @@ impl Project {
                 audio: AudioFx::default(),
                 adjustment: false,
                 nested: None,
+                raw_filter: None,
                 stabilize: false,
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -2091,6 +2106,7 @@ impl Project {
                     keys: c.keys.clone(),
                     stabilize: c.stabilize,
                     audio: c.audio.with_track_pan(v_pan),
+                    raw_filter: c.raw_filter.clone(),
                 })
             })
             .collect()

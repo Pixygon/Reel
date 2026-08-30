@@ -84,6 +84,24 @@ const RENDER_WATCH_FLAGS: &[Flag] = &[
 
 pub static COMMANDS: &[Cmd] = &[
     Cmd {
+        name: "schema",
+        args: &[],
+        flags: &[F_JSON],
+        help: "The .reel document's JSON Schema — generated from the live types, versioned with the app",
+    },
+    Cmd {
+        name: "serve",
+        args: &[],
+        flags: &[],
+        help: "Long-lived JSON-RPC session on stdio: every verb, no process-per-command. One message per line",
+    },
+    Cmd {
+        name: "mcp",
+        args: &[],
+        flags: &[],
+        help: "Model Context Protocol server on stdio — agents drive Reel as native tools",
+    },
+    Cmd {
         name: "info",
         args: &["MEDIA"],
         flags: &[F_JSON],
@@ -260,6 +278,8 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "hsl-push-sat", value: Some("N"), help: "Saturation multiplier inside the window" },
             Flag { name: "hsl-push-lum", value: Some("N"), help: "Lightness multiplier inside the window" },
             Flag { name: "hsl-off", value: None, help: "Remove the qualifier" },
+            Flag { name: "raw-filter", value: Some("CHAIN"), help: "EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it)" },
+            Flag { name: "raw-filter-off", value: None, help: "Remove the raw filter" },
             Flag { name: "like", value: Some("CLIP"), help: "Copy another clip's grade (colour only, not fades/reframe)" },
             Flag { name: "like-all", value: None, help: "With --like: stamp that grade on EVERY video clip" },
             Flag { name: "key-color", value: Some("RRGGBB"), help: "Chroma key: knock this colour out (e.g. 00b140)" },
@@ -357,6 +377,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "gain-db", value: Some("DECIBELS"), help: "Level (default -12)" },
             Flag { name: "no-duck", value: None, help: "Don't pull the music down under speech" },
             Flag { name: "fade", value: Some("SECONDS"), help: "Fade in/out (default 1)" },
+            Flag { name: "fit", value: None, help: "Time-stretch the track to end exactly with the edit (pitch-preserved at render)" },
             F_JSON,
         ],
         help: "ACTION is set or clear — a music bed under the whole edit",
@@ -577,10 +598,10 @@ pub fn is_command(arg: &str) -> bool {
 }
 
 #[derive(Debug)]
-struct Parsed {
-    positional: Vec<String>,
-    values: HashMap<String, String>,
-    switches: HashSet<String>,
+pub struct Parsed {
+    pub positional: Vec<String>,
+    pub values: HashMap<String, String>,
+    pub switches: HashSet<String>,
 }
 
 impl Parsed {
@@ -672,6 +693,14 @@ fn parse(cmd: &Cmd, args: &[String]) -> Result<Parsed> {
 /// Run a CLI command. Returns the process exit code.
 pub fn run(argv: &[String]) -> i32 {
     let name = &argv[0];
+    // The servers own stdio for the life of the process — they dispatch
+    // themselves rather than going through parse (no flags to parse).
+    if name == "serve" {
+        return crate::serve::serve();
+    }
+    if name == "mcp" {
+        return crate::serve::mcp();
+    }
     let Some(cmd) = COMMANDS.iter().find(|c| c.name == name) else {
         eprintln!("reel: unknown command {name:?}. Try `reel help`.");
         return 2;
@@ -706,9 +735,9 @@ pub fn run(argv: &[String]) -> i32 {
 }
 
 /// What a command produced: a line for a human, an object for a machine.
-struct Output {
-    text: String,
-    data: serde_json::Value,
+pub struct Output {
+    pub text: String,
+    pub data: serde_json::Value,
 }
 
 impl Output {
@@ -721,7 +750,7 @@ impl Output {
     }
 }
 
-fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
+pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
     match name {
         "info" => cmd_info(p),
         "new" => cmd_new(p),
@@ -764,6 +793,10 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "render" => cmd_render(p),
         "convert" => cmd_convert(p),
         "presets" => cmd_presets(),
+        "schema" => cmd_schema(),
+        // The servers own stdio for the whole process and are dispatched
+        // straight from run() — reaching here means a nested call.
+        "serve" | "mcp" => bail!("the server runs as its own session — invoke `reel {name}` directly"),
         "commands" => Ok(cmd_commands()),
         _ => bail!("unimplemented command {name}"),
     }
@@ -1359,6 +1392,25 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         if p.on("hsl-off") {
             c.effects.hsl = None;
         }
+        if let Some(raw) = p.str("raw-filter") {
+            // Refuse a broken chain before saving it — a trial frame
+            // through the exact filter, house style.
+            let trial = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-f", "lavfi", "-i", "color=c=gray:size=64x64:rate=1:duration=1",
+                       "-vf", raw, "-frames:v", "1", "-f", "null", "-"])
+                .output()
+                .map_err(|e| anyhow!("could not test the filter: {e}"))?;
+            if !trial.status.success() {
+                bail!(
+                    "ffmpeg rejects that filter chain:\n{}",
+                    String::from_utf8_lossy(&trial.stderr).trim()
+                );
+            }
+            c.raw_filter = Some(raw.to_string());
+        }
+        if p.on("raw-filter-off") {
+            c.raw_filter = None;
+        }
         if p.on("key-off") {
             c.effects.key_color = None;
         }
@@ -1738,6 +1790,7 @@ fn cmd_music(p: &Parsed) -> Result<Output> {
                 gain_db: p.num::<f32>("gain-db")?.unwrap_or(-12.0),
                 duck: !p.on("no-duck"),
                 fade: p.num::<f64>("fade")?.unwrap_or(1.0),
+                fit: p.on("fit"),
             };
             proj.music = Some(m.clone());
             save(&proj, path)?;
@@ -1991,6 +2044,94 @@ pub(crate) fn take_snapshot(project: &str, name: Option<&str>) -> Result<std::pa
     let dest = dir.join(format!("{n:03}-{base}.reel"));
     std::fs::copy(project, &dest)?;
     Ok(dest)
+}
+
+/// Derive a JSON Schema node from a serialized VALUE — types from the
+/// data itself, so the schema is generated from the same structs that
+/// read and write documents and cannot drift from them.
+fn schema_of(v: &serde_json::Value) -> serde_json::Value {
+    use serde_json::json;
+    match v {
+        serde_json::Value::Null => json!({ "type": ["null", "object", "string", "number"] }),
+        serde_json::Value::Bool(_) => json!({ "type": "boolean" }),
+        serde_json::Value::Number(_) => json!({ "type": "number" }),
+        serde_json::Value::String(_) => json!({ "type": "string" }),
+        serde_json::Value::Array(items) => match items.first() {
+            Some(first) => json!({ "type": "array", "items": schema_of(first) }),
+            None => json!({ "type": "array" }),
+        },
+        serde_json::Value::Object(map) => {
+            let mut props = serde_json::Map::new();
+            for (k, val) in map {
+                props.insert(k.clone(), schema_of(val));
+            }
+            // Every field is serde(default) by policy — nothing required,
+            // which is what lets old documents keep loading forever.
+            json!({ "type": "object", "properties": props, "additionalProperties": true })
+        }
+    }
+}
+
+/// A document with EVERY optional feature populated — the schema derives
+/// from this, so a field added to the model shows up here (the test that
+/// pins expected keys forces the update).
+pub(crate) fn featured_project() -> crate::edit::Project {
+    let mut p = crate::edit::Project::default();
+    let id = p.add_clip("/media/a.mp4", crate::edit::TrackKind::Video, 0.0, 0.0, 5.0);
+    p.add_clip("/media/voice.wav", crate::edit::TrackKind::Audio, 1.0, 0.0, 2.0);
+    let pip = p.add_clip("/media/pip.mp4", crate::edit::TrackKind::Overlay, 0.5, 0.0, 2.0);
+    if let Some(c) = p.clip_mut(id) {
+        c.effects.lut = Some(0);
+        c.effects.curves = Some(Default::default());
+        c.effects.mask = Some(Default::default());
+        c.effects.key_color = Some([0.0, 0.7, 0.2]);
+        c.effects.hsl = Some(Default::default());
+        c.keys.push((
+            crate::edit::Param::Exposure,
+            vec![crate::edit::Keyframe { t: 0.0, value: 1.0, interp: crate::edit::Interp::bezier_default() }],
+        ));
+        c.transition_in = 0.5;
+        c.stabilize = true;
+        c.audio.comp = true;
+        c.nested = Some("/media/inner.reel".into());
+    }
+    if let Some(c) = p.clip_mut(pip) {
+        c.adjustment = true;
+    }
+    p.captions.push(crate::captions::Cue { start: 0.0, end: 1.0, text: "hi".into() });
+    p.titles.push(Default::default());
+    p.music = Some(Default::default());
+    p.markers = vec![1.0];
+    p.marker_labels = vec![(1.0, "beat".into())];
+    p.luts = vec!["/media/look.cube".into()];
+    p.pool.push(crate::edit::PoolItem { path: "/media/a.mp4".into(), bin: "b-roll".into() });
+    p.multicam.push(crate::edit::Angle { source: "/media/b.mp4".into(), offset: 0.0 });
+    p.session = crate::edit::Session { playhead: 1.0, zoom: 60.0, scroll_x: 0.0, selected: Some(id) };
+    p
+}
+
+fn cmd_schema() -> Result<Output> {
+    let doc = serde_json::to_value(featured_project())?;
+    let mut schema = schema_of(&doc);
+    if let Some(o) = schema.as_object_mut() {
+        o.insert("$schema".into(), "https://json-schema.org/draft/2020-12/schema".into());
+        o.insert("$id".into(), "https://reel.pixygon.io/schema/reel.json".into());
+        o.insert("title".into(), "Reel project (.reel)".into());
+        o.insert(
+            "description".into(),
+            format!(
+                "Generated by reel {} from the live document types. Every field is \
+                 optional (serde defaults) — documents only ever grow, so older \
+                 files keep loading forever.",
+                env!("CARGO_PKG_VERSION")
+            )
+            .into(),
+        );
+    }
+    Ok(Output::new(
+        serde_json::to_string_pretty(&schema)?,
+        schema,
+    ))
 }
 
 fn cmd_snapshot(p: &Parsed) -> Result<Output> {
@@ -3018,6 +3159,27 @@ mod tests {
         }
         for typo in ["rendr", "bogus", "--nope", "inspec"] {
             assert!(!is_command(typo), "{typo:?} must not be treated as a command");
+        }
+    }
+
+    /// The schema derives from the featured project — this pins the keys a
+    /// .reel document is expected to carry, so a renamed/dropped field (or a
+    /// featured_project() that forgot a new one) fails loudly.
+    #[test]
+    fn the_schema_covers_the_whole_document() {
+        let out = cmd_schema().expect("schema");
+        let props = out.data["properties"].as_object().expect("object schema");
+        for key in [
+            "name", "fps", "width", "height", "tracks", "captions", "caption_size",
+            "titles", "music", "markers", "marker_labels", "luts", "pool",
+            "session", "multicam",
+        ] {
+            assert!(props.contains_key(key), "schema lost {key:?}");
+        }
+        // Depth: a clip's shape is described, not just \"array\".
+        let clip = &out.data["properties"]["tracks"]["items"]["properties"]["clips"]["items"]["properties"];
+        for key in ["source", "start", "in_point", "duration", "effects", "keys", "audio", "adjustment", "nested"] {
+            assert!(clip.get(key).is_some(), "clip schema lost {key:?}");
         }
     }
 

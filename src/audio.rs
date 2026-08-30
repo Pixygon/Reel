@@ -322,6 +322,9 @@ pub struct PlanMusic {
     pub fade: f64,
     /// The cut's total length — the bed trims and fades against it.
     pub total: f64,
+    /// Playback rate for fit-to-edit (1.0 = natural). The live preview
+    /// resamples linearly (slightly pitched); the render uses rubberband.
+    pub rate: f64,
 }
 
 #[derive(Default)]
@@ -479,7 +482,7 @@ pub fn render_into(state: &mut MixState, out: &mut [f32]) {
         if let Some(m) = &plan.music {
             let local = t - m.start;
             if local >= 0.0 && local < m.total {
-                let idx = (local * RATE as f64) as usize;
+                let idx = (local * m.rate * RATE as f64) as usize;
                 if idx < m.pcm.frames() {
                     let mut g = m.gain;
                     if m.fade > 0.0 && m.total > m.fade * 2.0 {
@@ -1203,6 +1206,7 @@ mod tests {
                 duck: true,
                 fade: 0.0,
                 total: 8.0,
+                rate: 1.0,
             }),
             buses: 1,
         };

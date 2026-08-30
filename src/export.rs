@@ -775,6 +775,11 @@ pub fn build_timeline_args_full(
         if let Some(cube) = grade_cube(&seg.effects, luts) {
             fx.insert(0, format!("lut3d='{}'", cube));
         }
+        // The expert escape hatch runs at DECODE time, before everything —
+        // same position the frame server gives it.
+        if let Some(raw) = &seg.raw_filter {
+            fx.insert(0, raw.clone());
+        }
         let fx = if fx.is_empty() { String::new() } else { format!("{},", fx.join(",")) };
         let reframe = seg
             .effects
@@ -1118,6 +1123,27 @@ fn push_music_mix(
     } else {
         String::new()
     };
+    // Fit: pitch-preserved stretch so the last beat lands on the last
+    // frame. rubberband's tempo is source-time over output-time.
+    let fit = if m.fit {
+        // Duration straight from the container — decoder::probe wants a
+        // video stream, and a music bed usually has none.
+        let src_len = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format=duration",
+                   "-of", "csv=p=0", &m.source])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok())
+            .unwrap_or(0.0);
+        let want = (total - m.start).max(0.5);
+        if src_len > 0.5 && (src_len / want - 1.0).abs() > 0.01 {
+            format!(",rubberband=tempo={:.6}", (src_len / want).clamp(0.25, 4.0))
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
     // Trim to the cut's length so a long track can't extend the render, and
     // fade so it never just stops dead.
     let fade = if m.fade > 0.0 && total > m.fade * 2.0 {
@@ -1131,7 +1157,7 @@ fn push_music_mix(
         String::new()
     };
     graph.push_str(&format!(
-        ";[{idx}:a]{anorm},volume={:.2}dB{delay},atrim=0:{total:.4},asetpts=PTS-STARTPTS{fade}[mus]",
+        ";[{idx}:a]{anorm}{fit},volume={:.2}dB{delay},atrim=0:{total:.4},asetpts=PTS-STARTPTS{fade}[mus]",
         m.gain_db
     ));
 
@@ -1692,6 +1718,7 @@ mod tests {
             transition_kind: Default::default(),
             stabilize: false,
             audio: Default::default(),
+            raw_filter: None,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2420,6 +2447,53 @@ mod tests {
             .unwrap_or_else(|| panic!("no mean_volume in ffmpeg output:\n{text}"))
     }
 
+    /// Fit-to-edit: a 2 s music bed under a 4 s cut stretches so its LAST
+    /// note still sounds at the end — measured on the bed's own band at the
+    /// tail, where an unstretched bed would have run out.
+    #[test]
+    fn music_fit_stretches_the_bed_to_the_edit() {
+        let dir = std::env::temp_dir();
+        let vid = dir.join(format!("reel-fit-vid-{}.mp4", std::process::id()));
+        let bed = dir.join(format!("reel-fit-bed-{}.wav", std::process::id()));
+        let out = dir.join(format!("reel-fit-out-{}.mp4", std::process::id()));
+        for f in [&vid, &bed, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        // A silent 4 s video, and a 2 s 700 Hz bed.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=4",
+                   "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=4",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &vid.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "sine=frequency=700:duration=2", &bed.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let segs = vec![seg(&vid.to_string_lossy(), 0.0, 4.0)];
+        let music = crate::edit::Music {
+            source: bed.to_string_lossy().into(),
+            start: 0.0,
+            gain_db: 0.0,
+            duck: false,
+            fade: 0.0,
+            fit: true,
+        };
+        let wav = build_timeline_audio_wav_args(
+            &segs, true, Some(&music), &[], None, &out.to_string_lossy())
+            .expect("wav args");
+        assert!(wav.iter().any(|a| a.contains("rubberband")), "fit rides rubberband: {wav:?}");
+        assert!(std::process::Command::new("ffmpeg").args(&wav)
+            .status().map(|s| s.success()).unwrap_or(false), "fit render failed");
+        // The bed's band at 3.2–3.8 s: silent without fit, loud with it.
+        let tail = band_level(&out, 3.2, 3.8, 700);
+        assert!(tail > -30.0, "the stretched bed must still sound near the end, got {tail} dB");
+        for f in [&vid, &bed, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// The point of ducking: when the edit's own audio speaks, the music
     /// gets out of the way — and comes back when it stops. Measured on the
     /// music's own frequency band so the speech itself can't flatter it.
@@ -2454,6 +2528,7 @@ mod tests {
             transition_kind: Default::default(),
             stabilize: false,
             audio: Default::default(),
+            raw_filter: None,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
@@ -2467,6 +2542,7 @@ mod tests {
                 gain_db: 0.0,
                 duck,
                 fade: 0.0,
+                fit: false,
             };
             let job = start_timeline_with_captions(
                 &segs,
@@ -2808,6 +2884,58 @@ mod tests {
         );
 
         for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// The expert escape hatch is honest where it counts: the raw filter
+    /// runs in the real render (both engines) — a `negate` on a red clip
+    /// must come out cyan in each.
+    #[test]
+    fn the_raw_filter_escape_hatch_reaches_the_render() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-raw-src-{}.mp4", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=red:size=320x240:rate=25:duration=2",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 1.0);
+        sg.raw_filter = Some("negate".into());
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let out = dir.join(format!("reel-raw-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        match crate::engine::render::still_png(
+            &[sg.clone()], &Overlays::default(), (320, 240, 25.0), &s, 0.5,
+            &out.to_string_lossy(),
+        ) {
+            Ok(_) => {
+                let img = image::open(&out).unwrap().to_rgb8();
+                let px = img.get_pixel(160, 120).0;
+                assert!(px[0] < 60 && px[1] > 200 && px[2] > 200,
+                    "negate on red must be cyan in the frame server, got {px:?}");
+            }
+            Err(e) => eprintln!("no GPU — frame-server leg skipped ({e})"),
+        }
+        // And the graph fallback carries it too.
+        let gout = dir.join(format!("reel-raw-graph-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&gout);
+        let args = build_timeline_args(&[sg], &gout.to_string_lossy(),
+            &ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() },
+            false, (320, 240, 25.0));
+        assert!(std::process::Command::new("ffmpeg").arg("-y").args(&args)
+            .status().map(|st| st.success()).unwrap_or(false));
+        let png = dir.join(format!("reel-raw-g-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&png);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "0.4", "-i", &gout.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let img = image::open(&png).unwrap().to_rgb8();
+        let px = img.get_pixel(160, 120).0;
+        assert!(px[0] < 60 && px[1] > 200 && px[2] > 200,
+            "negate on red must be cyan in the graph too, got {px:?}");
+        for f in [&src, &out, &gout, &png] {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -3466,6 +3594,7 @@ mod tests {
             transition_kind: Default::default(),
             stabilize: false,
             audio: Default::default(),
+            raw_filter: None,
             gain_db: 0.0,
             speed: 2.0,
             keys: Vec::new(),

@@ -285,7 +285,12 @@ pub fn render_still(
         let tone = super::sources::hdr_tonemap_chain(tone_src.as_deref());
         let fit = settings.fit.chain(tw, th, "s");
         let src_at = seg.in_point + seg.source_offset_at(t - p.start);
-        if let Some(buf) = grab(&seg.source, src_at, tone.as_deref(), &fit, (tw, th))? {
+        let pre = match (&tone, &seg.raw_filter) {
+            (Some(tn), Some(r)) => Some(format!("{tn},{r}")),
+            (None, Some(r)) => Some(r.clone()),
+            (tn, None) => tn.clone(),
+        };
+        if let Some(buf) = grab(&seg.source, src_at, pre.as_deref(), &fit, (tw, th))? {
             let (fx, key_op) = seg.animated(t - p.start);
             // Transitions compose in stills exactly as in motion: same mods,
             // same roles — a frame grabbed mid-wipe shows the wipe.
@@ -672,12 +677,19 @@ fn run(
                             None => stab,
                         });
                     }
+                    // Expert raw filter joins the decode chain after tone
+                    // mapping — the same splice point stabilization uses.
+                    let pre = match (&tone, &seg.raw_filter) {
+                        (Some(t), Some(r)) => Some(format!("{t},{r}")),
+                        (None, Some(r)) => Some(r.clone()),
+                        (t, None) => t.clone(),
+                    };
                     let feed = match ramp_fps[p.seg] {
                         Some(src_fps) => Feed::Ramped(NativeReader::open(
                             &seg.source,
                             seg.in_point,
                             seg.source_len(),
-                            tone.as_deref(),
+                            pre.as_deref(),
                             &fit,
                             (tw, th),
                             src_fps,
@@ -687,7 +699,7 @@ fn run(
                             seg.in_point,
                             seg.duration,
                             seg.speed.clamp(0.05, 20.0) as f64,
-                            tone.as_deref(),
+                            pre.as_deref(),
                             &fit,
                             (tw, th, tfps),
                         )?),
@@ -888,6 +900,7 @@ mod tests {
             transition_kind: Default::default(),
             stabilize: false,
             audio: Default::default(),
+            raw_filter: None,
             gain_db: 0.0,
             speed: 1.0,
             keys: Vec::new(),
