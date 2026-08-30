@@ -262,16 +262,35 @@ pub fn hdr_tonemap_chain(transfer: Option<&str>) -> Option<String> {
     }
 }
 
-/// Does this ffmpeg carry the libplacebo filter? Probed once per process.
+/// Does this ffmpeg carry a USABLE libplacebo filter? Probed once per
+/// process with a real one-frame run — the filter can be listed yet fail
+/// to init (no Vulkan device on headless CI), and the hardware-encoder
+/// lesson applies to filters too: listed ≠ usable.
 pub fn have_libplacebo() -> bool {
     use std::sync::OnceLock;
     static HAVE: OnceLock<bool> = OnceLock::new();
     *HAVE.get_or_init(|| {
-        Command::new("ffmpeg")
+        let listed = Command::new("ffmpeg")
             .args(["-hide_banner", "-filters"])
             .output()
             .map(|o| String::from_utf8_lossy(&o.stdout).contains("libplacebo"))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if !listed {
+            return false;
+        }
+        let usable = Command::new("ffmpeg")
+            .args([
+                "-v", "error", "-f", "lavfi", "-i", "color=c=red:size=64x64:rate=1:duration=1",
+                "-vf", "libplacebo=colorspace=bt709:color_primaries=bt709:color_trc=bt709:tonemapping=hable:format=rgba",
+                "-frames:v", "1", "-f", "null", "-",
+            ])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if !usable {
+            log::warn!("libplacebo is listed but cannot initialise — HDR sources will render without tone mapping");
+        }
+        usable
     })
 }
 

@@ -3091,6 +3091,10 @@ mod tests {
     /// editor forum complains about, pinned in pixels.
     #[test]
     fn hdr_sources_are_tone_mapped_not_washed_out() {
+        if !crate::engine::sources::have_libplacebo() {
+            eprintln!("no usable libplacebo in this ffmpeg — skipping the HDR tone-map test");
+            return;
+        }
         let dir = std::env::temp_dir();
         let make_pq = |name: &str, colour: &str| -> std::path::PathBuf {
             let f = dir.join(format!("reel-hdr-{name}-{}.mp4", std::process::id()));

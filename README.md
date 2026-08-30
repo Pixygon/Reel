@@ -250,4 +250,9 @@ the full, ordered map to the stated bar: replace Premiere, make a DAW
 unnecessary for video work, rival Photoshop for what creators actually do.
 
 **Download & docs: [reel.pixygon.io](https://reel.pixygon.io)** — one-line
-Linux install, Arch repo, Windows zip.
+Linux install, AppImage, Arch repo, Windows zip.
+
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md); CI runs the
+full measured-test suite (real ffmpeg encodes, real pixels) on every PR.
+If Reel saved you a subscription, there's a
+[♥ Sponsor button](https://github.com/sponsors/Pixygon).

@@ -3453,7 +3453,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .find(|p| p.is_active(&app.export_settings))
                     .map(|p| p.name.to_string())
                     .unwrap_or_else(|| "Custom".to_string());
-                let btn = egui::Button::new(RichText::new(format!("＋ Queue {label}")).color(theme::CYAN))
+                let btn = egui::Button::new(RichText::new(format!("+ Queue {label}")).color(theme::CYAN))
                     .corner_radius(8.0)
                     .min_size(Vec2::new(0.0, 30.0));
                 if ui
@@ -3565,7 +3565,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             app.editor.show_curve_lane = !lane_on;
         }
         if ui
-            .button("＋ Adjust")
+            .button("+ Adjust")
             .on_hover_text(
                 "Add an ADJUSTMENT LAYER at the playhead: a 4s span whose \
                  colour grade applies to everything beneath it — select it \

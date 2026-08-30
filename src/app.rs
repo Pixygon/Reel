@@ -650,6 +650,7 @@ impl ReelApp {
         {
             self.show_scopes = true; // the headless check photographs these too
             self.scroll_to_scopes = true;
+            self.editor.show_curve_lane = true;
             let first = self
                 .project
                 .tracks
