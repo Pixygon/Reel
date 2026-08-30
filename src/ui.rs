@@ -860,6 +860,18 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
                 // Reframe — how you put a landscape shot into a vertical
                 // frame without blurred sides.
+                ui.horizontal(|ui| {
+                    if ui.selectable_label(fx.flip_h, "Flip ↔").clicked() {
+                        fx.flip_h = !fx.flip_h;
+                    }
+                    if ui.selectable_label(fx.flip_v, "Flip ↕").clicked() {
+                        fx.flip_v = !fx.flip_v;
+                    }
+                    if ui.small_button("180°").on_hover_text("Rotate half a turn (both flips)").clicked() {
+                        fx.flip_h = !fx.flip_h;
+                        fx.flip_v = !fx.flip_v;
+                    }
+                });
                 ui.add(egui::Slider::new(&mut fx.zoom, 1.0..=3.0).text("Zoom"));
                 if fx.zoom > 1.0001 {
                     ui.add(egui::Slider::new(&mut fx.pan_x, -1.0..=1.0).text("Pan ↔"));

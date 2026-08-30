@@ -278,6 +278,8 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "hsl-push-sat", value: Some("N"), help: "Saturation multiplier inside the window" },
             Flag { name: "hsl-push-lum", value: Some("N"), help: "Lightness multiplier inside the window" },
             Flag { name: "hsl-off", value: None, help: "Remove the qualifier" },
+            Flag { name: "flip-h", value: None, help: "Mirror left-right (toggle)" },
+            Flag { name: "flip-v", value: None, help: "Mirror top-bottom (toggle; both = 180° rotation)" },
             Flag { name: "raw-filter", value: Some("CHAIN"), help: "EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it)" },
             Flag { name: "raw-filter-off", value: None, help: "Remove the raw filter" },
             Flag { name: "like", value: Some("CLIP"), help: "Copy another clip's grade (colour only, not fades/reframe)" },
@@ -1391,6 +1393,12 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         }
         if p.on("hsl-off") {
             c.effects.hsl = None;
+        }
+        if p.on("flip-h") {
+            c.effects.flip_h = !c.effects.flip_h;
+        }
+        if p.on("flip-v") {
+            c.effects.flip_v = !c.effects.flip_v;
         }
         if let Some(raw) = p.str("raw-filter") {
             // Refuse a broken chain before saving it — a trial frame

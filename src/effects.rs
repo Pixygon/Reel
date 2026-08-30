@@ -94,6 +94,12 @@ pub struct Effects {
     /// only those pixels. The classic "make the sky bluer" tool.
     #[serde(default)]
     pub hsl: Option<Hsl>,
+    /// Mirror the picture left-right. With flip_v = a 180° rotation.
+    #[serde(default)]
+    pub flip_h: bool,
+    /// Mirror the picture top-bottom.
+    #[serde(default)]
+    pub flip_v: bool,
 }
 
 /// An HSL secondary: the selection window and the push applied inside it.
@@ -347,6 +353,8 @@ impl Default for Effects {
             wb_temp: 0.0,
             wb_tint: 0.0,
             hsl: None,
+            flip_h: false,
+            flip_v: false,
         }
     }
 }
@@ -428,6 +436,8 @@ impl Effects {
             && self.mask.is_none()
             && self.curves.map(|c| c.is_identity()).unwrap_or(true)
             && !self.has_grade()
+            && !self.flip_h
+            && !self.flip_v
     }
 
     /// Take another clip's GRADE — the colour work only. Fades, reframe,
@@ -522,6 +532,14 @@ impl Effects {
     /// `clip_len` scopes the fades to this segment.
     pub fn filters(&self, clip_len: f64) -> Vec<String> {
         let mut f = Vec::new();
+        // Flips first: geometry before colour, matching where the shaders
+        // mirror the sampling coordinates.
+        if self.flip_h {
+            f.push("hflip".into());
+        }
+        if self.flip_v {
+            f.push("vflip".into());
+        }
         if (self.exposure - 1.0).abs() > 1e-4 || (self.contrast - 1.0).abs() > 1e-4 {
             // One LUT does gain and contrast together, on encoded values —
             // exactly `(v*exposure - 0.5)*contrast + 0.5` in 0..255 terms.

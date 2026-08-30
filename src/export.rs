@@ -2888,6 +2888,63 @@ mod tests {
         }
     }
 
+    /// Flips are geometry in both engines: a left-red/right-blue source
+    /// with flip_h must render right-red/left-blue in the frame server AND
+    /// the graph fallback — the same mirrored pixels.
+    #[test]
+    fn flips_mirror_identically_in_both_engines() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-flip-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        // Left half red, right half blue.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "color=c=red:size=320x240:rate=25:duration=1",
+                   "-f", "lavfi", "-i", "color=c=blue:size=160x240:rate=25:duration=1",
+                   "-filter_complex", "[0][1]overlay=x=160:y=0",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 1.0);
+        sg.effects.flip_h = true;
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        // Frame server.
+        let out = dir.join(format!("reel-flip-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        match crate::engine::render::still_png(
+            &[sg.clone()], &Overlays::default(), (320, 240, 25.0), &s, 0.5,
+            &out.to_string_lossy(),
+        ) {
+            Ok(_) => {
+                let img = image::open(&out).unwrap().to_rgb8();
+                let (l, r) = (img.get_pixel(60, 120).0, img.get_pixel(260, 120).0);
+                assert!(l[2] > 180 && l[0] < 80, "left must be blue after flip_h, got {l:?}");
+                assert!(r[0] > 180 && r[2] < 80, "right must be red after flip_h, got {r:?}");
+            }
+            Err(e) => eprintln!("no GPU — frame-server leg skipped ({e})"),
+        }
+        // Graph fallback.
+        let gout = dir.join(format!("reel-flip-graph-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&gout);
+        let args = build_timeline_args(&[sg], &gout.to_string_lossy(),
+            &ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() },
+            false, (320, 240, 25.0));
+        assert!(std::process::Command::new("ffmpeg").arg("-y").args(&args)
+            .status().map(|st| st.success()).unwrap_or(false));
+        let png = dir.join(format!("reel-flip-g-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&png);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "0.4", "-i", &gout.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let img = image::open(&png).unwrap().to_rgb8();
+        let (l, r) = (img.get_pixel(60, 120).0, img.get_pixel(260, 120).0);
+        assert!(l[2] > 180 && l[0] < 80, "graph: left must be blue, got {l:?}");
+        assert!(r[0] > 180 && r[2] < 80, "graph: right must be red, got {r:?}");
+        for f in [&src, &out, &gout, &png] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// The expert escape hatch is honest where it counts: the raw filter
     /// runs in the real render (both engines) — a `negate` on a red clip
     /// must come out cyan in each.

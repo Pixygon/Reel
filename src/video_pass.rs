@@ -39,6 +39,9 @@ struct Uniforms {
     mask: [f32; 4],
     /// feather, invert, shape (1 = rect), enable.
     mask2: [f32; 4],
+    /// x = flip horizontal, y = flip vertical; zw reserved. Appended LAST —
+    /// field order is load-bearing on both sides of the FFI.
+    flip: [f32; 4],
 }
 
 pub struct VideoPass {
@@ -210,6 +213,15 @@ impl CallbackTrait for VideoDraw {
                     if m.invert { 1.0 } else { 0.0 },
                     if m.shape == crate::effects::MaskShape::Rect { 1.0 } else { 0.0 },
                     1.0,
+                ])
+                .unwrap_or([0.0; 4]),
+            flip: self
+                .effects
+                .map(|e| [
+                    if e.flip_h { 1.0 } else { 0.0 },
+                    if e.flip_v { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
                 ])
                 .unwrap_or([0.0; 4]),
             }),

@@ -229,6 +229,8 @@ Colour, fades and reframing for one clip
 | `--hsl-push-sat` | `N` | Saturation multiplier inside the window |
 | `--hsl-push-lum` | `N` | Lightness multiplier inside the window |
 | `--hsl-off` | — | Remove the qualifier |
+| `--flip-h` | — | Mirror left-right (toggle) |
+| `--flip-v` | — | Mirror top-bottom (toggle; both = 180° rotation) |
 | `--raw-filter` | `CHAIN` | EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it) |
 | `--raw-filter-off` | — | Remove the raw filter |
 | `--like` | `CLIP` | Copy another clip's grade (colour only, not fades/reframe) |

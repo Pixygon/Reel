@@ -279,6 +279,13 @@ Ordered by leverage; each lands with measured tests like everything above.
 
 ## S2.C — Images: rival Photoshop where creators live
 
+- [x] First slice (v1.10.0): **flip H/V and 180° rotation** with full
+      parity — mirrored in both shaders (uniform blocks grew a trailing
+      `flip` vec4 each), hflip/vflip in the graph, pixel-tested identical
+      in both engines, verified in the live preview. Power windows stay
+      screen-space through a flip, as they should. Quarter-turn rotation
+      (aspect swap) still open.
+
 A still is a one-frame composition; the compositor, grade stack, masks,
 titles and adjustment layers already work on one. The plan (unchanged from
 the original Phase 5): layer stack for stills, selections & brush masks,

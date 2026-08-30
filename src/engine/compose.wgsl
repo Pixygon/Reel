@@ -24,6 +24,8 @@ struct Uniforms {
     // Power window; see mask_factor.
     mask: vec4<f32>,
     mask2: vec4<f32>,
+    // x = flip horizontal, y = flip vertical.
+    flip: vec4<f32>,
 };
 // The grade-limiting window: how much of the LUT + trims applies at uv `q`.
 // mask = cx, cy, half-w, half-h; mask2 = feather, invert, shape (1=rect),
@@ -117,7 +119,12 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     let uv = (in.uv - vec2<f32>(0.5)) / z
         + vec2<f32>(0.5)
         + vec2<f32>(u.reframe.y, u.reframe.z) * (1.0 - 1.0 / z) * 0.5;
-    let s = textureSample(layer_tex, layer_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    // Flips mirror the sampled window — geometry before colour, matching
+    // ffmpeg's hflip/vflip position in the filter chain.
+    var uv2 = uv;
+    if (u.flip.x > 0.5) { uv2.x = 1.0 - uv2.x; }
+    if (u.flip.y > 0.5) { uv2.y = 1.0 - uv2.y; }
+    let s = textureSample(layer_tex, layer_sampler, clamp(uv2, vec2<f32>(0.0), vec2<f32>(1.0)));
     var a_src = mix(1.0, s.a, u.params.x);
     var rgb = s.rgb;
     if (u.fx.w > 0.5) {

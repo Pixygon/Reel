@@ -30,6 +30,8 @@ struct Uniforms {
     mask: [f32; 4],
     /// feather, invert, shape (1 = rect), enable.
     mask2: [f32; 4],
+    /// x = flip horizontal, y = flip vertical; zw reserved. Appended last.
+    flip: [f32; 4],
 }
 
 pub struct Compositor {
@@ -306,6 +308,12 @@ impl Compositor {
                     1.0,
                 ])
                 .unwrap_or([0.0; 4]),
+            flip: [
+                if l.effects.flip_h { 1.0 } else { 0.0 },
+                if l.effects.flip_v { 1.0 } else { 0.0 },
+                0.0,
+                0.0,
+            ],
         }
     }
 
