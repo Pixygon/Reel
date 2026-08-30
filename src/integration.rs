@@ -102,6 +102,9 @@ pub fn is_default_for(probe_mime: &str) -> bool {
 pub struct Settings {
     /// The "make Reel your default player?" banner was answered or dismissed.
     pub defaults_prompted: bool,
+    /// UI scale multiplier (egui zoom). 0 = unset → 1.0.
+    #[serde(default)]
+    pub ui_scale: f32,
 }
 
 fn settings_path() -> PathBuf {

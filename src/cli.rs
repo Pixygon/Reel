@@ -413,6 +413,17 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Sync one clip to another by their AUDIO — multicam without clap sticks",
     },
     Cmd {
+        name: "snapshot",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "name", value: Some("TEXT"), help: "What to call this state (default: the timestamp)" },
+            Flag { name: "list", value: None, help: "Show saved snapshots" },
+            Flag { name: "restore", value: Some("FILE"), help: "Restore this snapshot (the current state is snapshotted first)" },
+            F_JSON,
+        ],
+        help: "Named project snapshots — freeze the edit now, roll back later. Never lose work",
+    },
+    Cmd {
         name: "adjust",
         args: &["PROJECT"],
         flags: &[
@@ -742,6 +753,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "tighten" => cmd_tighten(p),
         "fillers" => cmd_fillers(p),
         "beats" => cmd_beats(p),
+        "snapshot" => cmd_snapshot(p),
         "adjust" => cmd_adjust(p),
         "pool" => cmd_pool(p),
         "relink" => cmd_relink(p),
@@ -1956,6 +1968,74 @@ fn cmd_tighten(p: &Parsed) -> Result<Output> {
             proj.duration()
         ),
         serde_json::json!({ "cuts": cuts, "removed": removed, "duration": proj.duration() }),
+    ))
+}
+
+fn snapshot_dir(project: &str) -> std::path::PathBuf {
+    std::path::Path::new(project).with_extension("snapshots")
+}
+
+/// Freeze the project file as `<name>-<seq>.reel` under `<proj>.snapshots/`.
+pub(crate) fn take_snapshot(project: &str, name: Option<&str>) -> Result<std::path::PathBuf> {
+    let dir = snapshot_dir(project);
+    std::fs::create_dir_all(&dir)?;
+    let n = std::fs::read_dir(&dir).map(|d| d.count()).unwrap_or(0) + 1;
+    let base = name
+        .map(|s| {
+            s.chars()
+                .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+                .collect::<String>()
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "snapshot".into());
+    let dest = dir.join(format!("{n:03}-{base}.reel"));
+    std::fs::copy(project, &dest)?;
+    Ok(dest)
+}
+
+fn cmd_snapshot(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    if !std::path::Path::new(path).exists() {
+        bail!("no such project: {path}");
+    }
+    if p.on("list") {
+        let dir = snapshot_dir(path);
+        let mut rows: Vec<String> = std::fs::read_dir(&dir)
+            .map(|d| {
+                d.filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|x| x == "reel"))
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .collect()
+            })
+            .unwrap_or_default();
+        rows.sort();
+        let text = if rows.is_empty() {
+            "No snapshots yet — `reel snapshot PROJECT --name before-recut`".to_string()
+        } else {
+            rows.iter()
+                .map(|r| format!("  {}", dir.join(r).display()))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        return Ok(Output::new(text, serde_json::json!({ "snapshots": rows })));
+    }
+    if let Some(snap) = p.str("restore") {
+        if !std::path::Path::new(snap).exists() {
+            bail!("no such snapshot: {snap}");
+        }
+        crate::edit::Project::load(snap).map_err(|e| anyhow!("{snap} isn't a valid project: {e}"))?;
+        // The state being replaced is itself worth keeping.
+        let kept = take_snapshot(path, Some("before-restore"))?;
+        std::fs::copy(snap, path)?;
+        return Ok(Output::new(
+            format!("Restored {snap} (the replaced state is kept at {})", kept.display()),
+            serde_json::json!({ "restored": snap, "kept": kept.to_string_lossy() }),
+        ));
+    }
+    let dest = take_snapshot(path, p.str("name"))?;
+    Ok(Output::new(
+        format!("Snapshot saved: {}", dest.display()),
+        serde_json::json!({ "snapshot": dest.to_string_lossy() }),
     ))
 }
 

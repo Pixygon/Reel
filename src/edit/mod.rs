@@ -890,6 +890,11 @@ pub struct Project {
     /// or not, organised into bins.
     #[serde(default)]
     pub pool: Vec<PoolItem>,
+    /// Where the user WAS: playhead, zoom, selection — written on every
+    /// autosave, restored on open, so a crash (or just closing the lid)
+    /// costs nothing. Part of the document, like every real NLE.
+    #[serde(default)]
+    pub session: Session,
     /// Multicam angles: sources aligned against the timeline. `offset` is
     /// the TIMELINE time at which the angle's source t=0 falls, so the
     /// source time under playhead t is `t - offset`.
@@ -906,6 +911,19 @@ pub struct PoolItem {
     /// Bin name; empty = the top level.
     #[serde(default)]
     pub bin: String,
+}
+
+/// The editor's resume point, saved with the project.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Session {
+    #[serde(default)]
+    pub playhead: f64,
+    #[serde(default)]
+    pub zoom: f32,
+    #[serde(default)]
+    pub scroll_x: f32,
+    #[serde(default)]
+    pub selected: Option<u64>,
 }
 
 /// One multicam angle.
@@ -944,6 +962,7 @@ impl Default for Project {
             marker_labels: Vec::new(),
             luts: Vec::new(),
             pool: Vec::new(),
+            session: Session::default(),
             multicam: Vec::new(),
             next_id: 100,
         }
@@ -1772,6 +1791,38 @@ impl Project {
         }
     }
 
+    /// ANCHORING through a plain clip drag: annotations sitting inside the
+    /// clip's old span travel with it — the caption stays on the words, the
+    /// marker on the beat. Windows are clamped at zero like the clip is.
+    pub fn carry_annotations(&mut self, old_start: f64, old_end: f64, delta: f64) {
+        if delta.abs() < 1e-9 {
+            return;
+        }
+        let inside = |t: f64| t >= old_start - 1e-6 && t <= old_end + 1e-6;
+        for m in &mut self.markers {
+            if inside(*m) {
+                *m = (*m + delta).max(0.0);
+            }
+        }
+        for (t, _) in &mut self.marker_labels {
+            if inside(*t) {
+                *t = (*t + delta).max(0.0);
+            }
+        }
+        for c in &mut self.captions {
+            if inside(c.start) && inside(c.end) {
+                c.start = (c.start + delta).max(0.0);
+                c.end = (c.end + delta).max(c.start + 0.05);
+            }
+        }
+        for t in &mut self.titles {
+            if inside(t.start) && inside(t.end) {
+                t.start = (t.start + delta).max(0.0);
+                t.end = (t.end + delta).max(t.start + 0.05);
+            }
+        }
+    }
+
     /// Drop annotations living entirely inside a removed window — used by
     /// the hole-cutting paths so a caption for trimmed-away speech dies
     /// with it instead of piling onto the join.
@@ -2086,6 +2137,8 @@ pub struct EditorState {
     pub fx_gesture: Option<u64>,
     /// A bezier handle mid-drag in the curve editor: (key index, incoming?).
     pub curve_handle_drag: Option<(usize, bool)>,
+    /// The full-width curve lane under the timeline.
+    pub show_curve_lane: bool,
     /// Index of the title being edited, if any — it shows a box in the
     /// preview and is the one you can drag around.
     pub selected_title: Option<usize>,
@@ -2145,6 +2198,7 @@ impl Default for EditorState {
             clipboard: None,
             target_track: None,
             curve_handle_drag: None,
+            show_curve_lane: false,
             key_param: Param::Exposure,
             curve_drag: None,
             multi: std::collections::HashSet::new(),
@@ -2226,6 +2280,23 @@ mod tests {
         p.append_video("a", "/tmp/a.mp4", 10.0);
         p.append_audio("a", "/tmp/a.mp4", 10.0);
         p
+    }
+
+    /// Dragging a clip carries its annotations: a caption on its words and
+    /// a marker on its beat travel with the move; annotations elsewhere
+    /// hold still.
+    #[test]
+    fn dragging_a_clip_carries_its_annotations() {
+        let mut p = one_clip_project(); // clip 0..10
+        p.markers = vec![3.0, 12.0];
+        p.captions.push(crate::captions::Cue { start: 2.0, end: 4.0, text: "on the clip".into() });
+        // The clip moves 0..10 → 5..15.
+        p.carry_annotations(0.0, 10.0, 5.0);
+        assert_eq!(p.markers, vec![8.0, 12.0], "{:?}", p.markers);
+        assert!((p.captions[0].start - 7.0).abs() < 1e-9);
+        // Moving back left clamps at zero rather than going negative.
+        p.carry_annotations(5.0, 15.0, -9.0);
+        assert!(p.markers[0] >= 0.0 && (p.markers[0] - 0.0).abs() < 1e-9);
     }
 
     /// Bezier keys: exact at the ends, monotone for an ease, and the speed

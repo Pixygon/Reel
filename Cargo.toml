@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "1.7.0"
+version = "1.8.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -15,7 +15,7 @@ winit = "0.30"
 wgpu = "24"
 egui = "0.31"
 egui-wgpu = "0.31"
-egui-winit = "0.31"
+egui-winit = { version = "0.31", features = ["accesskit"] }
 pollster = "0.4"
 bytemuck = { version = "1.18", features = ["derive"] }
 

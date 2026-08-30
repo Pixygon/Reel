@@ -352,6 +352,17 @@ Sync one clip to another by their AUDIO — multicam without clap sticks
 | `--to` | `ID` | The clip to sync against |
 | `--window` | `SECONDS` | Largest offset to search (default 90) |
 
+### `reel snapshot PROJECT`
+
+Named project snapshots — freeze the edit now, roll back later. Never lose work
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--name` | `TEXT` | What to call this state (default: the timestamp) |
+| `--list` | — | Show saved snapshots |
+| `--restore` | `FILE` | Restore this snapshot (the current state is snapshotted first) |
+| `--json` | — | Print the result as JSON |
+
 ### `reel adjust PROJECT`
 
 Add an adjustment layer — a span whose colour grade applies to everything beneath it (set the grade with `reel effects --clip`)

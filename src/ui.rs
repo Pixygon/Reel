@@ -16,6 +16,9 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_audition();
     app.poll_tracking();
     app.poll_nesting();
+    if let Some(z) = app.pending_zoom.take() {
+        ctx.set_zoom_factor(z.clamp(0.7, 2.0));
+    }
     app.poll_autosave();
     app.poll_captions();
     app.update_editor_playback();
@@ -517,6 +520,24 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
             app.open_picker();
             ui.close_menu();
         }
+        ui.menu_button("UI scale", |ui| {
+            for (label, z) in [("90%", 0.9f32), ("100%", 1.0), ("115%", 1.15), ("130%", 1.3), ("150%", 1.5)] {
+                let current = (ui.ctx().zoom_factor() - z).abs() < 0.01;
+                if ui.selectable_label(current, label).clicked() {
+                    ui.ctx().set_zoom_factor(z);
+                    // Persisted with the desktop-integration settings —
+                    // which live in the Linux module today; elsewhere the
+                    // choice holds for the session.
+                    #[cfg(target_os = "linux")]
+                    {
+                        let mut s = crate::integration::load_settings();
+                        s.ui_scale = z;
+                        crate::integration::save_settings(&s);
+                    }
+                    ui.close_menu();
+                }
+            }
+        });
         if ui.button("Default apps…").clicked() {
             app.defaults_open = true;
             ui.close_menu();
@@ -1573,6 +1594,29 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             .clicked()
         {
             app.export_current_frame();
+        }
+
+        if ui
+            .button("⏺ Snapshot")
+            .on_hover_text(
+                "Freeze the whole project as a named copy under \
+                 <project>.snapshots/ — `reel snapshot --list` shows them, \
+                 --restore rolls back",
+            )
+            .clicked()
+        {
+            if let Some(path) = app.editor.project_path.clone() {
+                // Flush the very latest state first — the debounce would
+                // otherwise leave a mid-drag change out of the snapshot.
+                app.editor.changed_at = std::time::Instant::now() - std::time::Duration::from_secs(2);
+                app.poll_autosave();
+                match crate::cli::take_snapshot(&path, None) {
+                    Ok(dest) => app.status = format!("Snapshot saved: {}", dest.display()),
+                    Err(e) => app.status = format!("Snapshot failed: {e}"),
+                }
+            } else {
+                app.status = "The project has no file yet — add media first.".into();
+            }
         }
 
         // ── Scopes ──────────────────────────────────────────────────────
@@ -3508,6 +3552,18 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         if ui.button("✂ Split").on_hover_text("Split under the playhead (S)").clicked() {
             app.editor_split();
         }
+        let lane_on = app.editor.show_curve_lane;
+        if ui
+            .selectable_label(lane_on, "Curve lane")
+            .on_hover_text(
+                "A full-width lane under the tracks: the selected clip's \
+                 keyframes for the Animate panel's parameter, aligned with \
+                 the ruler. Drag keys, double-click adds, right-click removes.",
+            )
+            .clicked()
+        {
+            app.editor.show_curve_lane = !lane_on;
+        }
         if ui
             .button("＋ Adjust")
             .on_hover_text(
@@ -3579,7 +3635,9 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     let ruler_h = 18.0;
     // Lanes get taller than they used to: a clip now carries its thumbnails
     // and its waveform, and both are useless when squeezed into 40 px.
-    let lane_h = ((full.height() - ruler_h - 8.0) / app.project.tracks.len().max(1) as f32)
+    let curve_lane_h: f32 = if app.editor.show_curve_lane { 74.0 } else { 0.0 };
+    let lane_h = ((full.height() - ruler_h - 8.0 - curve_lane_h)
+        / app.project.tracks.len().max(1) as f32)
         .clamp(24.0, 72.0);
 
     // Wheel: pan; Ctrl+wheel: zoom around the cursor.
@@ -4026,13 +4084,17 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let (snapped, hit) = EditorState::snap(pt - grab, &targets, snap_tol);
                         snap_line = hit;
                         let clamped = snapped.clamp(lo, hi.max(lo));
-                        let delta = app
+                        let (delta, old_span) = app
                             .project
                             .clip(id)
-                            .map(|c| clamped - c.start)
-                            .unwrap_or(0.0);
+                            .map(|c| (clamped - c.start, (c.start, c.end())))
+                            .unwrap_or((0.0, (0.0, 0.0)));
                         if let Some(c) = app.project.clip_mut(id) {
                             c.start = clamped;
+                        }
+                        // Captions/markers/titles inside the clip ride along.
+                        if delta.abs() > 1e-9 {
+                            app.project.carry_annotations(old_span.0, old_span.1, delta);
                         }
                         // A selection moves as one object.
                         if delta.abs() > 1e-9 {
@@ -4132,6 +4194,144 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 [egui::pos2(x, full.top()), egui::pos2(x, full.bottom())],
                 Stroke::new(1.5, theme::CYAN),
             );
+        }
+    }
+
+    // ── The curve lane ──────────────────────────────────────────────────
+    // Full-width keyframe editing aligned with the ruler: the selected
+    // clip's track for the Animate panel's parameter, in TIMELINE time.
+    if app.editor.show_curve_lane {
+        let lane_top = full.top() + ruler_h + 4.0
+            + app.project.tracks.len() as f32 * (lane_h + 4.0);
+        let lane = Rect::from_min_size(
+            egui::pos2(full.left(), lane_top),
+            Vec2::new(full.width(), curve_lane_h - 6.0),
+        );
+        painter.rect_filled(lane, 4.0, theme::VOID_2);
+        let param = app.editor.key_param;
+        let sel = app.editor.selected.and_then(|id| app.project.clip(id).cloned());
+        match sel {
+            Some(clip) if clip.key_track(param).is_some() => {
+                let (lo, hi) = param.range();
+                let keys: Vec<crate::edit::Keyframe> =
+                    clip.key_track(param).map(|k| k.to_vec()).unwrap_or_default();
+                let to_y = |v: f32| {
+                    lane.bottom() - 4.0
+                        - ((v - lo) / (hi - lo)).clamp(0.0, 1.0) * (lane.height() - 8.0)
+                };
+                // The clip's span, tinted, and the evaluated curve across it.
+                let (x0, x1) = (t_to_x(clip.start), t_to_x(clip.end()));
+                painter.rect_filled(
+                    Rect::from_min_max(egui::pos2(x0, lane.top()), egui::pos2(x1, lane.bottom())),
+                    0.0,
+                    Color32::from_rgba_unmultiplied(60, 180, 200, 14),
+                );
+                let n = 96;
+                let pts: Vec<egui::Pos2> = (0..=n)
+                    .map(|i| {
+                        let tl = clip.duration * i as f64 / n as f64;
+                        let v = crate::edit::eval_keys(&keys, tl).unwrap_or(lo);
+                        egui::pos2(t_to_x(clip.start + tl), to_y(v))
+                    })
+                    .collect();
+                painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+                // Keys: hit-test, drag, add, remove — the panel editor's
+                // gestures, on the ruler's clock.
+                let resp = ui.interact(lane, ui.id().with("curve_lane"), Sense::click_and_drag());
+                let pointer = resp.hover_pos().or_else(|| resp.interact_pointer_pos());
+                let mut hover: Option<usize> = None;
+                for (i, k) in keys.iter().enumerate() {
+                    let pnt = egui::pos2(t_to_x(clip.start + k.t), to_y(k.value));
+                    if let Some(m) = pointer {
+                        if (m - pnt).length() < 9.0 && hover.is_none() {
+                            hover = Some(i);
+                        }
+                    }
+                    let big = hover == Some(i);
+                    let r = if big { 5.5 } else { 4.0 };
+                    painter.add(egui::Shape::convex_polygon(
+                        vec![
+                            egui::pos2(pnt.x, pnt.y - r),
+                            egui::pos2(pnt.x + r, pnt.y),
+                            egui::pos2(pnt.x, pnt.y + r),
+                            egui::pos2(pnt.x - r, pnt.y),
+                        ],
+                        if big { theme::STAR } else { theme::CYAN },
+                        Stroke::new(1.0, theme::VOID),
+                    ));
+                }
+                if resp.drag_started() {
+                    if let Some(i) = hover {
+                        app.editor.push_undo(&app.project);
+                        app.editor.curve_drag = Some(i);
+                    }
+                }
+                if resp.dragged() {
+                    if let (Some(i), Some(m)) = (app.editor.curve_drag, resp.interact_pointer_pos()) {
+                        let tl = (x_to_t(m.x) - clip.start).clamp(0.0, clip.duration);
+                        let v = lo
+                            + ((lane.bottom() - 4.0 - m.y) / (lane.height() - 8.0)).clamp(0.0, 1.0)
+                                * (hi - lo);
+                        if let Some(c) = app.project.clip_mut(clip.id) {
+                            if let Some((_, ks)) = c.keys.iter_mut().find(|(q, _)| *q == param) {
+                                if let Some(k) = ks.get_mut(i) {
+                                    k.t = tl;
+                                    k.value = v;
+                                }
+                                let held = ks.get(i).cloned();
+                                ks.sort_by(|a, b| a.t.total_cmp(&b.t));
+                                if let Some(h) = held {
+                                    app.editor.curve_drag =
+                                        ks.iter().position(|k| (k.t - h.t).abs() < 1e-9);
+                                }
+                            }
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+                if resp.drag_stopped() {
+                    app.editor.curve_drag = None;
+                }
+                if resp.double_clicked() {
+                    if let Some(m) = resp.interact_pointer_pos() {
+                        let tl = (x_to_t(m.x) - clip.start).clamp(0.0, clip.duration);
+                        let v = lo
+                            + ((lane.bottom() - 4.0 - m.y) / (lane.height() - 8.0)).clamp(0.0, 1.0)
+                                * (hi - lo);
+                        app.editor.push_undo(&app.project);
+                        if let Some(c) = app.project.clip_mut(clip.id) {
+                            c.set_key(param, tl, v, crate::edit::Interp::Linear);
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+                if resp.secondary_clicked() {
+                    if let Some(i) = hover {
+                        let kt = keys[i].t;
+                        app.editor.push_undo(&app.project);
+                        if let Some(c) = app.project.clip_mut(clip.id) {
+                            c.clear_key(param, kt);
+                        }
+                        app.editor.mark_changed();
+                    }
+                }
+                painter.text(
+                    egui::pos2(lane.left() + 6.0, lane.top() + 8.0),
+                    egui::Align2::LEFT_CENTER,
+                    param.name(),
+                    egui::FontId::monospace(10.0),
+                    Color32::from_gray(130),
+                );
+            }
+            _ => {
+                painter.text(
+                    lane.center(),
+                    egui::Align2::CENTER_CENTER,
+                    "select a clip with keyframes (Animate panel picks the parameter)",
+                    egui::FontId::proportional(11.0),
+                    Color32::from_gray(110),
+                );
+            }
         }
     }
 

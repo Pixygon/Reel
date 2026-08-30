@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Deterministic CI: no probing for GPU encoders that runners don't have.
+  REEL_NO_HWENC: "1"
+
+jobs:
+  test:
+    name: Linux — full suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - name: System deps (ffmpeg, libmpv, software Vulkan for the compositor tests)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg libmpv2 mesa-vulkan-drivers libvulkan1 \
+            libasound2-dev pkg-config libclang-dev \
+            libpipewire-0.3-dev libspa-0.2-dev
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release
+      - name: Test (real ffmpeg + software-Vulkan GPU; capped at 8 threads by .cargo/config.toml)
+        run: cargo test --release
+
+  windows-cross:
+    name: Windows — cross-compile check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: MinGW toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-mingw-w64-x86-64
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: win-cross
+      - name: Cross build
+        run: cargo build --release --target x86_64-pc-windows-gnu

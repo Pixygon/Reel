@@ -112,6 +112,8 @@ pub struct ReelApp {
     pub src_mark_out: Option<f64>,
     /// The `?` keyboard-map overlay.
     pub show_keymap: bool,
+    /// A saved UI scale to apply on the first frame (ctx isn't here yet).
+    pub pending_zoom: Option<f32>,
     /// Publish-everywhere filename template — {name}, {platform} expand.
     pub publish_template: String,
     /// Preset slugs whose publish render should NOT burn captions.
@@ -228,6 +230,7 @@ impl ReelApp {
             src_mark_in: None,
             src_mark_out: None,
             show_keymap: false,
+            pending_zoom: None,
             publish_template: "{name}-{platform}".into(),
             publish_no_captions: std::collections::HashSet::new(),
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
@@ -285,7 +288,11 @@ impl ReelApp {
             if let Err(e) = crate::integration::install_desktop_entry() {
                 log::warn!("could not install desktop entry: {e}");
             }
-            self.defaults_banner = !crate::integration::load_settings().defaults_prompted;
+            let settings = crate::integration::load_settings();
+            self.defaults_banner = !settings.defaults_prompted;
+            if settings.ui_scale > 0.5 {
+                self.pending_zoom = Some(settings.ui_scale);
+            }
         }
     }
 
@@ -526,6 +533,15 @@ impl ReelApp {
                     self.project = project;
                     self.editor = EditorState::default();
                     self.editor.project_path = Some(path.to_string());
+                    // Resume exactly where the last session stood.
+                    let ses = self.project.session.clone();
+                    self.editor.playhead = ses.playhead.max(0.0);
+                    if ses.zoom > 1.0 {
+                        self.editor.px_per_s = ses.zoom;
+                    }
+                    self.editor.scroll_x = ses.scroll_x;
+                    self.editor.selected =
+                        ses.selected.filter(|id| self.project.clip(*id).is_some());
                     self.mode = Mode::Editor;
                     self.window_title = format!("{name} — Reel");
                     self.status = format!("Project {name} loaded.");
@@ -1244,6 +1260,13 @@ impl ReelApp {
                 self.editor.project_path = Some(p.clone());
                 p
             }
+        };
+        // Crash recovery: the resume point travels with the document.
+        self.project.session = crate::edit::Session {
+            playhead: self.editor.playhead,
+            zoom: self.editor.px_per_s,
+            scroll_x: self.editor.scroll_x,
+            selected: self.editor.selected,
         };
         let json = match serde_json::to_string_pretty(&self.project) {
             Ok(j) => j,

@@ -1,0 +1,38 @@
+# Flatpak manifest for Reel — a STARTING POINT, not yet a published build.
+#
+# Honest status: this manifest is untested (no flatpak-builder on the dev
+# box) and cargo needs vendored sources for --offline builds under
+# flatpak-builder (generate with `flatpak-cargo-generator`). Screen capture
+# and file dialogs already go through XDG portals in Reel, so the sandbox
+# story is mostly done — finishing this is a good first contribution.
+app-id: io.pixygon.Reel
+runtime: org.freedesktop.Platform
+runtime-version: '24.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: reel
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --socket=pulseaudio
+  - --device=dri
+  - --filesystem=home
+  - --talk-name=org.freedesktop.portal.Desktop
+modules:
+  # Reel dlopens libmpv at runtime and shells out to ffmpeg; both need to
+  # be present in the runtime (org.freedesktop.Platform.ffmpeg-full) or
+  # added here as modules.
+  - name: reel
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+    build-commands:
+      - cargo build --release --offline
+      - install -Dm755 target/release/reel /app/bin/reel
+      - install -Dm644 assets/reel.desktop /app/share/applications/io.pixygon.Reel.desktop
+      - install -Dm644 assets/reel-icon.svg /app/share/icons/hicolor/scalable/apps/io.pixygon.Reel.svg
+    sources:
+      - type: dir
+        path: ..

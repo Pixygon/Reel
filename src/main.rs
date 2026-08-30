@@ -33,13 +33,22 @@ mod runtime;
 #[cfg(target_os = "linux")]
 mod tray;
 
-/// Events that wake the winit loop from outside (tray menu clicks).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Events that wake the winit loop from outside (tray menu clicks,
+/// AccessKit's screen-reader plumbing).
+#[derive(Debug)]
 pub enum UserEvent {
     Show,
     Shot(capture::ShotMode),
     ToggleRecord,
     Quit,
+    /// AccessKit adapter events (screen readers) — egui consumes these.
+    Access(egui_winit::accesskit_winit::Event),
+}
+
+impl From<egui_winit::accesskit_winit::Event> for UserEvent {
+    fn from(e: egui_winit::accesskit_winit::Event) -> Self {
+        UserEvent::Access(e)
+    }
 }
 mod theme;
 mod track;
@@ -72,6 +81,8 @@ struct Reel {
     tray: Option<ksni::Handle<tray::ReelTray>>,
     /// Last recording state mirrored into the tray label.
     tray_recording: bool,
+    /// Loop proxy — AccessKit wakes the loop through it.
+    proxy: winit::event_loop::EventLoopProxy<UserEvent>,
 }
 
 impl Reel {
@@ -101,8 +112,11 @@ impl ApplicationHandler<UserEvent> for Reel {
         timing!("window created");
         let gpu = pollster::block_on(Gpu::new(window.clone())).expect("init gpu");
         timing!("gpu ready");
-        let egui = EguiBackend::new(&gpu, &window);
+        let mut egui = EguiBackend::new(&gpu, &window);
         theme::apply(&egui.ctx);
+        // Screen readers: AccessKit gets the window + a way to wake the
+        // loop. egui builds and pushes the accessibility tree from here on.
+        egui.state.init_accesskit(&window, self.proxy.clone());
 
         self.window = Some(window);
         self.gpu = Some(gpu);
@@ -209,6 +223,16 @@ impl ApplicationHandler<UserEvent> for Reel {
                 self.sync_tray();
             }
             UserEvent::Quit => event_loop.exit(),
+            UserEvent::Access(ev) => {
+                // Route AccessKit's action requests into egui.
+                if let egui_winit::accesskit_winit::WindowEvent::ActionRequested(req) =
+                    ev.window_event
+                {
+                    if let Some(egui) = &mut self.egui {
+                        egui.state.on_accesskit_action_request(req);
+                    }
+                }
+            }
         }
         if let Some(w) = &self.window {
             w.request_redraw();
@@ -296,6 +320,7 @@ fn main() {
     let tray = tray::spawn(event_loop.create_proxy());
     timing!("tray registered");
 
+    let proxy = event_loop.create_proxy();
     let mut reel = Reel {
         window: None,
         gpu: None,
@@ -306,6 +331,7 @@ fn main() {
         #[cfg(target_os = "linux")]
         tray,
         tray_recording: false,
+        proxy,
     };
     #[cfg(target_os = "linux")]
     {

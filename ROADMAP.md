@@ -44,9 +44,11 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 - [x] (v1.7.0) Markers/captions/titles now RIDE ripples: cuts, ripple
       deletes, tightens, filler removal and paste-inserts shift them with
       the material, and annotations inside a removed window die with it
-      (`shift_annotations`/`drop_annotations_in`, tested). Anchoring
-      through arbitrary clip drags remains open:
-- [ ] Markers/captions/titles authored against edit time survive
+      (`shift_annotations`/`drop_annotations_in`, tested).
+- [x] (v1.8.0) …and they ride plain DRAGS too: `carry_annotations` moves
+      everything inside a dragged clip's span with the clip (tested).
+      Which completes:
+- [x] Markers/captions/titles authored against edit time survive
       re-timing edits upstream of them (anchor to clips where possible).
 
 ## B. Preview honesty debts — shipped in v1.2.0
@@ -99,8 +101,10 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       the curve editor (middle-click cycles linear/ease/hold/bezier).
       Speed ramps through beziers stay honest: the integral goes numeric
       for bezier intervals but remains THE single contract (tested against
-      a fine sum and its own inverse). The full-width timeline curve lane
-      is still open.
+      a fine sum and its own inverse).
+- [x] (v1.8.0) The full-width timeline CURVE LANE: toggle in the toolbar —
+      the selected clip's keyframes for the Animate parameter, aligned
+      with the ruler; drag/add/remove keys in timeline coordinates.
 - [x] **Auto tracking for power windows** (`track.rs`): zero-mean NCC
       template matching at 10 Hz on a 192×108 grid, patch 1.5× the window
       so the subject's edges are the feature; stops when correlation
@@ -201,7 +205,11 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       notarized dmg via the self-hosted runner). Needs Mac hardware/SDK.
 - [ ] Windows capture backend (Windows.Graphics.Capture). Needs a Windows
       box to verify against.
-- [ ] Flatpak and AppImage; Windows file associations + installer.
+- [~] AppImage ships (v1.8.0): `scripts/appimage.sh`, built and smoke-
+      tested (plays through libmpv from inside the image), published per
+      release. Flatpak: manifest committed (`packaging/io.pixygon.Reel.yml`)
+      but honestly untested — needs vendored cargo sources; a good first
+      contribution. Windows file associations + installer still open.
 - [x] Mixer's Linux gate LIFTED for Windows (v1.6.0): WASAPI through
       cpal (the Linux objection — ALSA-only cpal on PipeWire desktops —
       doesn't apply there). Same MixState/render_into core, so meters,
@@ -211,17 +219,25 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       API, merged for 0.31) — lands here when egui/egui-winit adopt
       winit 0.31.
 
-## I. 1.x hygiene
+## I. 1.x hygiene — v1.8.0
 
-- [ ] Reconcile the Pixygon changelog server's version (0.40.0) with the
-      shipped 1.0.0 before the next `pearl ship`.
-- [ ] Sponsors button live once the org toggle is flipped; donation link
-      on the site.
-- [ ] CONTRIBUTING.md + labeled starter issues; CI running the full suite
-      (Xvfb visual checks included) on PRs.
-- [ ] Crash recovery (restore exact editor state) and named project
-      snapshots — "never lose work" still has these two IOUs.
-- [ ] Localization scaffolding; AccessKit wiring; UI scale setting.
+- [x] Pixygon changelog server version reconciled (PATCH /projects/:id
+      currentVersion — was 0.40.0, now tracks reality).
+- [x] Sponsors button live on the site (♥ → github.com/sponsors/Pixygon).
+      NOTE: the org's Sponsors LISTING still needs publishing (profile +
+      tiers + Stripe) before the link resolves to a real page.
+- [x] CONTRIBUTING.md; CI on GitHub Actions (full suite with real ffmpeg
+      + software Vulkan, plus a Windows cross-compile job); labeled
+      starter issues.
+- [x] Crash recovery: the editor's resume point (playhead/zoom/scroll/
+      selection) autosaves into the document (`Project.session`) and
+      restores on open. Named snapshots: `reel snapshot [--name|--list|
+      --restore]` + the ⏺ Snapshot button (restore keeps the replaced
+      state as its own snapshot).
+- [x] AccessKit wired (egui-winit accesskit feature + adapter + action
+      routing) — screen readers get egui's accessibility tree. UI scale
+      setting (☰ → UI scale, persisted). Localization scaffolding: still
+      open, tracked as a starter issue.
 
 ---
 
