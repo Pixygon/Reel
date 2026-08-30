@@ -15,6 +15,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_queue();
     app.poll_audition();
     app.poll_tracking();
+    app.poll_nesting();
     app.poll_autosave();
     app.poll_captions();
     app.update_editor_playback();
@@ -709,7 +710,14 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 .unwrap_or_else(|| path.clone());
             ui.horizontal(|ui| {
                 if online {
-                    if ui.small_button("▶").on_hover_text("Source monitor: preview, set I/O, insert").clicked() {
+                    if path.ends_with(".reel") {
+                        if ui.small_button("nest").on_hover_text(
+                            "Compound clip: render this edit flat and drop it at the playhead. \
+                             It refreshes automatically when the nested edit changes.",
+                        ).clicked() {
+                            app.start_nesting(&path, true);
+                        }
+                    } else if ui.small_button("▶").on_hover_text("Source monitor: preview, set I/O, insert").clicked() {
                         app.preview_source(&path);
                     }
                     ui.label(RichText::new(&name).small());
@@ -1858,7 +1866,9 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     tint: [1.0, 1.0, 1.0, fade],
                     use_src_alpha: app.image.is_some(),
                     effects,
-                    lut: app.lut_view(effects),
+                    // The stacked lattice (clip grade + adjustment layers)
+                    // when in the editor; the plain per-fx one elsewhere.
+                    lut: app.preview_lut().or_else(|| app.lut_view(effects)),
                 },
             ));
             // The incoming half of a crossfade, blended over the outgoing
@@ -2378,11 +2388,80 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
         ));
     }
 
+    // Bezier handles: for a Bezier segment, the outgoing handle of key i
+    // and the incoming handle of the SAME segment (drawn near key i+1).
+    // Both live in segment-normalised space and are dragged in it.
+    let mut handle_hover: Option<(usize, bool)> = None;
+    for (i, k) in track.iter().enumerate() {
+        let Interp::Bezier { x1, y1, x2, y2 } = k.interp else { continue };
+        let Some(next) = track.get(i + 1) else { continue };
+        let (pa, pb) = (
+            egui::pos2(to_x(k.t), to_y(k.value)),
+            egui::pos2(to_x(next.t), to_y(next.value)),
+        );
+        let h1 = egui::pos2(pa.x + (pb.x - pa.x) * x1, pa.y + (pb.y - pa.y) * y1);
+        let h2 = egui::pos2(pa.x + (pb.x - pa.x) * x2, pa.y + (pb.y - pa.y) * y2);
+        painter.line_segment([pa, h1], Stroke::new(1.0, Color32::from_gray(110)));
+        painter.line_segment([pb, h2], Stroke::new(1.0, Color32::from_gray(110)));
+        for (h, incoming) in [(h1, false), (h2, true)] {
+            if let Some(m) = pointer {
+                if (m - h).length() < 8.0 && handle_hover.is_none() && hover.is_none() {
+                    handle_hover = Some((i, incoming));
+                }
+            }
+            let active = handle_hover == Some((i, incoming))
+                || app.editor.curve_handle_drag == Some((i, incoming));
+            painter.circle_filled(h, if active { 4.5 } else { 3.0 },
+                if active { theme::STAR } else { Color32::from_gray(160) });
+        }
+    }
+
     // Interactions. One undo step per gesture.
     if response.drag_started() {
-        if let Some(i) = hover {
+        if let Some(hh) = handle_hover {
+            app.editor.push_undo(&app.project);
+            app.editor.curve_handle_drag = Some(hh);
+        } else if let Some(i) = hover {
             app.editor.push_undo(&app.project);
             app.editor.curve_drag = Some(i);
+        }
+    }
+    if response.dragged() {
+        if let (Some((i, incoming)), Some(m)) =
+            (app.editor.curve_handle_drag, response.interact_pointer_pos())
+        {
+            // Back-map the pointer into segment-normalised space.
+            if let (Some(a), Some(b)) = (track.get(i), track.get(i + 1)) {
+                let (pa, pb) = (
+                    egui::pos2(to_x(a.t), to_y(a.value)),
+                    egui::pos2(to_x(b.t), to_y(b.value)),
+                );
+                let nx = ((m.x - pa.x) / (pb.x - pa.x).max(1.0)).clamp(0.0, 1.0);
+                let ny = if (pb.y - pa.y).abs() > 0.5 {
+                    (m.y - pa.y) / (pb.y - pa.y)
+                } else {
+                    // A flat segment: map vertical drag against the panel
+                    // height so overshoot handles are still reachable.
+                    (pa.y - m.y) / rect.height() + if incoming { 1.0 } else { 0.0 }
+                };
+                let ny = ny.clamp(-1.0, 2.0);
+                if let Some(c) = app.project.clip_mut(id) {
+                    if let Some((_, keys)) = c.keys.iter_mut().find(|(q, _)| *q == param) {
+                        if let Some(k) = keys.get_mut(i) {
+                            if let Interp::Bezier { x1, y1, x2, y2 } = &mut k.interp {
+                                if incoming {
+                                    *x2 = nx;
+                                    *y2 = ny;
+                                } else {
+                                    *x1 = nx;
+                                    *y1 = ny;
+                                }
+                            }
+                        }
+                    }
+                }
+                app.editor.mark_changed();
+            }
         }
     }
     if response.dragged() {
@@ -2410,6 +2489,28 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
     }
     if response.drag_stopped() {
         app.editor.curve_drag = None;
+        app.editor.curve_handle_drag = None;
+    }
+    // Middle-click a key: cycle how it leaves — linear, ease, hold, bezier
+    // (which grows draggable handles).
+    if response.clicked_by(egui::PointerButton::Middle) {
+        if let Some(i) = hover {
+            let t = track[i].t;
+            app.editor.push_undo(&app.project);
+            if let Some(c) = app.project.clip_mut(id) {
+                if let Some((_, keys)) = c.keys.iter_mut().find(|(q, _)| *q == param) {
+                    if let Some(k) = keys.iter_mut().find(|k| (k.t - t).abs() < 1e-9) {
+                        k.interp = match k.interp {
+                            Interp::Linear => Interp::Ease,
+                            Interp::Ease => Interp::Hold,
+                            Interp::Hold => Interp::bezier_default(),
+                            Interp::Bezier { .. } => Interp::Linear,
+                        };
+                    }
+                }
+            }
+            app.editor.mark_changed();
+        }
     }
     if response.double_clicked() {
         if let Some(m) = response.interact_pointer_pos() {
@@ -2432,7 +2533,7 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
         }
     }
     ui.label(
-        RichText::new("drag a key · double-click to add · right-click to remove")
+        RichText::new("drag a key · double-click adds · right-click removes · middle-click cycles linear/ease/hold/bezier")
             .small()
             .color(egui::Color32::from_gray(120)),
     );
@@ -3407,6 +3508,25 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         if ui.button("✂ Split").on_hover_text("Split under the playhead (S)").clicked() {
             app.editor_split();
         }
+        if ui
+            .button("＋ Adjust")
+            .on_hover_text(
+                "Add an ADJUSTMENT LAYER at the playhead: a 4s span whose \
+                 colour grade applies to everything beneath it — select it \
+                 and use the Look panel",
+            )
+            .clicked()
+        {
+            app.editor.push_undo(&app.project);
+            let at = app.editor.playhead;
+            let id = app.project.add_clip("", crate::edit::TrackKind::Overlay, at, 0.0, 4.0);
+            if let Some(c) = app.project.clip_mut(id) {
+                c.adjustment = true;
+                c.name = "adjust".into();
+            }
+            app.editor.selected = Some(id);
+            app.editor.mark_changed();
+        }
         let del = ui.add_enabled(app.editor.selected.is_some(), egui::Button::new("🗑 Delete"));
         if del.on_hover_text("Delete selected clip (Del)").clicked() {
             app.editor_delete();
@@ -3625,6 +3745,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             TrackKind::Audio => theme::EMBER,
             TrackKind::Overlay => theme::STAR,
         };
+        let _ = &base;
         for clip in clips {
             let x0 = t_to_x(clip.start);
             let x1 = t_to_x(clip.end());
@@ -3714,9 +3835,18 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
 
+            // Adjustment layers wear their difference: a violet wash and a
+            // label — they grade what's below, they aren't footage.
+            if clip.adjustment {
+                painter.rect_filled(cr, 3.0, Color32::from_rgba_unmultiplied(190, 140, 255, 46));
+            }
             if cr.width() > 40.0 {
                 // A slab behind the label so it stays readable over the wave.
-                let text = format!("{}  {:.1}s", clip.name, clip.duration);
+                let text = if clip.adjustment {
+                    format!("ADJUST  {:.1}s", clip.duration)
+                } else {
+                    format!("{}  {:.1}s", clip.name, clip.duration)
+                };
                 let galley = painter.layout_no_wrap(
                     text,
                     egui::FontId::proportional(11.0),

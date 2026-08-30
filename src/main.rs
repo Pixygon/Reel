@@ -11,6 +11,7 @@ mod app;
 mod audio;
 mod beats;
 mod captions;
+mod compound;
 mod capture;
 mod cli;
 mod edit;

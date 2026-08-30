@@ -352,6 +352,16 @@ Sync one clip to another by their AUDIO — multicam without clap sticks
 | `--to` | `ID` | The clip to sync against |
 | `--window` | `SECONDS` | Largest offset to search (default 90) |
 
+### `reel adjust PROJECT`
+
+Add an adjustment layer — a span whose colour grade applies to everything beneath it (set the grade with `reel effects --clip`)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--at` | `SECONDS` | Where the layer starts |
+| `--duration` | `SECONDS` | How long it lasts (default 4) |
+| `--json` | — | Print the result as JSON |
+
 ### `reel pool PROJECT`
 
 The media pool: gather, bin and list this project's media (offline files are flagged)

@@ -65,6 +65,15 @@ pub struct Clip {
     /// definition consumed by the export chain and the live mixer alike.
     #[serde(default)]
     pub audio: AudioFx,
+    /// An ADJUSTMENT LAYER: this overlay clip draws nothing of its own —
+    /// its Effects apply to everything beneath it for its time window.
+    #[serde(default)]
+    pub adjustment: bool,
+    /// A COMPOUND CLIP's origin: the nested .reel this clip's source was
+    /// flattened from. The source stays the flat render; this is what lets
+    /// Reel notice the nested edit changed and refresh it.
+    #[serde(default)]
+    pub nested: Option<String>,
 }
 
 /// Per-clip audio processing. Defaults are identity; every field is
@@ -317,13 +326,46 @@ impl TransitionKind {
 }
 
 /// How a keyframe reaches the next one.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
 pub enum Interp {
     Linear,
     /// Step: hold this value until the next keyframe.
     Hold,
     /// Smooth in and out (smoothstep) — the "just make it nice" curve.
     Ease,
+    /// A cubic-bezier ease with editable handles, CSS-style: control
+    /// points in normalised segment space. (x1,y1) shapes the way OUT of
+    /// this key, (x2,y2) the way INTO the next.
+    Bezier { x1: f32, y1: f32, x2: f32, y2: f32 },
+}
+
+impl Interp {
+    /// A pleasant default bezier (ease-in-out) for freshly-added handles.
+    pub fn bezier_default() -> Self {
+        Interp::Bezier { x1: 0.42, y1: 0.0, x2: 0.58, y2: 1.0 }
+    }
+}
+
+/// Eased progress through a cubic bezier: solve x(u) = p for u (the curve
+/// is monotone in x when handles stay in 0..1), then return y(u).
+pub fn bezier_ease(x1: f32, y1: f32, x2: f32, y2: f32, p: f32) -> f32 {
+    let (x1, x2) = (x1.clamp(0.0, 1.0), x2.clamp(0.0, 1.0));
+    let cubic = |a: f32, b: f32, u: f32| -> f32 {
+        // Bernstein form with P0=0, P3=1.
+        let v = 1.0 - u;
+        3.0 * v * v * u * a + 3.0 * v * u * u * b + u * u * u
+    };
+    // Bisection on x — monotone, 24 steps ≈ 6e-8 precision.
+    let (mut lo, mut hi) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let mid = (lo + hi) * 0.5;
+        if cubic(x1, x2, mid) < p {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    cubic(y1, y2, (lo + hi) * 0.5)
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -355,6 +397,7 @@ pub fn eval_keys(keys: &[Keyframe], t: f64) -> Option<f32> {
         Interp::Hold => 0.0,
         Interp::Linear => p,
         Interp::Ease => p * p * (3.0 - 2.0 * p),
+        Interp::Bezier { x1, y1, x2, y2 } => bezier_ease(x1, y1, x2, y2, p),
     };
     Some(a.value + (b.value - a.value) * p)
 }
@@ -406,6 +449,20 @@ pub fn speed_integral(keys: &[Keyframe], base: f32, t: f64) -> f64 {
                 Interp::Linear => va * p + (vb - va) * p * p / 2.0,
                 // smoothstep: ∫(va + (vb-va)(3p²-2p³))dp
                 Interp::Ease => va * p + (vb - va) * (p.powi(3) - p.powi(4) / 2.0),
+                // A bezier has no tidy antiderivative in x — integrate
+                // numerically. Deterministic (fixed step), and the same
+                // function feeds picture, sound and the inverse map, so
+                // they can't disagree.
+                Interp::Bezier { x1, y1, x2, y2 } => {
+                    const N: usize = 64;
+                    let mut sum = 0.0f64;
+                    for i in 0..N {
+                        let u = (i as f64 + 0.5) / N as f64 * p;
+                        let e = bezier_ease(x1, y1, x2, y2, u as f32) as f64;
+                        sum += va + (vb - va) * e;
+                    }
+                    sum * p / N as f64
+                }
             }
         };
         acc += (anti(p1) - anti(p0)) * span_full;
@@ -755,6 +812,8 @@ pub struct OverlaySegment {
     pub effects: Effects,
     /// Animated parameters (PipX/PipY/PipScale/Opacity), clip-local time.
     pub keys: Vec<(Param, Vec<Keyframe>)>,
+    /// Adjustment layer: apply `effects` to what's below, draw nothing.
+    pub adjustment: bool,
 }
 
 impl OverlaySegment {
@@ -959,6 +1018,8 @@ impl Project {
                 pip: Pip::default(),
                 keys: Vec::new(),
                 audio: AudioFx::default(),
+                adjustment: false,
+                nested: None,
                 stabilize: false,
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -1143,6 +1204,7 @@ impl Project {
         let mut removed = 0.0;
         let mut cuts = 0;
         for (t0, t1) in merged.iter().rev() {
+            self.drop_annotations_in(*t0, *t1);
             self.split_at(*t0);
             self.split_at(*t1);
             // Everything fully inside [t0, t1] goes; the ripple closes up.
@@ -1156,7 +1218,7 @@ impl Project {
             for id in doomed {
                 self.delete_clip(id);
             }
-            // Close the hole on every track.
+            // Close the hole on every track — annotations ride along.
             let gap = t1 - t0;
             for track in &mut self.tracks {
                 for c in &mut track.clips {
@@ -1166,6 +1228,7 @@ impl Project {
                 }
                 track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
             }
+            self.shift_annotations(*t1, -gap);
             removed += gap;
             cuts += 1;
         }
@@ -1208,6 +1271,9 @@ impl Project {
 
     /// Put a file in the media pool (deduplicated by path).
     pub fn pool_add(&mut self, path: &str, bin: &str) {
+        if path.is_empty() {
+            return; // adjustment layers have no media
+        }
         if let Some(item) = self.pool.iter_mut().find(|i| i.path == path) {
             if !bin.is_empty() {
                 item.bin = bin.to_string();
@@ -1476,6 +1542,7 @@ impl Project {
                 gain_db: c.gain_db,
                 effects: c.effects,
                 keys: c.keys.clone(),
+                adjustment: c.adjustment,
             })
             .collect();
         out.sort_by(|a, b| a.at.total_cmp(&b.at));
@@ -1497,6 +1564,7 @@ impl Project {
                     && (!soloing || t.solo)
             })
             .flat_map(|t| t.clips.iter().map(move |c| (t.gain_db, t.pan, c)))
+            .filter(|(_, _, c)| !c.adjustment && !c.source.is_empty())
             .map(|(track_gain, track_pan, c)| AudioClip {
                 source: c.source.clone(),
                 at: c.start,
@@ -1663,6 +1731,55 @@ impl Project {
             }
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
         }
+        self.shift_annotations(from, -amount);
+    }
+
+    /// Markers, captions and titles live in TIMELINE time — an edit that
+    /// moves the timeline under them must carry them along, or a caption
+    /// timed to a word drifts onto the wrong shot. Everything at or after
+    /// `from` moves by `delta` (never past zero); a span whose START is
+    /// before `from` keeps its start (its tail stretches/shrinks with the
+    /// material under it).
+    pub fn shift_annotations(&mut self, from: f64, delta: f64) {
+        if delta.abs() < 1e-9 {
+            return;
+        }
+        for m in &mut self.markers {
+            if *m >= from - 1e-6 {
+                *m = (*m + delta).max(0.0);
+            }
+        }
+        for (t, _) in &mut self.marker_labels {
+            if *t >= from - 1e-6 {
+                *t = (*t + delta).max(0.0);
+            }
+        }
+        for c in &mut self.captions {
+            if c.start >= from - 1e-6 {
+                c.start = (c.start + delta).max(0.0);
+                c.end = (c.end + delta).max(c.start + 0.05);
+            } else if c.end > from {
+                c.end = (c.end + delta).max(c.start + 0.05);
+            }
+        }
+        for t in &mut self.titles {
+            if t.start >= from - 1e-6 {
+                t.start = (t.start + delta).max(0.0);
+                t.end = (t.end + delta).max(t.start + 0.05);
+            } else if t.end > from {
+                t.end = (t.end + delta).max(t.start + 0.05);
+            }
+        }
+    }
+
+    /// Drop annotations living entirely inside a removed window — used by
+    /// the hole-cutting paths so a caption for trimmed-away speech dies
+    /// with it instead of piling onto the join.
+    fn drop_annotations_in(&mut self, t0: f64, t1: f64) {
+        self.markers.retain(|m| !(*m >= t0 - 1e-6 && *m <= t1 + 1e-6));
+        self.marker_labels.retain(|(t, _)| !(*t >= t0 - 1e-6 && *t <= t1 + 1e-6));
+        self.captions.retain(|c| !(c.start >= t0 - 1e-6 && c.end <= t1 + 1e-6));
+        self.titles.retain(|t| !(t.start >= t0 - 1e-6 && t.end <= t1 + 1e-6));
     }
 
     /// Remove a clip and close the hole behind it — Shift+Delete in every
@@ -1746,6 +1863,7 @@ impl Project {
                 }
             }
         }
+        self.shift_annotations(at, clip.duration);
 
         let id = self.next_id;
         self.next_id += 1;
@@ -1966,6 +2084,8 @@ pub struct EditorState {
     pub project_path: Option<String>,
     /// The clip whose effect sliders are mid-drag — one undo step per gesture.
     pub fx_gesture: Option<u64>,
+    /// A bezier handle mid-drag in the curve editor: (key index, incoming?).
+    pub curve_handle_drag: Option<(usize, bool)>,
     /// Index of the title being edited, if any — it shows a box in the
     /// preview and is the one you can drag around.
     pub selected_title: Option<usize>,
@@ -2024,6 +2144,7 @@ impl Default for EditorState {
             selected_title: None,
             clipboard: None,
             target_track: None,
+            curve_handle_drag: None,
             key_param: Param::Exposure,
             curve_drag: None,
             multi: std::collections::HashSet::new(),
@@ -2105,6 +2226,88 @@ mod tests {
         p.append_video("a", "/tmp/a.mp4", 10.0);
         p.append_audio("a", "/tmp/a.mp4", 10.0);
         p
+    }
+
+    /// Bezier keys: exact at the ends, monotone for an ease, and the speed
+    /// integral stays consistent with its own inverse — picture, sound and
+    /// seeking share that one contract.
+    #[test]
+    fn bezier_keys_ease_and_integrate_consistently() {
+        // eval: the standard ease-in-out starts slow, ends slow.
+        let keys = vec![
+            Keyframe { t: 0.0, value: 0.0, interp: Interp::bezier_default() },
+            Keyframe { t: 1.0, value: 1.0, interp: Interp::Linear },
+        ];
+        assert_eq!(eval_keys(&keys, 0.0), Some(0.0));
+        assert_eq!(eval_keys(&keys, 1.0), Some(1.0));
+        let q1 = eval_keys(&keys, 0.25).unwrap();
+        let mid = eval_keys(&keys, 0.5).unwrap();
+        let q3 = eval_keys(&keys, 0.75).unwrap();
+        assert!((mid - 0.5).abs() < 0.02, "symmetric ease crosses the middle: {mid}");
+        assert!(q1 < 0.2, "slow start: {q1}");
+        assert!(q3 > 0.8, "fast approach then settle: {q3}");
+        // Monotone: no wobble with tame handles.
+        let mut prev = -1.0f32;
+        for i in 0..=40 {
+            let v = eval_keys(&keys, i as f64 / 40.0).unwrap();
+            assert!(v >= prev - 1e-4, "wobble at {i}");
+            prev = v;
+        }
+
+        // speed ramp 1× → 3× over 2 s through a bezier: the integral must
+        // match a fine numeric sum of eval_keys, and invert back.
+        let ramp = vec![
+            Keyframe { t: 0.0, value: 1.0, interp: Interp::bezier_default() },
+            Keyframe { t: 2.0, value: 3.0, interp: Interp::Linear },
+        ];
+        let total = speed_integral(&ramp, 1.0, 2.0);
+        let mut num = 0.0f64;
+        let n = 4000;
+        for i in 0..n {
+            let t = (i as f64 + 0.5) / n as f64 * 2.0;
+            num += eval_keys(&ramp, t).unwrap() as f64 * (2.0 / n as f64);
+        }
+        assert!((total - num).abs() < 0.01, "integral {total} vs numeric {num}");
+        // Inverse: source position s maps back to the output time it came from.
+        let s_at_1 = speed_integral(&ramp, 1.0, 1.0);
+        let back = speed_integral_invert(&ramp, 1.0, s_at_1, 2.0);
+        assert!((back - 1.0).abs() < 1e-3, "invert round-trip: {back}");
+    }
+
+    /// Markers, captions and titles must FOLLOW the material they annotate
+    /// through ripples — a caption timed to a word may not drift onto the
+    /// next shot when something upstream is cut or pasted in.
+    #[test]
+    fn annotations_ride_ripples_and_die_with_their_material() {
+        let mut p = one_clip_project(); // 10 s
+        p.markers = vec![1.0, 5.0, 8.0];
+        p.set_marker_label(5.0, "beat");
+        p.captions.push(crate::captions::Cue { start: 4.8, end: 5.4, text: "hello".into() });
+        p.titles.push(crate::titles::Title {
+            text: "T".into(), start: 7.5, end: 9.0,
+            ..Default::default()
+        });
+
+        // Cut 2..4 out (ripple): everything after 4 s moves 2 s left;
+        // everything before 2 s stays.
+        p.cut_holes(vec![(2.0, 4.0)]);
+        assert_eq!(p.markers, vec![1.0, 3.0, 6.0], "{:?}", p.markers);
+        assert_eq!(p.marker_label(3.0), Some("beat"));
+        assert!((p.captions[0].start - 2.8).abs() < 1e-6);
+        assert!((p.titles[0].start - 5.5).abs() < 1e-6);
+
+        // A marker and caption INSIDE a removed window die with it.
+        p.cut_holes(vec![(2.5, 3.5)]); // takes the 3.0 marker + caption
+        assert_eq!(p.markers, vec![1.0, 5.0], "{:?}", p.markers);
+        assert!(p.captions.is_empty(), "the caption's speech is gone — so is it");
+        assert_eq!(p.marker_label(5.0), None, "its label went with it");
+
+        // Paste opens a gap: annotations after the insert move right.
+        let donor = p.tracks[0].clips[0].clone();
+        let kind = TrackKind::Video;
+        p.paste_clip(&donor, 2.0, kind);
+        let d = donor.duration;
+        assert_eq!(p.markers, vec![1.0, 5.0 + d], "{:?}", p.markers);
     }
 
     /// Relink repoints exact paths AND whole moved directories, everywhere

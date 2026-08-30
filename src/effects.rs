@@ -447,6 +447,22 @@ impl Effects {
         self.curves = other.curves;
     }
 
+    /// Compose a stack for the shader's SCALAR path: the base clip's
+    /// spatial settings (reframe, key, mask, fades) with every layer's
+    /// trims multiplied together. The lattice half of the stack is baked
+    /// separately (`lut::bake_stack`) — this covers what rides uniforms.
+    pub fn compose_stack(stack: &[&Effects]) -> Effects {
+        let mut out = *stack[0];
+        for fx in &stack[1..] {
+            out.exposure *= fx.exposure;
+            out.contrast *= fx.contrast;
+            out.saturation *= fx.saturation;
+        }
+        // The lattice half is baked from the stack and bound separately;
+        // the enable flag follows the binding, not this struct.
+        out
+    }
+
     pub fn has_reframe(&self) -> bool {
         self.zoom > 1.0001
     }

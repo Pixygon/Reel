@@ -68,6 +68,12 @@ pub struct ReelApp {
     pub audition: Option<(ExportJob, String, u64)>,
     /// The copied grade, waiting to be pasted onto other clips.
     pub grade_clipboard: Option<crate::effects::Effects>,
+    /// A compound-clip render in flight: (receiver of (flat, reel), and
+    /// whether to add a clip when it lands — false = a staleness refresh).
+    #[allow(clippy::type_complexity)]
+    pub nesting: Option<(std::sync::mpsc::Receiver<anyhow::Result<(String, String)>>, bool)>,
+    /// Last time compounds were checked for staleness.
+    pub nest_checked: Option<std::time::Instant>,
     /// A window-track in flight: (receiver, clip id).
     #[allow(clippy::type_complexity)]
     pub tracking: Option<(
@@ -211,6 +217,8 @@ impl ReelApp {
             proxies: crate::proxy::Cache::default(),
             audition: None,
             grade_clipboard: None,
+            nesting: None,
+            nest_checked: None,
             tracking: None,
             #[cfg(target_os = "linux")]
             voice_rec: None,
@@ -816,7 +824,7 @@ impl ReelApp {
             .iter()
             .filter(|tr| tr.kind == crate::edit::TrackKind::Overlay && !tr.muted)
             .flat_map(|tr| tr.clips.iter())
-            .filter(|c| t >= c.start && t < c.end())
+            .filter(|c| !c.adjustment && t >= c.start && t < c.end())
             .map(|c| (c.id, c.source.clone(), c.in_point + (t - c.start) * c.speed.max(0.01) as f64))
             .collect();
 
@@ -1020,6 +1028,20 @@ impl ReelApp {
         self.lut_previews.get(&key).cloned().flatten()
     }
 
+    /// The MAIN preview's lattice: the clip under the playhead plus any
+    /// adjustment layers — the stacked bake, same as the render's.
+    pub fn preview_lut(&self) -> Option<wgpu::TextureView> {
+        let clip = self.project.clip_at(TrackKind::Video, self.editor.playhead)?;
+        let (fx, _, _) = clip.animated(self.editor.playhead - clip.start);
+        let stack = self.adjustment_stack(fx);
+        if !stack.iter().any(|f| f.has_lattice()) {
+            return None;
+        }
+        let refs: Vec<&crate::effects::Effects> = stack.iter().collect();
+        let key = crate::lut::grade_key_stack(&refs);
+        self.lut_previews.get(&key).cloned().flatten()
+    }
+
     fn sync_lut_previews(&mut self, gpu: &Gpu) {
         // Bake every grade the project references; a shared look shares one
         // lattice, and edits to the curves re-bake under a new key. (Old
@@ -1049,6 +1071,34 @@ impl ReelApp {
             let lattice = crate::lut::bake_grade(base.as_deref(), &fx);
             self.lut_previews
                 .insert(key, Some(crate::lut::to_texture(&lattice, &gpu.device, &gpu.queue)));
+        }
+        // The playhead's STACK (clip + adjustment layers), when one is live.
+        if self.mode == Mode::Editor {
+            if let Some(clip) = self.project.clip_at(TrackKind::Video, self.editor.playhead) {
+                let (fx, _, _) = clip.animated(self.editor.playhead - clip.start);
+                let stack = self.adjustment_stack(fx);
+                if stack.len() > 1 && stack.iter().any(|f| f.has_lattice()) {
+                    let refs: Vec<&crate::effects::Effects> = stack.iter().collect();
+                    let key = crate::lut::grade_key_stack(&refs);
+                    if !self.lut_previews.contains_key(&key) {
+                        let bases: Vec<Option<std::sync::Arc<crate::lut::Lut>>> = refs
+                            .iter()
+                            .map(|f| {
+                                f.lut
+                                    .and_then(|i| self.project.lut_path(i).map(String::from))
+                                    .and_then(|p| crate::lut::load(&p).ok())
+                            })
+                            .collect();
+                        let entries: Vec<(Option<&crate::lut::Lut>, &crate::effects::Effects)> =
+                            refs.iter().zip(&bases).map(|(f, b)| (b.as_deref(), *f)).collect();
+                        let lattice = crate::lut::bake_stack(&entries);
+                        self.lut_previews.insert(
+                            key,
+                            Some(crate::lut::to_texture(&lattice, &gpu.device, &gpu.queue)),
+                        );
+                    }
+                }
+            }
         }
     }
 
@@ -1620,6 +1670,90 @@ impl ReelApp {
         log::info!("voiceover: {:.2}s onto A1 at {at:.2}s ({})", seconds, path.display());
     }
 
+    /// Nest another project: render it flat on a worker, then (on poll)
+    /// drop the flat file on the timeline as a compound clip.
+    pub fn start_nesting(&mut self, reel: &str, add_clip: bool) {
+        if self.nesting.is_some() {
+            return; // one at a time — renders are heavy
+        }
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.nesting = Some((rx, add_clip));
+        let reel = reel.to_string();
+        self.status = format!("Rendering nested edit {reel}…");
+        std::thread::spawn(move || {
+            let r = crate::compound::render_flat(&reel)
+                .map(|flat| (flat.to_string_lossy().into_owned(), reel));
+            let _ = tx.send(r);
+        });
+    }
+
+    pub fn poll_nesting(&mut self) {
+        // Finished nest renders land first.
+        if let Some((rx, add)) = &self.nesting {
+            let add = *add;
+            match rx.try_recv() {
+                Ok(Ok((flat, reel))) => {
+                    self.nesting = None;
+                    if add {
+                        self.editor.push_undo(&self.project);
+                        let dur = crate::video::decoder::probe(&flat)
+                            .map(|i| i.duration)
+                            .unwrap_or(1.0);
+                        let id = self.project.add_clip(
+                            &flat,
+                            crate::edit::TrackKind::Video,
+                            self.editor.playhead,
+                            0.0,
+                            dur,
+                        );
+                        if let Some(c) = self.project.clip_mut(id) {
+                            c.nested = Some(reel.clone());
+                            c.name = std::path::Path::new(&reel)
+                                .file_stem()
+                                .map(|s| s.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| "nested".into());
+                        }
+                        self.editor.selected = Some(id);
+                        self.editor.mark_changed();
+                        self.status = "Nested edit added at the playhead.".into();
+                    } else {
+                        self.status =
+                            "Nested edit re-rendered — it plays fresh on the next seek.".into();
+                    }
+                }
+                Ok(Err(e)) => {
+                    self.nesting = None;
+                    self.status = format!("Nested render failed: {e:#}");
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.nesting = None,
+            }
+        }
+        // Staleness sweep, gently: every few seconds, refresh ONE stale
+        // compound in the background.
+        if self.mode != Mode::Editor || self.nesting.is_some() {
+            return;
+        }
+        let due = self
+            .nest_checked
+            .map(|t| t.elapsed() > std::time::Duration::from_secs(3))
+            .unwrap_or(true);
+        if !due {
+            return;
+        }
+        self.nest_checked = Some(std::time::Instant::now());
+        let stale: Option<String> = self
+            .project
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .filter_map(|c| c.nested.clone())
+            .find(|r| crate::compound::is_stale(r));
+        if let Some(reel) = stale {
+            self.start_nesting(&reel, false);
+        }
+    }
+
     /// Kick off a subject track for the clip's power window on a worker —
     /// the decode takes seconds and must never block a frame.
     pub fn start_tracking(&mut self, clip_id: u64) {
@@ -2055,7 +2189,31 @@ impl ReelApp {
         // Keyframes evaluated HERE, in the same call the frame server makes —
         // an animated exposure previews mid-ramp exactly as it renders.
         let (fx, _, opacity) = clip.animated(t);
-        (Some(fx), fx.fade_alpha(t, clip.duration) * opacity)
+        // Adjustment layers over the playhead compose onto the preview,
+        // exactly as the frame server composes them into the render.
+        let stack = self.adjustment_stack(fx);
+        let composed = if stack.len() > 1 {
+            let refs: Vec<&crate::effects::Effects> = stack.iter().collect();
+            crate::effects::Effects::compose_stack(&refs)
+        } else {
+            fx
+        };
+        (Some(composed), fx.fade_alpha(t, clip.duration) * opacity)
+    }
+
+    /// The active grade stack at the playhead: the clip's own effects plus
+    /// every adjustment layer covering this moment, in track order.
+    pub fn adjustment_stack(&self, base: crate::effects::Effects) -> Vec<crate::effects::Effects> {
+        let mut stack = vec![base];
+        let t = self.editor.playhead;
+        for tr in self.project.tracks.iter().filter(|t| t.kind == TrackKind::Overlay && !t.muted) {
+            for c in &tr.clips {
+                if c.adjustment && t >= c.start && t < c.end() {
+                    stack.push(c.effects);
+                }
+            }
+        }
+        stack
     }
 
     /// A view of the current picture for Reel's own render pass.

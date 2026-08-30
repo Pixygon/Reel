@@ -1025,6 +1025,9 @@ pub(crate) fn start_timeline_graph(
     if segments.iter().any(|s| s.stabilize) {
         dropped.push("stabilization");
     }
+    if overlays.overlays.iter().any(|o| o.adjustment) {
+        dropped.push("adjustment layers");
+    }
     if !overlays.markers.is_empty() {
         dropped.push("chapters");
     }
@@ -1045,7 +1048,12 @@ pub(crate) fn start_timeline_graph(
         with_audio,
         target,
         overlays.music,
-        overlays.overlays,
+        &overlays
+            .overlays
+            .iter()
+            .filter(|o| !o.adjustment)
+            .cloned()
+            .collect::<Vec<_>>(),
         overlays.luts,
     );
 
@@ -2804,6 +2812,63 @@ mod tests {
         }
     }
 
+    /// An adjustment layer grades what's beneath it for its window and
+    /// nothing else — verified in rendered pixels, against the composition
+    /// rule (grade lattice stacks, trims multiply).
+    #[test]
+    fn an_adjustment_layer_grades_only_its_window() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-adj-src-{}.mp4", std::process::id()));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=0x808080:size=320x240:rate=25:duration=3",
+                   "-c:v", "libx264", "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let segs = vec![seg(&src.to_string_lossy(), 0.0, 3.0)];
+        let adj = crate::edit::OverlaySegment {
+            source: String::new(),
+            in_point: 0.0,
+            duration: 1.0,
+            at: 1.0,
+            pip: Default::default(),
+            gain_db: 0.0,
+            effects: crate::effects::Effects {
+                exposure: 0.5,
+                wb_temp: 0.8,
+                ..Default::default()
+            },
+            keys: Vec::new(),
+            adjustment: true,
+        };
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let ovl = [adj];
+        let overlays = Overlays { overlays: &ovl, ..Default::default() };
+        let probe_at = |t: f64| -> Option<[u8; 3]> {
+            let out = dir.join(format!("reel-adj-{}-{t}.png", std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            crate::engine::render::still_png(&segs, &overlays, (320, 240, 25.0), &s, t, &out.to_string_lossy()).ok()?;
+            let img = image::open(&out).ok()?.to_rgb8();
+            let px = img.get_pixel(160, 120).0;
+            let _ = std::fs::remove_file(&out);
+            Some(px)
+        };
+        let Some(outside) = probe_at(0.5) else {
+            eprintln!("no GPU — skipping adjustment test");
+            return;
+        };
+        let inside = probe_at(1.5).expect("still inside window");
+        // Outside: the grey untouched (~128). Inside: warmed then halved —
+        // r ≈ 128·1.2·0.5 ≈ 77, g ≈ 64, b ≈ 128·0.8·0.5 ≈ 51.
+        assert!((outside[0] as i32 - 128).abs() < 8, "outside untouched: {outside:?}");
+        assert!(
+            (inside[0] as i32 - 77).abs() < 10
+                && (inside[1] as i32 - 64).abs() < 10
+                && (inside[2] as i32 - 51).abs() < 10,
+            "inside must match the composition rule, got {inside:?}"
+        );
+        let _ = std::fs::remove_file(&src);
+    }
+
     /// A still grabbed mid-transition must SHOW the transition, and cues
     /// active at that moment must burn in — the still is a one-frame render,
     /// not a shortcut past it.
@@ -2966,6 +3031,7 @@ mod tests {
             gain_db: 0.0,
             effects: fx,
             keys: Vec::new(),
+            adjustment: false,
         }];
         let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
         let job = match crate::engine::render::start_timeline(
@@ -3305,6 +3371,7 @@ mod tests {
             gain_db: 0.0,
             effects: Default::default(),
             keys: Vec::new(),
+            adjustment: false,
         }];
         let job = start_timeline_with_captions(
             &segs,

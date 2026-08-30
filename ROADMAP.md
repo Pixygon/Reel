@@ -41,6 +41,11 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       continuously through a fade, tested as path continuity.
 - [x] The transport speed control shows the USER's rate again; the active
       clip's own rate multiplies underneath and shows as a badge.
+- [x] (v1.7.0) Markers/captions/titles now RIDE ripples: cuts, ripple
+      deletes, tightens, filler removal and paste-inserts shift them with
+      the material, and annotations inside a removed window die with it
+      (`shift_annotations`/`drop_annotations_in`, tested). Anchoring
+      through arbitrary clip drags remains open:
 - [ ] Markers/captions/titles authored against edit time survive
       re-timing edits upstream of them (anchor to clips where possible).
 
@@ -89,8 +94,13 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       BONUS: the graph fallback now applies the WHOLE grade via a baked
       lut3d .cube (parity-tested against grade_reference through real
       ffmpeg) instead of warning that it dropped LUTs/curves.
-- [ ] Bezier handles on the keyframe curve editor; the full-width timeline
-      curve lane. (Deferred — belongs with a keyframe-editor rework.)
+- [x] Bezier handles on the keyframe curve editor (v1.7.0):
+      `Interp::Bezier` with CSS-style control points, draggable handles in
+      the curve editor (middle-click cycles linear/ease/hold/bezier).
+      Speed ramps through beziers stay honest: the integral goes numeric
+      for bezier intervals but remains THE single contract (tested against
+      a fine sum and its own inverse). The full-width timeline curve lane
+      is still open.
 - [x] **Auto tracking for power windows** (`track.rs`): zero-mean NCC
       template matching at 10 Hz on a 192×108 grid, patch 1.5× the window
       so the subject's edges are the feature; stops when correlation
@@ -149,10 +159,23 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       (and the panel's angle buttons) cut to an angle at the playhead —
       split, source swap, timeline time continuous. Verified end to end:
       audio-sync offset found exactly, cuts render the right camera.
-- [ ] Compound clips (nest a sequence); adjustment layers. (Deferred —
-      both need the render path to accept a sequence as a source.)
+- [x] **Compound clips** (v1.7.0, `compound.rs`): render-and-refresh
+      nesting — a .reel added to a timeline renders flat beside itself
+      (`<name>.flat.mp4`) and the flat file is what every pipeline plays;
+      the clip remembers its origin and re-renders automatically when the
+      nested edit changes (editor background sweep + before every CLI
+      render). `reel add outer.reel inner.reel`, or "nest" on a pool
+      item. Tested end to end including the staleness refresh.
+- [x] **Adjustment layers** (v1.7.0): an Overlay clip with no footage
+      whose grade applies to everything beneath it for its window —
+      lattices STACK (`bake_stack`), trims multiply, preview and frame
+      server share the composition (`compose_stack`). ＋ Adjust button /
+      `reel adjust`; violet wash + ADJUST label on the timeline; pixel-
+      tested against the hand-computed composition. The graph fallback
+      warns it drops them.
 - [x] Shift+drag on empty timeline space lasso-selects clips (plain drag
-      still scrubs). Track targeting for paste: not yet.
+      still scrubs). Track targeting for paste (v1.6.0): click a lane's
+      name to target it — Ctrl+V lands there when the kind matches.
 - [x] A keyboard-map overview — `?` or F1, four sections, everything
       from J-K-L to the trim modifiers.
 

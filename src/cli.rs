@@ -413,6 +413,16 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Sync one clip to another by their AUDIO — multicam without clap sticks",
     },
     Cmd {
+        name: "adjust",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "at", value: Some("SECONDS"), help: "Where the layer starts" },
+            Flag { name: "duration", value: Some("SECONDS"), help: "How long it lasts (default 4)" },
+            F_JSON,
+        ],
+        help: "Add an adjustment layer — a span whose colour grade applies to everything beneath it (set the grade with `reel effects --clip`)",
+    },
+    Cmd {
         name: "pool",
         args: &["PROJECT"],
         flags: &[
@@ -732,6 +742,7 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "tighten" => cmd_tighten(p),
         "fillers" => cmd_fillers(p),
         "beats" => cmd_beats(p),
+        "adjust" => cmd_adjust(p),
         "pool" => cmd_pool(p),
         "relink" => cmd_relink(p),
         "multicam" => cmd_multicam(p),
@@ -974,6 +985,19 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     let media = std::fs::canonicalize(media)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| media.to_string());
+    // A .reel used as media = a COMPOUND CLIP: the nested edit renders
+    // flat beside itself and the flat file is what the timeline plays.
+    // The clip remembers its origin so a stale nest re-renders.
+    let (media, nested_from) = if media.ends_with(".reel") {
+        if std::path::Path::new(&media) == std::path::Path::new(path) {
+            bail!("a project can't nest itself");
+        }
+        eprintln!("nesting {media} — rendering it flat…");
+        let flat = crate::compound::render_flat(&media)?;
+        (flat.to_string_lossy().into_owned(), Some(media))
+    } else {
+        (media, None)
+    };
     let media = media.as_str();
     let mut proj = load(path)?;
     let kind = match p.str("track").unwrap_or("video") {
@@ -1006,6 +1030,15 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     };
 
     let id = proj.add_clip(media, kind, at, in_point, duration);
+    if let Some(reel) = &nested_from {
+        if let Some(c) = proj.clip_mut(id) {
+            c.nested = Some(reel.clone());
+            c.name = std::path::Path::new(reel)
+                .file_stem()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "nested".into());
+        }
+    }
     save(&proj, path)?;
     Ok(Output::new(
         format!("Added clip {id} at {at:.2}s ({duration:.2}s of {media})"),
@@ -1926,6 +1959,23 @@ fn cmd_tighten(p: &Parsed) -> Result<Output> {
     ))
 }
 
+fn cmd_adjust(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let at: f64 = p.need_num("at")?;
+    let duration = p.num::<f64>("duration")?.unwrap_or(4.0).max(0.1);
+    let mut proj = load(path)?;
+    let id = proj.add_clip("", crate::edit::TrackKind::Overlay, at, 0.0, duration);
+    if let Some(c) = proj.clip_mut(id) {
+        c.adjustment = true;
+        c.name = "adjust".into();
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Adjustment layer {id} over {at:.2}–{:.2}s — grade it with `reel effects --clip {id}`", at + duration),
+        serde_json::json!({ "clip": id, "at": at, "duration": duration }),
+    ))
+}
+
 fn cmd_pool(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
     let mut proj = load(path)?;
@@ -2687,6 +2737,12 @@ fn cmd_render_watch(p: &Parsed) -> Result<Output> {
 fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
     let path = p.at(0)?;
     let out = p.at(1)?;
+    {
+        // Stale compound clips re-render first — exporting yesterday's
+        // version of a nested edit is a render that lies.
+        let proj = load(path)?;
+        crate::compound::refresh_all(&proj, p.on("quiet") || p.on("json"))?;
+    }
     if p.on("hdr-passthrough") {
         bail!(
             "--hdr-passthrough works on source exports (`reel convert`) — the timeline \

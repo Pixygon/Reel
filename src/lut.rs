@@ -196,23 +196,31 @@ pub fn to_texture(lut: &Lut, device: &wgpu::Device, queue: &wgpu::Queue) -> wgpu
 /// levels → HSL qualifier, `Effects::grade_reference`), then the tone
 /// curves. One texture sample buys the full grade.
 pub fn bake_grade(base: Option<&Lut>, fx: &crate::effects::Effects) -> Lut {
+    bake_stack(&[(base, fx)])
+}
+
+/// Bake a STACK of grades into one lattice: each entry's LUT → correction →
+/// curves, applied in order. One entry = a clip's own grade; a second =
+/// an adjustment layer over it. One texture sample still buys everything.
+pub fn bake_stack(stack: &[(Option<&Lut>, &crate::effects::Effects)]) -> Lut {
     const N: u32 = 33;
     let n1 = (N - 1) as f32;
-    let grades = fx.has_grade();
     let mut data = Vec::with_capacity((N * N * N * 4) as usize);
     for b in 0..N {
         for g in 0..N {
             for r in 0..N {
                 let mut c = [r as f32 / n1, g as f32 / n1, b as f32 / n1];
-                if let Some(l) = base {
-                    c = apply_reference(l, c);
-                }
-                if grades {
-                    c = fx.grade_reference(c);
-                }
-                if let Some(cv) = &fx.curves {
-                    for (ch, v) in c.iter_mut().enumerate() {
-                        *v = cv.apply(ch, *v);
+                for (base, fx) in stack {
+                    if let Some(l) = base {
+                        c = apply_reference(l, c);
+                    }
+                    if fx.has_grade() {
+                        c = fx.grade_reference(c);
+                    }
+                    if let Some(cv) = &fx.curves {
+                        for (ch, v) in c.iter_mut().enumerate() {
+                            *v = cv.apply(ch, *v);
+                        }
                     }
                 }
                 data.extend_from_slice(&[c[0], c[1], c[2], 1.0]);
@@ -220,6 +228,16 @@ pub fn bake_grade(base: Option<&Lut>, fx: &crate::effects::Effects) -> Lut {
         }
     }
     Lut { size: N, data }
+}
+
+/// Key for a stacked grade — folds each entry's grade_key.
+pub fn grade_key_stack(stack: &[&crate::effects::Effects]) -> u64 {
+    let mut h: u64 = 0x9e3779b97f4a7c15;
+    for fx in stack {
+        h ^= grade_key(fx).rotate_left(17);
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
 }
 
 /// A stable key for a grade: which LUT plus every lattice-baked value

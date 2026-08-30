@@ -130,9 +130,16 @@ pub fn start_timeline(
 
     // Overlay boxes need the source's aspect to size their decode; probe now,
     // on the calling thread, so failures surface before the job exists.
+    let adjustments: Vec<OverlaySegment> = overlays
+        .overlays
+        .iter()
+        .filter(|o| o.adjustment)
+        .cloned()
+        .collect();
     let planned_overlays: Vec<(OverlaySegment, u32, u32)> = overlays
         .overlays
         .iter()
+        .filter(|o| !o.adjustment)
         .map(|o| {
             let info = crate::video::decoder::probe(&o.source)
                 .with_context(|| format!("could not probe overlay source {}", o.source))?;
@@ -229,8 +236,8 @@ pub fn start_timeline(
 
     std::thread::spawn(move || {
         let result = run(
-            comp, &segments, &output, &settings, target, total, planned_overlays, ramp_fps,
-            transfers, lut_table, audio_args, chapters, burnin, &state, &cancel,
+            comp, &segments, &output, &settings, target, total, planned_overlays, adjustments,
+            ramp_fps, transfers, lut_table, audio_args, chapters, burnin, &state, &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -304,6 +311,18 @@ pub fn render_still(
             let mut fade_only = *p;
             fade_only.fade_in = 0.0;
             opacity *= base_opacity(&fade_only, seg, t);
+            // Adjustment layers compose in stills exactly as in motion.
+            let active_adj: Vec<&crate::effects::Effects> = overlays
+                .overlays
+                .iter()
+                .filter(|a| a.adjustment && t >= a.at && t < a.at + a.duration)
+                .map(|a| &a.effects)
+                .collect();
+            let mut stack: Vec<&crate::effects::Effects> = vec![&fx];
+            stack.extend(active_adj);
+            let eff_fx = crate::effects::Effects::compose_stack(&stack);
+            let mut cache = std::collections::HashMap::new();
+            let lut = lut_for_stack(&stack, &mut cache, overlays.luts, &comp);
             layers_data.push((
                 buf,
                 tw,
@@ -313,21 +332,15 @@ pub fn render_still(
                     rect,
                     uv,
                     opacity,
-                    effects: fx,
+                    effects: eff_fx,
                     use_src_alpha: true,
-                    lut: fx.has_lattice().then(|| {
-                        let base = fx
-                            .lut
-                            .and_then(|i| overlays.luts.get(i as usize))
-                            .and_then(|p| crate::lut::load(p).ok());
-                        comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), &fx))
-                    }),
+                    lut,
                 },
             ));
         }
     }
     for o in overlays.overlays {
-        if t < o.at || t >= o.at + o.duration {
+        if o.adjustment || t < o.at || t >= o.at + o.duration {
             continue;
         }
         let info = crate::video::decoder::probe(&o.source)?;
@@ -429,6 +442,39 @@ pub fn still_png(
     Ok((w, h))
 }
 
+/// The device lattice for a grade STACK (clip grade + any adjustment
+/// layers), cached by the stack's combined key.
+fn lut_for_stack(
+    stack: &[&crate::effects::Effects],
+    cache: &mut std::collections::HashMap<u64, Option<wgpu::TextureView>>,
+    lut_table: &[String],
+    comp: &Compositor,
+) -> Option<wgpu::TextureView> {
+    if !stack.iter().any(|fx| fx.has_lattice()) {
+        return None;
+    }
+    let key = crate::lut::grade_key_stack(stack);
+    cache
+        .entry(key)
+        .or_insert_with(|| {
+            let bases: Vec<Option<std::sync::Arc<crate::lut::Lut>>> = stack
+                .iter()
+                .map(|fx| {
+                    fx.lut
+                        .and_then(|i| lut_table.get(i as usize))
+                        .and_then(|p| crate::lut::load(p).ok())
+                })
+                .collect();
+            let entries: Vec<(Option<&crate::lut::Lut>, &crate::effects::Effects)> = stack
+                .iter()
+                .zip(&bases)
+                .map(|(fx, b)| (b.as_deref(), *fx))
+                .collect();
+            Some(comp.lut_texture(&crate::lut::bake_stack(&entries)))
+        })
+        .clone()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run(
     comp: Compositor,
@@ -438,6 +484,7 @@ fn run(
     target: (u32, u32, f64),
     total: f64,
     planned_overlays: Vec<(OverlaySegment, u32, u32)>,
+    adjustments: Vec<OverlaySegment>,
     ramp_fps: Vec<Option<f64>>,
     transfers: std::collections::HashMap<String, Option<String>>,
     lut_table: Vec<String>,
@@ -577,26 +624,10 @@ fn run(
     };
 
     // Baked grade lattices (LUT ∘ curves) on this device, one per distinct
-    // grade — a timeline of clips sharing a look shares one texture.
+    // grade (or grade STACK, when adjustment layers sit on top) — clips
+    // sharing a look share one texture.
     let mut grade_views: std::collections::HashMap<u64, Option<wgpu::TextureView>> =
         Default::default();
-    let mut lut_for =
-        |fx: &crate::effects::Effects, comp: &Compositor| -> Option<wgpu::TextureView> {
-            if !fx.has_lattice() {
-                return None;
-            }
-            let key = crate::lut::grade_key(&fx);
-            grade_views
-                .entry(key)
-                .or_insert_with(|| {
-                    let base = fx
-                        .lut
-                        .and_then(|i| lut_table.get(i as usize))
-                        .and_then(|p| crate::lut::load(p).ok());
-                    Some(comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), fx)))
-                })
-                .clone()
-        };
     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
     let mut ov_active: Vec<Option<Active>> = (0..planned_overlays.len()).map(|_| None).collect();
     let out_tex = comp.target(tw, th);
@@ -703,16 +734,32 @@ fn run(
                 let mut fade_only = *p;
                 fade_only.fade_in = 0.0;
                 opacity *= base_opacity(&fade_only, seg, t);
+                // Adjustment layers: every active one stacks its grade on
+                // top of the clip's own and multiplies the trims — same
+                // composition the preview shows.
+                let active_adj: Vec<&crate::effects::Effects> = adjustments
+                    .iter()
+                    .filter(|adj| t >= adj.at && t < adj.at + adj.duration)
+                    .map(|adj| &adj.effects)
+                    .collect();
+                let (eff_fx, lut) = if active_adj.is_empty() {
+                    (fx, lut_for_stack(&[&fx], &mut grade_views, &lut_table, &comp))
+                } else {
+                    let mut stack: Vec<&crate::effects::Effects> = vec![&fx];
+                    stack.extend(active_adj.iter().copied());
+                    let eff = crate::effects::Effects::compose_stack(&stack);
+                    (eff, lut_for_stack(&stack, &mut grade_views, &lut_table, &comp))
+                };
                 layers.push(super::Layer {
                     view: a.view.clone(),
                     rect,
                     uv,
                     opacity,
-                    effects: fx,
+                    effects: eff_fx,
                     // Honour alpha: the letterbox pad is transparent, so
                     // grading colours the picture and never the bars.
                     use_src_alpha: true,
-                    lut: lut_for(&fx, &comp),
+                    lut,
                 });
             }
 
@@ -775,7 +822,7 @@ fn run(
                     // is what makes a green-screen inset composite.
                     effects: o.effects,
                     use_src_alpha: false,
-                    lut: lut_for(&o.effects, &comp),
+                    lut: lut_for_stack(&[&o.effects], &mut grade_views, &lut_table, &comp),
                 });
             }
 
