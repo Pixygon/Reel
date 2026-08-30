@@ -341,6 +341,42 @@ Sync one clip to another by their AUDIO — multicam without clap sticks
 | `--to` | `ID` | The clip to sync against |
 | `--window` | `SECONDS` | Largest offset to search (default 90) |
 
+### `reel pool PROJECT`
+
+The media pool: gather, bin and list this project's media (offline files are flagged)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--add` | `FILE` | Gather a file into the pool |
+| `--bin` | `NAME` | With --add (or --file): which bin it goes in |
+| `--file` | `FILE` | Re-bin an item already in the pool |
+| `--remove` | `FILE` | Take an item out of the pool |
+| `--json` | — | Print the result as JSON |
+
+### `reel relink PROJECT`
+
+Repoint moved media everywhere: clips, pool, music, angles. Directories relink recursively
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--from` | `PATH` | The old file or directory |
+| `--to` | `PATH` | Where it lives now |
+| `--json` | — | Print the result as JSON |
+
+### `reel multicam PROJECT`
+
+Multicam: register synced angles, then cut between them (keys 1-9 in the editor do this live)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--add` | `FILE` | Register an angle |
+| `--offset` | `SECONDS` | Timeline time where the angle's t=0 falls (with --add) |
+| `--align` | — | With --add: find the offset by syncing audio against the first V1 clip |
+| `--cut` | `SECONDS` | Cut to --angle at this timeline time |
+| `--angle` | `N` | Angle index for --cut (0-based) |
+| `--clear` | — | Forget every angle |
+| `--json` | — | Print the result as JSON |
+
 ### `reel beats TARGET`
 
 Find the beats and drop a marker on each — cuts can snap to the music. TARGET is a .reel or a media file

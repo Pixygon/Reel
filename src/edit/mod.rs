@@ -822,8 +822,35 @@ pub struct Project {
     /// index (`Effects.lut`).
     #[serde(default)]
     pub luts: Vec<String>,
+    /// The media pool: everything gathered for this edit, on the timeline
+    /// or not, organised into bins.
+    #[serde(default)]
+    pub pool: Vec<PoolItem>,
+    /// Multicam angles: sources aligned against the timeline. `offset` is
+    /// the TIMELINE time at which the angle's source t=0 falls, so the
+    /// source time under playhead t is `t - offset`.
+    #[serde(default)]
+    pub multicam: Vec<Angle>,
     #[serde(skip)]
     next_id: u64,
+}
+
+/// One gathered piece of media.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct PoolItem {
+    pub path: String,
+    /// Bin name; empty = the top level.
+    #[serde(default)]
+    pub bin: String,
+}
+
+/// One multicam angle.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Angle {
+    pub source: String,
+    /// Timeline time where this angle's source starts (t=0). Negative when
+    /// the angle started rolling before the timeline's zero.
+    pub offset: f64,
 }
 
 fn one() -> f32 {
@@ -851,6 +878,8 @@ impl Default for Project {
             music: None,
             markers: Vec::new(),
             luts: Vec::new(),
+            pool: Vec::new(),
+            multicam: Vec::new(),
             next_id: 100,
         }
     }
@@ -1169,6 +1198,115 @@ impl Project {
             }
         }
         holes
+    }
+
+    /// Put a file in the media pool (deduplicated by path).
+    pub fn pool_add(&mut self, path: &str, bin: &str) {
+        if let Some(item) = self.pool.iter_mut().find(|i| i.path == path) {
+            if !bin.is_empty() {
+                item.bin = bin.to_string();
+            }
+            return;
+        }
+        self.pool.push(PoolItem { path: path.to_string(), bin: bin.to_string() });
+    }
+
+    /// Every clip source lands in the pool automatically — the pool is the
+    /// union of what was gathered and what is used.
+    pub fn absorb_sources_into_pool(&mut self) {
+        let sources: Vec<String> = self
+            .tracks
+            .iter()
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.source.clone())
+            .chain(self.music.iter().map(|m| m.source.clone()))
+            .collect();
+        for s in sources {
+            self.pool_add(&s, "");
+        }
+    }
+
+    /// Repoint every reference from `from` to `to` — clips, pool, music,
+    /// multicam. `from` may be a file OR a directory prefix, so a whole
+    /// moved folder relinks in one call. Returns how many references moved.
+    pub fn relink(&mut self, from: &str, to: &str) -> usize {
+        let map = |p: &mut String| -> bool {
+            if p == from {
+                *p = to.to_string();
+                return true;
+            }
+            // Directory move: prefix swap, but only at a path boundary.
+            let prefix = format!("{}/", from.trim_end_matches('/'));
+            if let Some(rest) = p.strip_prefix(&prefix) {
+                *p = format!("{}/{}", to.trim_end_matches('/'), rest);
+                return true;
+            }
+            false
+        };
+        let mut n = 0;
+        for t in &mut self.tracks {
+            for c in &mut t.clips {
+                if map(&mut c.source) {
+                    n += 1;
+                }
+            }
+        }
+        for item in &mut self.pool {
+            if map(&mut item.path) {
+                n += 1;
+            }
+        }
+        if let Some(m) = &mut self.music {
+            if map(&mut m.source) {
+                n += 1;
+            }
+        }
+        for a in &mut self.multicam {
+            if map(&mut a.source) {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// Multicam: cut to `angle` (index) at timeline time `t`. Splits V1 at
+    /// the playhead and repoints everything AFTER the cut (up to the next
+    /// clip boundary) at the angle's source, keeping timeline time
+    /// continuous — the classic switcher cut. No-op when t misses V1 or the
+    /// angle's source has nothing under t.
+    pub fn cut_to_angle(&mut self, t: f64, angle: usize) -> bool {
+        let Some(a) = self.multicam.get(angle).cloned() else { return false };
+        let src_t = t - a.offset;
+        if src_t < 0.0 {
+            return false;
+        }
+        // Which V1 clip is under the playhead?
+        let Some(cur) = self.clip_at(TrackKind::Video, t).map(|c| c.id) else { return false };
+        // Already on this angle with matching timing? Nothing to do.
+        if let Some(c) = self.clip(cur) {
+            let cur_src_at_t = c.in_point + c.source_offset_at(t - c.start);
+            if c.source == a.source && (cur_src_at_t - src_t).abs() < 0.02 {
+                return false;
+            }
+        }
+        self.split_at(t);
+        // The clip now STARTING at t (the right half) switches source.
+        let Some(next) = self
+            .tracks
+            .iter_mut()
+            .filter(|tr| tr.kind == TrackKind::Video)
+            .flat_map(|tr| tr.clips.iter_mut())
+            .find(|c| (c.start - t).abs() < 0.005)
+        else {
+            return false;
+        };
+        next.source = a.source.clone();
+        next.in_point = src_t;
+        next.name = std::path::Path::new(&a.source)
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| a.source.clone());
+        true
     }
 
     /// Register a LUT file (deduplicated) and return its index.
@@ -1838,6 +1976,8 @@ pub enum Drag {
     /// Move the clip; neighbours absorb (Ctrl+Alt+body).
     Slide { id: u64, last: f64 },
     Playhead,
+    /// Shift+drag on empty space: rubber-band select. Screen-space origin.
+    Lasso { x0: f32, y0: f32 },
 }
 
 impl Default for EditorState {
@@ -1937,6 +2077,66 @@ mod tests {
         p.append_video("a", "/tmp/a.mp4", 10.0);
         p.append_audio("a", "/tmp/a.mp4", 10.0);
         p
+    }
+
+    /// Relink repoints exact paths AND whole moved directories, everywhere
+    /// a path lives — clips, pool, music, angles.
+    #[test]
+    fn relink_moves_files_and_directories() {
+        let mut p = one_clip_project();
+        p.absorb_sources_into_pool();
+        p.music = Some(Music { source: "/tmp/bed.mp3".into(), ..Default::default() });
+        p.multicam.push(Angle { source: "/tmp/a.mp4".into(), offset: 0.0 });
+        // Exact-file relink.
+        let n = p.relink("/tmp/a.mp4", "/media/a.mp4");
+        assert!(n >= 3, "clip + pool + angle at least, got {n}");
+        assert!(p.tracks.iter().flat_map(|t| t.clips.iter()).all(|c| c.source == "/media/a.mp4"));
+        assert_eq!(p.multicam[0].source, "/media/a.mp4");
+        // Directory relink: /tmp → /vault moves the bed but must NOT touch
+        // /media files, and must never match a mere string prefix like
+        // /tmp2.
+        let mut q = Project::default();
+        q.append_video("x", "/tmp/x.mp4", 2.0);
+        q.append_video("y", "/tmp2/y.mp4", 2.0);
+        q.relink("/tmp", "/vault");
+        let sources: Vec<String> = q.tracks.iter().flat_map(|t| t.clips.iter()).map(|c| c.source.clone()).collect();
+        assert!(sources.contains(&"/vault/x.mp4".to_string()), "{sources:?}");
+        assert!(sources.contains(&"/tmp2/y.mp4".to_string()), "prefix must respect path boundaries: {sources:?}");
+    }
+
+    /// The switcher cut: pressing an angle splits at the playhead and the
+    /// right half plays the other camera at the SAME moment — timeline time
+    /// continuous, source time mapped through the angle's offset.
+    #[test]
+    fn multicam_cuts_to_the_angle_at_the_same_moment() {
+        let mut p = one_clip_project(); // V1: /tmp/a.mp4, 0..10
+        // Angle B started rolling 2 s before the timeline's zero.
+        p.multicam.push(Angle { source: "/tmp/a.mp4".into(), offset: 0.0 });
+        p.multicam.push(Angle { source: "/tmp/b.mp4".into(), offset: -2.0 });
+
+        assert!(p.cut_to_angle(4.0, 1), "the cut happens");
+        let v1: Vec<_> = p
+            .tracks
+            .iter()
+            .find(|t| t.kind == TrackKind::Video)
+            .unwrap()
+            .clips
+            .iter()
+            .map(|c| (c.source.clone(), c.start, c.in_point, c.duration))
+            .collect();
+        assert_eq!(v1.len(), 2, "{v1:?}");
+        assert_eq!(v1[0], ("/tmp/a.mp4".into(), 0.0, 0.0, 4.0));
+        // Angle B at timeline 4.0 = source 4.0 − (−2.0) = 6.0.
+        assert_eq!(v1[1].0, "/tmp/b.mp4");
+        assert!((v1[1].1 - 4.0).abs() < 1e-9 && (v1[1].2 - 6.0).abs() < 1e-9);
+        assert!((v1[1].3 - 6.0).abs() < 1e-9, "keeps the remaining duration");
+
+        // Cutting to the angle already playing at the same moment: no-op.
+        assert!(!p.cut_to_angle(5.0, 1), "same angle, same time — nothing to cut");
+        // Before an angle's material exists: refused.
+        let mut q = one_clip_project();
+        q.multicam.push(Angle { source: "/tmp/late.mp4".into(), offset: 6.0 });
+        assert!(!q.cut_to_angle(4.0, 0), "the late camera has no frame at t=4");
     }
 
     #[test]

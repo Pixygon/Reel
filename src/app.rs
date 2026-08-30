@@ -18,13 +18,17 @@ pub enum Mode {
 }
 
 /// What the open dialog is currently being used for.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, PartialEq, Eq, Default)]
 pub enum PickerTarget {
     #[default]
     Media,
     Music,
     /// A .cube LUT for this clip.
     Lut(u64),
+    /// Gather into the media pool without opening.
+    Pool,
+    /// Find where this offline file went.
+    Relink(String),
 }
 
 /// A live PiP preview: its own muted player plus the texture its frames
@@ -93,6 +97,15 @@ pub struct ReelApp {
     pub voice_rec: Option<crate::audio::Recorder>,
     /// A punch-in in progress: the timeline position recording began at.
     pub punch_in_at: Option<f64>,
+    /// Media-pool search box contents.
+    pub pool_search: String,
+    /// The source being auditioned in the source monitor (player mode over
+    /// a live project), with its in/out marks for the three-point insert.
+    pub source_preview: Option<String>,
+    pub src_mark_in: Option<f64>,
+    pub src_mark_out: Option<f64>,
+    /// The `?` keyboard-map overlay.
+    pub show_keymap: bool,
     /// Whether we've tried to open the mixer (it opens lazily on first
     /// entering the editor — an audio stream at app start would tax the
     /// cold-open budget for people who only came to watch something).
@@ -127,7 +140,7 @@ pub struct ReelApp {
     /// Result channel of a native file-picker running on its own thread.
     picker: Option<Receiver<Option<String>>>,
     /// Where the next picked file goes — the same dialog serves both.
-    picker_target: PickerTarget,
+    pub picker_target: PickerTarget,
     /// A video/audio open in progress on a worker thread.
     opening: Option<Receiver<Result<Player, String>>>,
     /// Result channel of a screenshot being taken on a worker thread.
@@ -198,6 +211,11 @@ impl ReelApp {
             #[cfg(target_os = "linux")]
             voice_rec: None,
             punch_in_at: None,
+            pool_search: String::new(),
+            source_preview: None,
+            src_mark_in: None,
+            src_mark_out: None,
+            show_keymap: false,
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
             user_muted: false,
             show_scopes: false,
@@ -345,6 +363,15 @@ impl ReelApp {
         self.open_picker_inner(false);
     }
 
+    /// Open the media picker for whatever `picker_target` is already set
+    /// to (pool gather, relink, …).
+    pub fn open_picker_inner_for_target(&mut self) {
+        if self.picker.is_some() {
+            return;
+        }
+        self.open_picker_inner(false);
+    }
+
     fn open_picker_inner(&mut self, audio_only: bool) {
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
@@ -405,7 +432,7 @@ impl ReelApp {
         match rx.try_recv() {
             Ok(Some(path)) => {
                 self.picker = None;
-                match self.picker_target {
+                match self.picker_target.clone() {
                     PickerTarget::Media => self.open(&path),
                     PickerTarget::Lut(clip) => {
                         let abs = std::fs::canonicalize(&path)
@@ -423,6 +450,24 @@ impl ReelApp {
                             }
                             Err(e) => self.status = format!("Not a usable LUT: {e}"),
                         }
+                    }
+                    PickerTarget::Pool => {
+                        let abs = std::fs::canonicalize(&path)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or(path);
+                        self.editor.push_undo(&self.project);
+                        self.project.pool_add(&abs, "");
+                        self.editor.mark_changed();
+                        self.status = "Gathered into the pool.".into();
+                    }
+                    PickerTarget::Relink(old) => {
+                        let abs = std::fs::canonicalize(&path)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or(path);
+                        self.editor.push_undo(&self.project);
+                        let n = self.project.relink(&old, &abs);
+                        self.editor.mark_changed();
+                        self.status = format!("Relinked {n} reference(s).");
                     }
                     PickerTarget::Music => {
                         self.editor.push_undo(&self.project);
@@ -551,6 +596,21 @@ impl ReelApp {
             {
                 std::env::remove_var("REEL_DEBUG_AUDITION");
                 self.start_audition(id);
+            }
+        }
+        // REEL_DEBUG_KEYMAP=1 — open the keyboard map (headless photography).
+        if std::env::var("REEL_DEBUG_KEYMAP").as_deref() == Ok("1") {
+            self.show_keymap = true;
+        }
+        // REEL_DEBUG_MONITOR=1 — source-preview the first pool item once.
+        if std::env::var("REEL_DEBUG_MONITOR").as_deref() == Ok("1")
+            && self.mode == Mode::Editor
+            && self.source_preview.is_none()
+        {
+            self.project.absorb_sources_into_pool();
+            if let Some(path) = self.project.pool.first().map(|i| i.path.clone()) {
+                std::env::remove_var("REEL_DEBUG_MONITOR");
+                self.preview_source(&path);
             }
         }
         // REEL_DEBUG_SELECT=1 — select the first clip, so headless checks can
@@ -1408,6 +1468,41 @@ impl ReelApp {
             Ok(job) => self.audition = Some((job, out, clip_id)),
             Err(e) => log::error!("audition failed to start: {e:#}"),
         }
+    }
+
+    /// Source monitor: play this file in the player while the edit stays
+    /// loaded — I/O set marks, and Insert performs the three-point edit.
+    pub fn preview_source(&mut self, path: &str) {
+        self.src_mark_in = None;
+        self.src_mark_out = None;
+        self.source_preview = Some(path.to_string());
+        self.open(path);
+        self.mode = Mode::Player;
+    }
+
+    /// The three-point edit: source in/out (defaulting to the whole file)
+    /// + the timeline playhead = a new V1 clip, and back to the editor.
+    pub fn insert_source_into_edit(&mut self) {
+        let Some(src) = self.source_preview.clone() else { return };
+        let total = self
+            .player
+            .as_ref()
+            .map(|p| p.info.duration)
+            .filter(|d| *d > 0.0)
+            .unwrap_or(0.0);
+        let mark_in = self.src_mark_in.unwrap_or(0.0);
+        let mark_out = self.src_mark_out.unwrap_or(total).max(mark_in + 0.05);
+        let dur = (mark_out - mark_in).max(0.05);
+        self.editor.push_undo(&self.project);
+        self.project
+            .add_clip(&src, crate::edit::TrackKind::Video, self.editor.playhead, mark_in, dur);
+        self.project.pool_add(&src, "");
+        self.editor.mark_changed();
+        self.source_preview = None;
+        self.src_mark_in = None;
+        self.src_mark_out = None;
+        self.mode = Mode::Editor;
+        self.status = format!("Inserted {dur:.2}s at the playhead.");
     }
 
     /// Punch in: arm the recorder at the playhead and roll the timeline —

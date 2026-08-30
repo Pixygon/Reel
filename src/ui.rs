@@ -69,6 +69,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     }
 
     export_window(ctx, app);
+    keymap_window(ctx, app);
     defaults_window(ctx, app);
 }
 
@@ -382,6 +383,25 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if ek.marker {
             app.editor_toggle_marker();
         }
+        // Multicam: number keys cut to an angle at the playhead, live.
+        if !app.project.multicam.is_empty() {
+            let angle = ctx.input(|i| {
+                [Key::Num1, Key::Num2, Key::Num3, Key::Num4, Key::Num5,
+                 Key::Num6, Key::Num7, Key::Num8, Key::Num9]
+                    .iter()
+                    .position(|k| i.key_pressed(*k) && !i.modifiers.ctrl && !i.modifiers.command)
+            });
+            if let Some(a) = angle {
+                if a < app.project.multicam.len() {
+                    let t = app.editor.playhead;
+                    app.editor.push_undo(&app.project);
+                    if app.project.cut_to_angle(t, a) {
+                        app.editor.mark_changed();
+                        app.status = format!("Cut to angle {} at {t:.2}s.", a + 1);
+                    }
+                }
+            }
+        }
         if ek.next_marker {
             app.editor_jump_marker(true);
         }
@@ -415,6 +435,76 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             }
             app.status = format!("Range out at {t:.2}s (Shift+I/O clears).");
         }
+    }
+}
+
+/// The keyboard map — `?` (or F1) opens it; the shortcuts have outgrown
+/// what anyone can hold in their head.
+fn keymap_window(ctx: &egui::Context, app: &mut ReelApp) {
+    if !app.show_keymap {
+        return;
+    }
+    let mut open = true;
+    egui::Window::new("Keyboard")
+        .open(&mut open)
+        .collapsible(false)
+        .default_width(560.0)
+        .show(ctx, |ui| {
+            let sections: [(&str, &[(&str, &str)]); 4] = [
+                ("Playback", &[
+                    ("Space", "Play / pause"),
+                    ("J · K · L", "Shuttle back / stop / forward (tap J or L again: faster)"),
+                    (", · .", "Frame step back / forward"),
+                    ("← / →", "Seek 5 s (Shift: 60 s)"),
+                    ("↑ / ↓", "Volume"),
+                    ("M", "Mute"),
+                    ("[ · ] · Backspace", "Playback speed down / up / reset"),
+                    ("Shift+L", "Loop"),
+                    ("F / F11", "Fullscreen"),
+                    ("V", "Audio visualizer (audio files)"),
+                ]),
+                ("Editing", &[
+                    ("E", "Editor ↔ player"),
+                    ("S (or Ctrl+K)", "Split at playhead"),
+                    ("Q / W", "Trim head / tail to playhead"),
+                    ("Delete", "Delete clip (Shift: ripple delete)"),
+                    ("Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"),
+                    ("Ctrl+C / V / D", "Copy / paste (inserts + ripples) / duplicate"),
+                    ("I / O", "Export range in / out (Shift+I/O clears)"),
+                    ("Ctrl+M", "Drop a marker"),
+                    ("Ctrl+← / →", "Jump between markers"),
+                    ("1-9", "Multicam: cut to angle at the playhead"),
+                ]),
+                ("Timeline pointer", &[
+                    ("Drag clip", "Move (multi-selection moves together)"),
+                    ("Drag edge", "Trim"),
+                    ("Ctrl+edge", "Roll the cut (tail edge rolls the next clip's head)"),
+                    ("Alt+drag body", "Slip the source window"),
+                    ("Ctrl+Alt+drag", "Slide between neighbours"),
+                    ("Shift+click", "Add to selection"),
+                    ("Shift+drag empty space", "Lasso-select clips"),
+                    ("Ctrl+scroll", "Zoom the timeline"),
+                ]),
+                ("Source monitor", &[
+                    ("▶ (pool item)", "Preview a pool item over the live edit"),
+                    ("I / O", "Mark the piece you want"),
+                    ("Enter", "Insert it at the playhead (three-point edit)"),
+                ]),
+            ];
+            for (title, rows) in sections {
+                ui.label(RichText::new(title).color(theme::CYAN));
+                egui::Grid::new(title).num_columns(2).spacing([18.0, 2.0]).show(ui, |ui| {
+                    for (key, what) in rows {
+                        ui.label(RichText::new(*key).monospace().color(theme::STAR));
+                        ui.label(RichText::new(*what).small());
+                        ui.end_row();
+                    }
+                });
+                ui.add_space(6.0);
+            }
+        });
+    if !open {
+        app.show_keymap = false;
     }
 }
 
@@ -583,7 +673,58 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.heading("Project");
         ui.label(format!("{} — {}×{} @ {:.0}fps", app.project.name, app.project.width, app.project.height, app.project.fps));
         ui.separator();
-        ui.label(RichText::new("Media / Clips").color(theme::CYAN));
+        // ── Media pool ──────────────────────────────────────────────────
+        // Everything gathered for the edit, on the timeline or not. Search
+        // filters; offline files (moved out from under the project) get a
+        // relink button instead of a broken render later.
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("Media pool").color(theme::CYAN));
+            if ui.small_button("+ Gather").on_hover_text("Add media to the pool without opening it").clicked() {
+                app.picker_target = crate::app::PickerTarget::Pool;
+                app.open_picker_inner_for_target();
+            }
+        });
+        app.project.absorb_sources_into_pool();
+        ui.add(egui::TextEdit::singleline(&mut app.pool_search).hint_text("search…").desired_width(f32::INFINITY));
+        let filter = app.pool_search.to_lowercase();
+        let mut items: Vec<(String, String, bool)> = app
+            .project
+            .pool
+            .iter()
+            .filter(|i| filter.is_empty() || i.path.to_lowercase().contains(&filter) || i.bin.to_lowercase().contains(&filter))
+            .map(|i| (i.path.clone(), i.bin.clone(), std::path::Path::new(&i.path).exists()))
+            .collect();
+        items.sort_by(|a, b| a.1.cmp(&b.1).then(a.0.cmp(&b.0)));
+        let mut last_bin: Option<String> = None;
+        for (path, bin, online) in items {
+            if last_bin.as_deref() != Some(bin.as_str()) {
+                if !bin.is_empty() {
+                    ui.label(RichText::new(format!("• {bin}")).small().color(egui::Color32::from_gray(150)));
+                }
+                last_bin = Some(bin.clone());
+            }
+            let name = std::path::Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.clone());
+            ui.horizontal(|ui| {
+                if online {
+                    if ui.small_button("▶").on_hover_text("Source monitor: preview, set I/O, insert").clicked() {
+                        app.preview_source(&path);
+                    }
+                    ui.label(RichText::new(&name).small());
+                } else {
+                    ui.label(RichText::new(&name).small().color(theme::EMBER).strikethrough());
+                    if ui.small_button("relink…").on_hover_text("The file moved — point at where it is now").clicked() {
+                        app.picker_target = crate::app::PickerTarget::Relink(path.clone());
+                        app.open_picker_inner_for_target();
+                    }
+                }
+            });
+        }
+
+        ui.add_space(4.0);
+        ui.label(RichText::new("Clips").color(theme::CYAN));
         for track in &app.project.tracks {
             for clip in &track.clips {
                 let selected = app.editor.selected == Some(clip.id);
@@ -591,6 +732,42 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     app.editor.selected = Some(clip.id);
                 }
             }
+        }
+
+        // ── Multicam ────────────────────────────────────────────────────
+        if !app.project.multicam.is_empty() {
+            ui.add_space(4.0);
+            ui.label(RichText::new("Multicam").color(theme::CYAN));
+            let angles: Vec<(usize, String)> = app
+                .project
+                .multicam
+                .iter()
+                .enumerate()
+                .map(|(i, a)| {
+                    let n = std::path::Path::new(&a.source)
+                        .file_stem()
+                        .map(|x| x.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| a.source.clone());
+                    (i, n)
+                })
+                .collect();
+            for (i, n) in angles {
+                ui.horizontal(|ui| {
+                    if ui.small_button(format!("{}", i + 1)).on_hover_text("Cut to this angle at the playhead").clicked() {
+                        let t = app.editor.playhead;
+                        app.editor.push_undo(&app.project);
+                        if app.project.cut_to_angle(t, i) {
+                            app.editor.mark_changed();
+                        }
+                    }
+                    ui.label(RichText::new(n).small());
+                });
+            }
+            ui.label(
+                RichText::new("Keys 1-9 cut to an angle at the playhead — live, while it plays.")
+                    .small()
+                    .color(egui::Color32::from_gray(140)),
+            );
         }
         if let Some(id) = app.editor.selected {
             let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.effects));
@@ -2458,6 +2635,7 @@ fn checkerboard(painter: &egui::Painter, rect: Rect) {
 fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
     let mode = app.mode;
     let mut goto_editor = false;
+    let mut do_insert = false;
     let mut goto_player = false;
     let mut open_export = false;
     let mut toggle_fullscreen = false;
@@ -2609,6 +2787,22 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 open_export = true;
             }
             if mode == Mode::Player {
+                // Source monitor: previewing a pool item over a live edit —
+                // I/O mark a window, Insert performs the three-point edit.
+                if app.source_preview.is_some() {
+                    let label = match (app.src_mark_in, app.src_mark_out) {
+                        (Some(a), Some(b)) => format!("Insert {:.1}s", (b - a).max(0.0)),
+                        (Some(_), None) | (None, Some(_)) => "Insert (half-marked)".into(),
+                        (None, None) => "Insert all".into(),
+                    };
+                    if ui
+                        .button(RichText::new(label).color(theme::STAR))
+                        .on_hover_text("Three-point edit: source I/O + timeline playhead → a clip at the playhead")
+                        .clicked()
+                    {
+                        do_insert = true;
+                    }
+                }
                 if ui
                     .button(RichText::new("✂ Edit").color(theme::EMBER))
                     .on_hover_text("Open on the timeline (E)")
@@ -2700,6 +2894,9 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         });
     });
 
+    if do_insert {
+        app.insert_source_into_edit();
+    }
     if goto_editor {
         app.enter_editor();
     }
@@ -3303,7 +3500,12 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     // Background interact FIRST — clips registered afterwards sit on top.
     let bg = ui.interact(full, ui.id().with("tl_bg"), Sense::click_and_drag());
     if bg.drag_started() {
-        app.editor.drag = Some(Drag::Playhead);
+        // Shift+drag lassoes clips; a plain drag scrubs the playhead.
+        let shift = ui.input(|i| i.modifiers.shift);
+        app.editor.drag = match (shift, bg.interact_pointer_pos()) {
+            (true, Some(p)) => Some(Drag::Lasso { x0: p.x, y0: p.y }),
+            _ => Some(Drag::Playhead),
+        };
     }
     if bg.clicked() {
         app.editor.selected = None;
@@ -3314,6 +3516,33 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     if matches!(app.editor.drag, Some(Drag::Playhead)) && bg.dragged() {
         if let Some(p) = bg.interact_pointer_pos() {
             app.seek_timeline(x_to_t(p.x));
+        }
+    }
+    // The lasso: draw the band while dragging; select what it crosses on
+    // release. Clip rectangles are recomputed with the SAME lane geometry
+    // the drawing loop uses below.
+    if let Some(Drag::Lasso { x0, y0 }) = app.editor.drag {
+        if let Some(p) = bg.interact_pointer_pos() {
+            let band = Rect::from_two_pos(egui::pos2(x0, y0), p);
+            painter.rect_stroke(band, 2.0, Stroke::new(1.0, theme::CYAN), egui::StrokeKind::Inside);
+            painter.rect_filled(band, 2.0, Color32::from_rgba_unmultiplied(60, 180, 200, 18));
+            if bg.drag_stopped() {
+                let mut hits: Vec<u64> = Vec::new();
+                for (i, track) in app.project.tracks.iter().enumerate() {
+                    let top = full.top() + ruler_h + 4.0 + i as f32 * (lane_h + 4.0);
+                    for c in &track.clips {
+                        let r = Rect::from_min_max(
+                            egui::pos2(t_to_x(c.start), top + 2.0),
+                            egui::pos2(t_to_x(c.end()), top + lane_h - 2.0),
+                        );
+                        if band.intersects(r) {
+                            hits.push(c.id);
+                        }
+                    }
+                }
+                app.editor.selected = hits.first().copied();
+                app.editor.multi = hits.into_iter().collect();
+            }
         }
     }
     if bg.drag_stopped() {

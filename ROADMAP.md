@@ -133,18 +133,28 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       voice rolls the timeline from the playhead and the take lands on A1
       where it started. Hand-rolled WAV writer, ffprobe-verified.
 
-## F. Editorial workflow
+## F. Editorial workflow — shipped in v1.5.0 (two items open)
 
-- [ ] **Media pool**: bins, thumbnails, metadata, search; relink for moved
-      files; offline placeholders.
-- [ ] **Source monitor**: preview any pool item, set in/out, three-point
-      edit into the timeline.
-- [ ] **Multicam cutting**: the sync half shipped (`reel align`); the
-      cutting half is a live angle viewer with number-key switching.
-- [ ] Compound clips (nest a sequence); adjustment layers.
-- [ ] Drag-lasso multi-select; track targeting for paste.
-- [ ] A keyboard-map overview (press `?`) — the shortcuts have outgrown
-      the hint text.
+- [x] **Media pool** (`Project.pool`, `reel pool`): gather/bin/search,
+      timeline sources absorbed automatically, offline files flagged in
+      ember with a relink button. `Project::relink` repoints files AND
+      moved directories (path-boundary-aware) everywhere at once — clips,
+      pool, music, angles. `reel relink --from --to`.
+- [x] **Source monitor**: ▶ on a pool item plays it in the player over
+      the live edit; I/O mark the piece; Enter (or the Insert button)
+      performs the three-point edit at the timeline playhead.
+- [x] **Multicam cutting** (`Project.multicam` + `cut_to_angle`, pure and
+      tested): `reel multicam --add FILE --align` syncs an angle by sound
+      (best_lag) and the main camera auto-registers as angle 0; keys 1-9
+      (and the panel's angle buttons) cut to an angle at the playhead —
+      split, source swap, timeline time continuous. Verified end to end:
+      audio-sync offset found exactly, cuts render the right camera.
+- [ ] Compound clips (nest a sequence); adjustment layers. (Deferred —
+      both need the render path to accept a sequence as a source.)
+- [x] Shift+drag on empty timeline space lasso-selects clips (plain drag
+      still scrubs). Track targeting for paste: not yet.
+- [x] A keyboard-map overview — `?` or F1, four sections, everything
+      from J-K-L to the trim modifiers.
 
 ## G. Delivery refinements
 

@@ -385,6 +385,42 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Sync one clip to another by their AUDIO — multicam without clap sticks",
     },
     Cmd {
+        name: "pool",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "add", value: Some("FILE"), help: "Gather a file into the pool" },
+            Flag { name: "bin", value: Some("NAME"), help: "With --add (or --file): which bin it goes in" },
+            Flag { name: "file", value: Some("FILE"), help: "Re-bin an item already in the pool" },
+            Flag { name: "remove", value: Some("FILE"), help: "Take an item out of the pool" },
+            F_JSON,
+        ],
+        help: "The media pool: gather, bin and list this project's media (offline files are flagged)",
+    },
+    Cmd {
+        name: "relink",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "from", value: Some("PATH"), help: "The old file or directory" },
+            Flag { name: "to", value: Some("PATH"), help: "Where it lives now" },
+            F_JSON,
+        ],
+        help: "Repoint moved media everywhere: clips, pool, music, angles. Directories relink recursively",
+    },
+    Cmd {
+        name: "multicam",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "add", value: Some("FILE"), help: "Register an angle" },
+            Flag { name: "offset", value: Some("SECONDS"), help: "Timeline time where the angle's t=0 falls (with --add)" },
+            Flag { name: "align", value: None, help: "With --add: find the offset by syncing audio against the first V1 clip" },
+            Flag { name: "cut", value: Some("SECONDS"), help: "Cut to --angle at this timeline time" },
+            Flag { name: "angle", value: Some("N"), help: "Angle index for --cut (0-based)" },
+            Flag { name: "clear", value: None, help: "Forget every angle" },
+            F_JSON,
+        ],
+        help: "Multicam: register synced angles, then cut between them (keys 1-9 in the editor do this live)",
+    },
+    Cmd {
         name: "beats",
         args: &["TARGET"],
         flags: &[
@@ -667,6 +703,9 @@ fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "tighten" => cmd_tighten(p),
         "fillers" => cmd_fillers(p),
         "beats" => cmd_beats(p),
+        "pool" => cmd_pool(p),
+        "relink" => cmd_relink(p),
+        "multicam" => cmd_multicam(p),
         "captions" => cmd_captions(p),
         "bench" => cmd_bench(p),
         "frame" => cmd_frame(p),
@@ -1792,6 +1831,181 @@ fn cmd_tighten(p: &Parsed) -> Result<Output> {
             proj.duration()
         ),
         serde_json::json!({ "cuts": cuts, "removed": removed, "duration": proj.duration() }),
+    ))
+}
+
+fn cmd_pool(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    proj.absorb_sources_into_pool();
+    let mut changed = false;
+    if let Some(f) = p.str("add") {
+        let abs = std::fs::canonicalize(f)
+            .map(|q| q.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| f.to_string());
+        proj.pool_add(&abs, p.str("bin").unwrap_or(""));
+        changed = true;
+    }
+    if let Some(f) = p.str("file") {
+        let bin = p.str("bin").unwrap_or("");
+        let Some(item) = proj.pool.iter_mut().find(|i| i.path == f) else {
+            bail!("{f} isn't in the pool");
+        };
+        item.bin = bin.to_string();
+        changed = true;
+    }
+    if let Some(f) = p.str("remove") {
+        let before = proj.pool.len();
+        proj.pool.retain(|i| i.path != f);
+        if proj.pool.len() == before {
+            bail!("{f} isn't in the pool");
+        }
+        changed = true;
+    }
+    // The listing marks reality: files that moved out from under the
+    // project show as offline.
+    let items: Vec<serde_json::Value> = proj
+        .pool
+        .iter()
+        .map(|i| {
+            serde_json::json!({
+                "path": i.path,
+                "bin": i.bin,
+                "online": std::path::Path::new(&i.path).exists(),
+                "on_timeline": proj.tracks.iter().flat_map(|t| t.clips.iter()).any(|c| c.source == i.path),
+            })
+        })
+        .collect();
+    save(&proj, path)?;
+    let _ = changed;
+    let offline = items.iter().filter(|i| !i["online"].as_bool().unwrap_or(true)).count();
+    let mut text = format!("{} item(s) in the pool", items.len());
+    if offline > 0 {
+        text.push_str(&format!(" — {offline} OFFLINE (relink them)"));
+    }
+    for i in &items {
+        text.push_str(&format!(
+            "\n  {}{}{}",
+            if i["online"].as_bool().unwrap_or(true) { "" } else { "[OFFLINE] " },
+            i["path"].as_str().unwrap_or(""),
+            if i["bin"].as_str().unwrap_or("").is_empty() {
+                String::new()
+            } else {
+                format!("  (bin: {})", i["bin"].as_str().unwrap_or(""))
+            }
+        ));
+    }
+    Ok(Output::new(text, serde_json::json!({ "pool": items })))
+}
+
+fn cmd_relink(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let from = p.str("from").ok_or_else(|| anyhow!("--from is required"))?;
+    let to = p.str("to").ok_or_else(|| anyhow!("--to is required"))?;
+    if !std::path::Path::new(to).exists() {
+        bail!("{to} doesn't exist — relink points at where the media IS");
+    }
+    let mut proj = load(path)?;
+    let n = proj.relink(from, to);
+    if n == 0 {
+        bail!("nothing references {from}");
+    }
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!("Relinked {n} reference(s): {from} → {to}"),
+        serde_json::json!({ "relinked": n }),
+    ))
+}
+
+fn cmd_multicam(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    if p.on("clear") {
+        let n = proj.multicam.len();
+        proj.multicam.clear();
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!("Forgot {n} angle(s)"),
+            serde_json::json!({ "angles": 0 }),
+        ));
+    }
+    if let Some(f) = p.str("add") {
+        let abs = std::fs::canonicalize(f)
+            .map(|q| q.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| f.to_string());
+        // First angle registered: the main camera (V1's first clip) slots
+        // in as angle 0 automatically, so key 1 is always "back to the
+        // main cam" and the numbering matches what's on screen.
+        if proj.multicam.is_empty() {
+            if let Some(a) = proj
+                .tracks
+                .iter()
+                .find(|t| t.kind == crate::edit::TrackKind::Video)
+                .and_then(|t| t.clips.first())
+            {
+                proj.multicam.push(crate::edit::Angle {
+                    source: a.source.clone(),
+                    offset: a.start - a.in_point,
+                });
+            }
+        }
+        let offset = if p.on("align") {
+            // Sync by sound against the first V1 clip, like `reel align`.
+            let a = proj
+                .tracks
+                .iter()
+                .find(|t| t.kind == crate::edit::TrackKind::Video)
+                .and_then(|t| t.clips.first())
+                .ok_or_else(|| anyhow!("no V1 clip to sync against — add the main angle first"))?
+                .clone();
+            let pa = crate::waveform::compute(&a.source)
+                .ok_or_else(|| anyhow!("no audio in {} to sync against", a.source))?;
+            let pb = crate::waveform::compute(&abs)
+                .ok_or_else(|| anyhow!("no audio in {abs} to sync"))?;
+            let max_lag = (90.0 * crate::waveform::BUCKETS_PER_SEC) as usize;
+            let (lag, score) = crate::waveform::best_lag(&pa.data, &pb.data, max_lag)
+                .ok_or_else(|| anyhow!("not enough audio to correlate"))?;
+            if score < 0.35 {
+                bail!("no confident sync (correlation {score:.2})");
+            }
+            let lag_secs = lag as f64 / crate::waveform::BUCKETS_PER_SEC;
+            // Angle source u sits at A-source u+lag → timeline a.start − a.in_point + u + lag.
+            a.start - a.in_point + lag_secs
+        } else {
+            p.num::<f64>("offset")?.unwrap_or(0.0)
+        };
+        proj.multicam.push(crate::edit::Angle { source: abs.clone(), offset });
+        proj.pool_add(&abs, "angles");
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!(
+                "Angle {} registered at offset {offset:+.2}s — {} angle(s) total",
+                proj.multicam.len() - 1,
+                proj.multicam.len()
+            ),
+            serde_json::json!({ "angle": proj.multicam.len() - 1, "offset": offset }),
+        ));
+    }
+    if let Some(t) = p.num::<f64>("cut")? {
+        let angle: usize = p.need_num("angle")?;
+        if !proj.cut_to_angle(t, angle) {
+            bail!("could not cut to angle {angle} at {t:.2}s (no material there, or already on it)");
+        }
+        save(&proj, path)?;
+        return Ok(Output::new(
+            format!("Cut to angle {angle} at {t:.2}s"),
+            serde_json::json!({ "cut": t, "angle": angle }),
+        ));
+    }
+    let angles: Vec<serde_json::Value> = proj
+        .multicam
+        .iter()
+        .enumerate()
+        .map(|(i, a)| serde_json::json!({ "angle": i, "source": a.source, "offset": a.offset }))
+        .collect();
+    Ok(Output::new(
+        format!("{} angle(s) registered", angles.len()),
+        serde_json::json!({ "angles": angles }),
     ))
 }
 
