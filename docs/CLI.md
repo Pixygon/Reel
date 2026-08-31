@@ -231,6 +231,9 @@ Colour, fades and reframing for one clip
 | `--hsl-off` | — | Remove the qualifier |
 | `--flip-h` | — | Mirror left-right (toggle) |
 | `--flip-v` | — | Mirror top-bottom (toggle; both = 180° rotation) |
+| `--plugin` | `FILE.wgsl` | An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md |
+| `--plugin-params` | `A,B,C,D` | The plugin's parameter values (defaults from its header) |
+| `--plugin-off` | — | Remove the plugin |
 | `--raw-filter` | `CHAIN` | EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it) |
 | `--raw-filter-off` | — | Remove the raw filter |
 | `--like` | `CLIP` | Copy another clip's grade (colour only, not fades/reframe) |

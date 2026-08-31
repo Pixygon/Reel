@@ -35,7 +35,15 @@ struct Uniforms {
     mask2: vec4<f32>,
     // x = flip horizontal, y = flip vertical.
     flip: vec4<f32>,
+    // Plugin parameters (the //! param: sliders), zeros when none.
+    plug: vec4<f32>,
 };
+
+// REEL_PLUGIN_SLOT — replaced by the active effect plugin's source. The
+// contract: sRGB-encoded rgb in and out, uv is the sampled position, p the
+// user parameters. Keep this on ONE line; the splice matches it exactly.
+fn plugin(rgb: vec3<f32>, uv: vec2<f32>, p: vec4<f32>) -> vec3<f32> { return rgb; }
+
 // The grade-limiting window: how much of the LUT + trims applies at uv `q`.
 // mask = cx, cy, half-w, half-h; mask2 = feather, invert, shape (1=rect),
 // enable.
@@ -166,6 +174,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         let coord = enc * (n - 1.0) / n + 0.5 / n;
         rgb = srgb_to_linear(textureSampleLevel(lut_tex, frame_sampler, coord, 0.0).rgb);
     }
+    // The effect plugin: after the grade, before the trims, on encoded
+    // values — identity unless a plugin pipeline is bound.
+    rgb = srgb_to_linear(plugin(linear_to_srgb(rgb), in.uv, u.plug));
     if (u.params.y > 0.5) {
         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
     }

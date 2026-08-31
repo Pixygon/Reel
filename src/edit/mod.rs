@@ -900,6 +900,10 @@ pub struct Project {
     /// index (`Effects.lut`).
     #[serde(default)]
     pub luts: Vec<String>,
+    /// WGSL effect-plugin files this project uses; clips reference them by
+    /// index (`Effects.plugin`), like LUTs.
+    #[serde(default)]
+    pub plugins: Vec<String>,
     /// The media pool: everything gathered for this edit, on the timeline
     /// or not, organised into bins.
     #[serde(default)]
@@ -975,6 +979,7 @@ impl Default for Project {
             markers: Vec::new(),
             marker_labels: Vec::new(),
             luts: Vec::new(),
+            plugins: Vec::new(),
             pool: Vec::new(),
             session: Session::default(),
             multicam: Vec::new(),
@@ -1430,6 +1435,19 @@ impl Project {
         } else {
             self.marker_labels.push((t, label.to_string()));
         }
+    }
+
+    /// Register an effect plugin file (deduplicated) and return its index.
+    pub fn add_plugin(&mut self, path: &str) -> u32 {
+        if let Some(i) = self.plugins.iter().position(|p| p == path) {
+            return i as u32;
+        }
+        self.plugins.push(path.to_string());
+        (self.plugins.len() - 1) as u32
+    }
+
+    pub fn plugin_path(&self, idx: u32) -> Option<&str> {
+        self.plugins.get(idx as usize).map(String::as_str)
     }
 
     /// Register a LUT file (deduplicated) and return its index.

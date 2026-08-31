@@ -38,6 +38,8 @@ pub struct Layer {
     /// A 3D LUT texture on the compositor's device, when the clip grades
     /// through one (`Effects.lut` resolved via the project's table).
     pub lut: Option<wgpu::TextureView>,
+    /// The clip's effect plugin (WGSL), when one is bound and loads.
+    pub plugin: Option<std::sync::Arc<crate::plugins::Plugin>>,
 }
 
 /// A frame to be composed: layers back-to-front over opaque black.

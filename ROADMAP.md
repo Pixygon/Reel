@@ -223,9 +223,8 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 
 - [x] Pixygon changelog server version reconciled (PATCH /projects/:id
       currentVersion — was 0.40.0, now tracks reality).
-- [x] Sponsors button live on the site (♥ → github.com/sponsors/Pixygon).
-      NOTE: the org's Sponsors LISTING still needs publishing (profile +
-      tiers + Stripe) before the link resolves to a real page.
+- [x] Sponsors FULLY live: the listing is published and public —
+      github.com/sponsors/Pixygon resolves; the site's ♥ button works.
 - [x] CONTRIBUTING.md; CI on GitHub Actions (full suite with real ffmpeg
       + software Vulkan, plus a Windows cross-compile job); labeled
       starter issues.
@@ -271,8 +270,15 @@ Ordered by leverage; each lands with measured tests like everything above.
 - [x] Time-stretch music fitting (`music set --fit`, v1.9.0): rubberband
       pitch-preserved at render, rate-matched (documented approximation)
       live; band-measured test at the tail.
-- [ ] Effect plugins as WGSL fragments with a declared parameter block —
-      loaded from ~/.config/reel/effects, hot-reloaded, keyframable.
+- [x] **Effect plugins as WGSL files** (v1.11.0): one file, a `//! param:`
+      header for labelled sliders, `fn plugin(rgb, uv, p)` on sRGB-encoded
+      values after the grade / before the trims. Runs IDENTICALLY in the
+      preview and the frame server (per-plugin pipeline variants, cached
+      by path+mtime = hot reload; a broken file logs and degrades to the
+      built-in look, never crashes). Pixel-tested (invert → cyan,
+      vignette corner falloff) and verified live. Examples in
+      examples/effects/, guide in docs/PLUGINS.md. Keyframed params and
+      the graph fallback: open (it warns).
 - [ ] Title/motion preset format (keyframe templates as data) with an
       in-app browser.
 - [ ] LADSPA/LV2 hosting for audio inserts.

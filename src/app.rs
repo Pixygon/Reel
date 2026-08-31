@@ -29,6 +29,8 @@ pub enum PickerTarget {
     Pool,
     /// Find where this offline file went.
     Relink(String),
+    /// A .wgsl effect plugin for this clip.
+    Plugin(u64),
 }
 
 /// A live PiP preview: its own muted player plus the texture its frames
@@ -283,6 +285,7 @@ impl ReelApp {
         // Test hook: open a panel for visual verification once media lands.
         self.debug_open_export = std::env::var("REEL_DEBUG_OPEN").as_deref() == Ok("export");
         self.debug_autoplay = std::env::var("REEL_DEBUG_PLAY").as_deref() == Ok("1");
+        crate::plugins::seed_examples();
         #[cfg(target_os = "linux")]
         {
             if let Err(e) = crate::integration::install_desktop_entry() {
@@ -401,7 +404,7 @@ impl ReelApp {
                 ("Any media", &["mp4", "mkv", "webm", "mov", "m4v", "mp3", "flac", "ogg",
                                 "opus", "m4a", "wav"]),
             ];
-            let media_filters: [(&str, &[&str]); 5] = [
+            let media_filters: [(&str, &[&str]); 6] = [
                 ("Media", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
                             "mp3", "flac", "ogg", "opus", "m4a", "wav",
                             "png", "jpg", "jpeg", "webp", "bmp", "svg"]),
@@ -409,6 +412,7 @@ impl ReelApp {
                 ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
                 ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
                 ("Reel project", &["reel"]),
+                ("Effects & LUTs", &["wgsl", "cube"]),
             ];
             // Linux: rfd talks to the portal over zbus built in tokio mode.
             // MUST run on the process-wide runtime (see runtime.rs) — a
@@ -470,6 +474,28 @@ impl ReelApp {
                                 self.status = "LUT applied — previewed and rendered alike.".into();
                             }
                             Err(e) => self.status = format!("Not a usable LUT: {e}"),
+                        }
+                    }
+                    PickerTarget::Plugin(clip) => {
+                        let abs = std::fs::canonicalize(&path)
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or(path);
+                        match crate::plugins::load(&abs) {
+                            Ok(plug) => {
+                                self.editor.push_undo(&self.project);
+                                let idx = self.project.add_plugin(&abs);
+                                if let Some(c) = self.project.clip_mut(clip) {
+                                    c.effects.plugin = Some(idx);
+                                    if c.effects.plugin_params == [0.0; 4] {
+                                        for (i, d) in plug.params.iter().enumerate() {
+                                            c.effects.plugin_params[i] = d.default;
+                                        }
+                                    }
+                                }
+                                self.editor.mark_changed();
+                                self.status = format!("Effect '{}' applied — previewed and rendered alike.", plug.name);
+                            }
+                            Err(e) => self.status = format!("Not a usable effect: {e}"),
                         }
                     }
                     PickerTarget::Pool => {
@@ -1053,6 +1079,21 @@ impl ReelApp {
         self.lut_previews.get(&key).cloned().flatten()
     }
 
+    /// The active clip's effect plugin, loaded (or None when unset,
+    /// missing, or unparseable — the preview then shows the built-in look
+    /// and the log says why).
+    pub fn plugin_for(&self, fx: Option<crate::effects::Effects>) -> Option<std::sync::Arc<crate::plugins::Plugin>> {
+        let idx = fx?.plugin?;
+        let path = self.project.plugin_path(idx)?.to_string();
+        match crate::plugins::load(&path) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                log::warn!("effect plugin {path}: {e}");
+                None
+            }
+        }
+    }
+
     /// The MAIN preview's lattice: the clip under the playhead plus any
     /// adjustment layers — the stacked bake, same as the render's.
     pub fn preview_lut(&self) -> Option<wgpu::TextureView> {
@@ -1223,6 +1264,7 @@ impl ReelApp {
                 markers: self.project.markers.clone(),
                 marker_labels: self.project.marker_labels.clone(),
                 luts: self.project.luts.clone(),
+                plugins: self.project.plugins.clone(),
                 audio_clips: self.project.audio_clips(),
             }
         } else {
@@ -1453,6 +1495,7 @@ impl ReelApp {
             markers: &[],
             marker_labels: &[],
             luts: &self.project.luts,
+            plugins: &self.project.plugins,
             audio_clips: &[],
         };
         match crate::engine::render::still_png(
@@ -1522,6 +1565,7 @@ impl ReelApp {
                     markers: self.project.markers.clone(),
                     marker_labels: self.project.marker_labels.clone(),
                     luts: self.project.luts.clone(),
+                    plugins: self.project.plugins.clone(),
                     audio_clips: self.project.audio_clips(),
                 },
                 output: out.to_string_lossy().into_owned(),
@@ -1579,6 +1623,7 @@ impl ReelApp {
             markers: &[],
             marker_labels: &[],
             luts: &self.project.luts,
+            plugins: &self.project.plugins,
             audio_clips: &[],
         };
         match export::start_timeline_with_captions(

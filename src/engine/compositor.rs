@@ -30,8 +30,10 @@ struct Uniforms {
     mask: [f32; 4],
     /// feather, invert, shape (1 = rect), enable.
     mask2: [f32; 4],
-    /// x = flip horizontal, y = flip vertical; zw reserved. Appended last.
+    /// x = flip horizontal, y = flip vertical; zw reserved.
     flip: [f32; 4],
+    /// Effect-plugin parameters. Appended last; order is load-bearing.
+    plug: [f32; 4],
 }
 
 pub struct Compositor {
@@ -42,6 +44,9 @@ pub struct Compositor {
     sampler: wgpu::Sampler,
     /// Bound for every layer without a LUT, so the shader samples freely.
     identity_lut: wgpu::TextureView,
+    /// Plugin pipeline variants, keyed by the plugin's path+mtime hash.
+    pipeline_layout: wgpu::PipelineLayout,
+    variants: std::sync::Mutex<std::collections::HashMap<u64, Option<wgpu::RenderPipeline>>>,
 }
 
 /// The output format. sRGB so the shader samples linear and writes linear,
@@ -158,7 +163,16 @@ impl Compositor {
             ..Default::default()
         });
         let identity_lut = crate::lut::to_texture(&crate::lut::identity(), &device, &queue);
-        Self { device, queue, pipeline, layout, sampler, identity_lut }
+        Self {
+            device,
+            queue,
+            pipeline,
+            layout,
+            sampler,
+            identity_lut,
+            pipeline_layout: pl,
+            variants: Default::default(),
+        }
     }
 
     /// Upload a lattice for use on this compositor's device.
@@ -206,6 +220,26 @@ impl Compositor {
     /// Render `scene` into `target`: layers back-to-front over opaque black.
     pub fn render(&self, scene: &Scene, target: &wgpu::Texture) {
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        // Compile any new plugin pipelines first (outside the pass borrow).
+        {
+            let mut variants = self.variants.lock().unwrap();
+            for l in &scene.layers {
+                if let Some(p) = &l.plugin {
+                    variants.entry(p.key).or_insert_with(|| {
+                        crate::plugins::build_variant(
+                            &self.device,
+                            include_str!("compose.wgsl"),
+                            p,
+                            "reel-compose-plugin",
+                            &self.pipeline_layout,
+                            FORMAT,
+                            wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                        )
+                    });
+                }
+            }
+        }
+        let variants = self.variants.lock().unwrap();
         // Bind groups first — building them inside the pass fights the borrow
         // checker and gains nothing.
         let binds: Vec<wgpu::BindGroup> = scene
@@ -259,8 +293,17 @@ impl Compositor {
                 timestamp_writes: None,
                 occlusion_query_set: None,
             });
-            pass.set_pipeline(&self.pipeline);
-            for bg in &binds {
+            // One pipeline switch per layer at most — plugin layers draw
+            // through their own compiled variant (a broken plugin caches
+            // None and falls back to the base look).
+            for (bg, l) in binds.iter().zip(&scene.layers) {
+                let pipeline = l
+                    .plugin
+                    .as_ref()
+                    .and_then(|p| variants.get(&p.key))
+                    .and_then(|v| v.as_ref())
+                    .unwrap_or(&self.pipeline);
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bg, &[]);
                 pass.draw(0..6, 0..1);
             }
@@ -314,6 +357,7 @@ impl Compositor {
                 0.0,
                 0.0,
             ],
+            plug: l.effects.plugin_params,
         }
     }
 
@@ -475,6 +519,7 @@ mod tests {
                 effects: Effects::default(),
                 use_src_alpha: false,
                 lut: None,
+                plugin: None,
             }],
         };
         let target = c.target(200, 100);
@@ -507,6 +552,7 @@ mod tests {
                     effects: Effects::default(),
                     use_src_alpha: false,
                     lut: None,
+                    plugin: None,
                 },
                 Layer {
                     view: solid(&c, [255, 0, 0, 255], 4, 4),
@@ -516,6 +562,7 @@ mod tests {
                     effects: Effects::default(),
                     use_src_alpha: false,
                     lut: None,
+                    plugin: None,
                 },
             ],
         };
@@ -563,6 +610,7 @@ mod tests {
                 },
                 use_src_alpha: false,
                 lut: None,
+                plugin: None,
             }],
         };
         let target = c.target(200, 100);
@@ -611,6 +659,7 @@ mod tests {
                 effects: Effects { curves: Some(curves), ..Default::default() },
                 use_src_alpha: false,
                 lut: Some(c.lut_texture(&lattice)),
+                plugin: None,
             }],
         };
         let target = c.target(16, 16);
@@ -656,6 +705,7 @@ mod tests {
                 effects: Effects { lut: Some(0), ..Default::default() },
                 use_src_alpha: false,
                 lut: Some(c.lut_texture(&lut)),
+                plugin: None,
             }],
         };
         let target = c.target(16, 16);
@@ -695,6 +745,7 @@ mod tests {
                     effects: fx,
                     use_src_alpha: false,
                     lut: None,
+                    plugin: None,
                 }],
             };
             let target = c.target(16, 16);

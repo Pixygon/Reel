@@ -934,6 +934,8 @@ pub struct Overlays<'a> {
     pub marker_labels: &'a [(f64, String)],
     /// The project's LUT table — `Effects.lut` indexes into it.
     pub luts: &'a [String],
+    /// The project's effect-plugin table — `Effects.plugin` indexes into it.
+    pub plugins: &'a [String],
     /// Audio-track and overlay clips mixed into the export — the live mixer
     /// already plays these; a render that dropped them would be a preview
     /// that lies.
@@ -1032,6 +1034,11 @@ pub(crate) fn start_timeline_graph(
     }
     if overlays.overlays.iter().any(|o| o.adjustment) {
         dropped.push("adjustment layers");
+    }
+    if segments.iter().any(|s| s.effects.plugin.is_some())
+        || overlays.overlays.iter().any(|o| o.effects.plugin.is_some())
+    {
+        dropped.push("effect plugins (WGSL)");
     }
     if !overlays.markers.is_empty() {
         dropped.push("chapters");
@@ -1573,6 +1580,7 @@ pub enum Job {
         markers: Vec<f64>,
         marker_labels: Vec<(f64, String)>,
         luts: Vec<String>,
+        plugins: Vec<String>,
         audio_clips: Vec<crate::edit::AudioClip>,
     },
 }
@@ -1664,7 +1672,7 @@ impl Queue {
                     }
                     Job::Timeline {
                         segments, project, captions, caption_size, titles, music, overlays,
-                        markers, marker_labels, luts, audio_clips,
+                        markers, marker_labels, luts, plugins, audio_clips,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1679,6 +1687,7 @@ impl Queue {
                             markers,
                             marker_labels,
                             luts,
+                            plugins,
                             audio_clips,
                         },
                     ),
@@ -2888,6 +2897,54 @@ mod tests {
         }
     }
 
+    /// A WGSL effect plugin runs in the real render: the bundled invert
+    /// example on a red clip must come out cyan through the frame server,
+    /// and the vignette must darken corners more than the centre.
+    #[test]
+    fn wgsl_plugins_run_in_the_frame_server() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-plug-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=red:size=320x240:rate=25:duration=1",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let invert = format!("{}/examples/effects/invert.wgsl", env!("CARGO_MANIFEST_DIR"));
+        let vignette = format!("{}/examples/effects/vignette.wgsl", env!("CARGO_MANIFEST_DIR"));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 1.0);
+        sg.effects.plugin = Some(0);
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let still = |plugins: &[String], params: [f32; 4]| -> Option<image::RgbImage> {
+            let mut sg = sg.clone();
+            sg.effects.plugin_params = params;
+            let out = dir.join(format!("reel-plug-{}-{}.png", std::process::id(), plugins[0].len()));
+            let _ = std::fs::remove_file(&out);
+            let overlays = Overlays { plugins, ..Default::default() };
+            crate::engine::render::still_png(
+                &[sg], &overlays, (320, 240, 25.0), &s, 0.5, &out.to_string_lossy(),
+            )
+            .ok()?;
+            let img = image::open(&out).ok()?.to_rgb8();
+            let _ = std::fs::remove_file(&out);
+            Some(img)
+        };
+        let Some(img) = still(&[invert.clone()], [0.0; 4]) else {
+            eprintln!("no GPU — skipping the plugin test");
+            return;
+        };
+        let px = img.get_pixel(160, 120).0;
+        assert!(px[0] < 60 && px[1] > 200 && px[2] > 200,
+            "invert plugin: red must render cyan, got {px:?}");
+        // Vignette: corners darker than centre, centre barely touched.
+        let img = still(&[vignette.clone()], [0.9, 0.75, 0.0, 0.0]).expect("vignette still");
+        let (c, corner) = (img.get_pixel(160, 120).0, img.get_pixel(4, 4).0);
+        assert!(c[0] > 180, "vignette leaves the centre bright, got {c:?}");
+        assert!((c[0] as i32 - corner[0] as i32) > 60,
+            "vignette must darken the corner (centre {c:?} vs corner {corner:?})");
+        let _ = std::fs::remove_file(&src);
+    }
+
     /// Flips are geometry in both engines: a left-red/right-blue source
     /// with flip_h must render right-red/left-blue in the frame server AND
     /// the graph fallback — the same mirrored pixels.
@@ -3749,7 +3806,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], marker_labels: &[], luts: &[], audio_clips: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], marker_labels: &[], luts: &[], plugins: &[], audio_clips: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);

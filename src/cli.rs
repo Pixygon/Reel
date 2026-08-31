@@ -280,6 +280,9 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "hsl-off", value: None, help: "Remove the qualifier" },
             Flag { name: "flip-h", value: None, help: "Mirror left-right (toggle)" },
             Flag { name: "flip-v", value: None, help: "Mirror top-bottom (toggle; both = 180° rotation)" },
+            Flag { name: "plugin", value: Some("FILE.wgsl"), help: "An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md" },
+            Flag { name: "plugin-params", value: Some("A,B,C,D"), help: "The plugin's parameter values (defaults from its header)" },
+            Flag { name: "plugin-off", value: None, help: "Remove the plugin" },
             Flag { name: "raw-filter", value: Some("CHAIN"), help: "EXPERT: raw ffmpeg video filters spliced into this clip's decode (render + frame; live preview can't show it)" },
             Flag { name: "raw-filter-off", value: None, help: "Remove the raw filter" },
             Flag { name: "like", value: Some("CLIP"), help: "Copy another clip's grade (colour only, not fades/reframe)" },
@@ -1394,6 +1397,17 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         if p.on("hsl-off") {
             c.effects.hsl = None;
         }
+        if p.on("plugin-off") {
+            c.effects.plugin = None;
+        }
+        if let Some(v) = p.str("plugin-params") {
+            let mut params = c.effects.plugin_params;
+            for (i, tok) in v.split(',').take(4).enumerate() {
+                params[i] = tok.trim().parse::<f32>()
+                    .map_err(|_| anyhow!("--plugin-params wants numbers, got {tok:?}"))?;
+            }
+            c.effects.plugin_params = params;
+        }
         if p.on("flip-h") {
             c.effects.flip_h = !c.effects.flip_h;
         }
@@ -1470,6 +1484,24 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         let idx = proj.add_lut(&abs);
         if let Some(c) = proj.clip_mut(id) {
             c.effects.lut = Some(idx);
+        }
+    }
+    if let Some(f) = p.str("plugin").map(String::from) {
+        let abs = std::fs::canonicalize(&f)
+            .map(|q| q.to_string_lossy().into_owned())
+            .unwrap_or(f);
+        // Refuse an unparseable plugin before saving it; the GPU compile
+        // check happens at render (a broken file degrades, never crashes).
+        let plugin = crate::plugins::load(&abs)?;
+        let idx = proj.add_plugin(&abs);
+        if let Some(c) = proj.clip_mut(id) {
+            c.effects.plugin = Some(idx);
+            // Seed the declared defaults where params are still zero.
+            if c.effects.plugin_params == [0.0; 4] {
+                for (i, d) in plugin.params.iter().enumerate() {
+                    c.effects.plugin_params[i] = d.default;
+                }
+            }
         }
     }
     // Copy another clip's grade — the colour work only. With --like-all,
@@ -2816,6 +2848,7 @@ fn cmd_bench(p: &Parsed) -> Result<Output> {
             markers: &[],
             marker_labels: &[],
             luts: &[],
+            plugins: &[],
             audio_clips: &[],
         },
     )?;
@@ -2884,6 +2917,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             markers: &[],
             marker_labels: &[],
             luts: &proj.luts,
+            plugins: &proj.plugins,
             audio_clips: &[],
         };
         let (w, h) = crate::engine::render::still_png(
@@ -3003,6 +3037,7 @@ fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
             markers: &proj.markers,
             marker_labels: &proj.marker_labels,
             luts: &proj.luts,
+            plugins: &proj.plugins,
             audio_clips: &proj.audio_clips(),
         },
     )?;

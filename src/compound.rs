@@ -58,6 +58,7 @@ pub fn render_flat(reel_path: &str) -> Result<PathBuf> {
         markers: &[],
         marker_labels: &[],
         luts: &proj.luts,
+        plugins: &proj.plugins,
         audio_clips: &proj.audio_clips(),
     };
     let job = crate::export::start_timeline_with_captions(

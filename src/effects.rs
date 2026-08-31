@@ -94,6 +94,14 @@ pub struct Effects {
     /// only those pixels. The classic "make the sky bluer" tool.
     #[serde(default)]
     pub hsl: Option<Hsl>,
+    /// An effect PLUGIN (WGSL file), as an index into `Project.plugins` —
+    /// an index, not a path, so Effects stays `Copy`. Runs after the grade,
+    /// before the trims, in both pipelines.
+    #[serde(default)]
+    pub plugin: Option<u32>,
+    /// The plugin's user parameters (the //! param: sliders).
+    #[serde(default)]
+    pub plugin_params: [f32; 4],
     /// Mirror the picture left-right. With flip_v = a 180° rotation.
     #[serde(default)]
     pub flip_h: bool,
@@ -353,6 +361,8 @@ impl Default for Effects {
             wb_temp: 0.0,
             wb_tint: 0.0,
             hsl: None,
+            plugin: None,
+            plugin_params: [0.0; 4],
             flip_h: false,
             flip_v: false,
         }
@@ -438,6 +448,7 @@ impl Effects {
             && !self.has_grade()
             && !self.flip_h
             && !self.flip_v
+            && self.plugin.is_none()
     }
 
     /// Take another clip's GRADE — the colour work only. Fades, reframe,

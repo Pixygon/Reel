@@ -39,9 +39,11 @@ struct Uniforms {
     mask: [f32; 4],
     /// feather, invert, shape (1 = rect), enable.
     mask2: [f32; 4],
-    /// x = flip horizontal, y = flip vertical; zw reserved. Appended LAST —
-    /// field order is load-bearing on both sides of the FFI.
+    /// x = flip horizontal, y = flip vertical; zw reserved.
     flip: [f32; 4],
+    /// Effect-plugin parameters. Appended LAST — field order is
+    /// load-bearing on both sides of the FFI.
+    plug: [f32; 4],
 }
 
 pub struct VideoPass {
@@ -49,6 +51,11 @@ pub struct VideoPass {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     identity_lut: wgpu::TextureView,
+    /// For plugin pipeline variants: the layout + target the base was
+    /// built with, and a cache keyed by the plugin's path+mtime hash.
+    pipeline_layout: wgpu::PipelineLayout,
+    target_format: wgpu::TextureFormat,
+    variants: std::sync::Mutex<std::collections::HashMap<u64, Option<wgpu::RenderPipeline>>>,
 }
 
 impl VideoPass {
@@ -138,7 +145,15 @@ impl VideoPass {
             ..Default::default()
         });
         let identity_lut = crate::lut::to_texture(&crate::lut::identity(), device, queue);
-        Self { pipeline, layout, sampler, identity_lut }
+        Self {
+            pipeline,
+            layout,
+            sampler,
+            identity_lut,
+            pipeline_layout,
+            target_format: target,
+            variants: Default::default(),
+        }
     }
 }
 
@@ -153,6 +168,8 @@ pub struct VideoDraw {
     pub effects: Option<crate::effects::Effects>,
     /// The clip's LUT, already resolved to a texture on this device.
     pub lut: Option<wgpu::TextureView>,
+    /// The clip's effect plugin (WGSL), when one is bound and loads.
+    pub plugin: Option<std::sync::Arc<crate::plugins::Plugin>>,
 }
 
 /// Bind groups built during `prepare`, consumed in `paint` — a QUEUE, not a
@@ -163,7 +180,7 @@ pub struct VideoDraw {
 /// pairs them back up.
 #[derive(Default)]
 struct Prepared {
-    queue: std::sync::Mutex<std::collections::VecDeque<wgpu::BindGroup>>,
+    queue: std::sync::Mutex<std::collections::VecDeque<(wgpu::BindGroup, Option<u64>)>>,
 }
 
 impl CallbackTrait for VideoDraw {
@@ -224,6 +241,7 @@ impl CallbackTrait for VideoDraw {
                     0.0,
                 ])
                 .unwrap_or([0.0; 4]),
+            plug: self.effects.map(|e| e.plugin_params).unwrap_or([0.0; 4]),
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -242,11 +260,28 @@ impl CallbackTrait for VideoDraw {
                 },
             ],
         });
+        // Plugin pipelines compile lazily, once per (file, mtime) — a
+        // broken plugin caches None and the base pipeline draws instead.
+        let plugin_key = self.plugin.as_ref().map(|p| {
+            let mut variants = pass.variants.lock().unwrap();
+            variants.entry(p.key).or_insert_with(|| {
+                crate::plugins::build_variant(
+                    device,
+                    include_str!("video.wgsl"),
+                    p,
+                    "reel-video-plugin",
+                    &pass.pipeline_layout,
+                    pass.target_format,
+                    wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+                )
+            });
+            p.key
+        });
         if resources.get::<Prepared>().is_none() {
             resources.insert(Prepared::default());
         }
         let prepared = resources.get::<Prepared>().unwrap();
-        prepared.queue.lock().unwrap().push_back(bind_group);
+        prepared.queue.lock().unwrap().push_back((bind_group, plugin_key));
         Vec::new()
     }
 
@@ -261,10 +296,15 @@ impl CallbackTrait for VideoDraw {
         else {
             return;
         };
-        let Some(bind_group) = prepared.queue.lock().unwrap().pop_front() else {
+        let Some((bind_group, plugin_key)) = prepared.queue.lock().unwrap().pop_front() else {
             return;
         };
-        render_pass.set_pipeline(&pass.pipeline);
+        let variants = pass.variants.lock().unwrap();
+        let pipeline = plugin_key
+            .and_then(|k| variants.get(&k))
+            .and_then(|v| v.as_ref())
+            .unwrap_or(&pass.pipeline);
+        render_pass.set_pipeline(pipeline);
         render_pass.set_bind_group(0, &bind_group, &[]);
         // Three vertices, no buffers: the vertex shader builds the triangle
         // that covers the callback's viewport.

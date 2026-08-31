@@ -230,6 +230,7 @@ pub fn start_timeline(
 
     let (job, state, cancel) = ExportJob::manual(output);
     let lut_table: Vec<String> = overlays.luts.to_vec();
+    let plugin_table: Vec<String> = overlays.plugins.to_vec();
     let segments = segments.to_vec();
     let settings = settings.clone();
     let output = output.to_string();
@@ -237,7 +238,8 @@ pub fn start_timeline(
     std::thread::spawn(move || {
         let result = run(
             comp, &segments, &output, &settings, target, total, planned_overlays, adjustments,
-            ramp_fps, transfers, lut_table, audio_args, chapters, burnin, &state, &cancel,
+            ramp_fps, transfers, lut_table, plugin_table, audio_args, chapters, burnin, &state,
+            &cancel,
         );
         let mut st = state.lock().unwrap();
         st.finished = true;
@@ -340,6 +342,7 @@ pub fn render_still(
                     effects: eff_fx,
                     use_src_alpha: true,
                     lut,
+                    plugin: plugin_of(&fx, overlays.plugins),
                 },
             ));
         }
@@ -384,6 +387,7 @@ pub fn render_still(
                             .and_then(|p| crate::lut::load(p).ok());
                         comp.lut_texture(&crate::lut::bake_grade(base.as_deref(), &o.effects))
                     }),
+                    plugin: plugin_of(&o.effects, overlays.plugins),
                 },
             ));
         }
@@ -480,6 +484,22 @@ fn lut_for_stack(
         .clone()
 }
 
+/// Resolve a clip's effect plugin from the project table; a load failure
+/// logs once per file (the loader caches) and renders the built-in look.
+fn plugin_of(
+    fx: &crate::effects::Effects,
+    table: &[String],
+) -> Option<std::sync::Arc<crate::plugins::Plugin>> {
+    let path = table.get(fx.plugin? as usize)?;
+    match crate::plugins::load(path) {
+        Ok(p) => Some(p),
+        Err(e) => {
+            log::warn!("effect plugin {path}: {e}");
+            None
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run(
     comp: Compositor,
@@ -493,6 +513,7 @@ fn run(
     ramp_fps: Vec<Option<f64>>,
     transfers: std::collections::HashMap<String, Option<String>>,
     lut_table: Vec<String>,
+    plugin_table: Vec<String>,
     audio_args: Option<Vec<String>>,
     chapters: Option<String>,
     burnin: Vec<String>,
@@ -772,6 +793,7 @@ fn run(
                     // grading colours the picture and never the bars.
                     use_src_alpha: true,
                     lut,
+                    plugin: plugin_of(&eff_fx, &plugin_table),
                 });
             }
 
@@ -835,6 +857,7 @@ fn run(
                     effects: o.effects,
                     use_src_alpha: false,
                     lut: lut_for_stack(&[&o.effects], &mut grade_views, &lut_table, &comp),
+                    plugin: plugin_of(&o.effects, &plugin_table),
                 });
             }
 

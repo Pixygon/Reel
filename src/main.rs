@@ -27,6 +27,7 @@ mod media;
 mod perf;
 #[cfg(target_os = "linux")]
 mod portal;
+mod plugins;
 mod proxy;
 #[cfg(target_os = "linux")]
 mod runtime;

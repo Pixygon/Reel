@@ -1276,6 +1276,37 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     app.editor.mark_changed();
                 }
 
+                // Effect plugin: pick a .wgsl, get its declared sliders.
+                {
+                    ui.horizontal(|ui| {
+                        let label = fx.plugin
+                            .and_then(|i| app.project.plugin_path(i))
+                            .and_then(|path| crate::plugins::load(path).ok().map(|p| p.name.clone()))
+                            .unwrap_or_else(|| "Effect plugin…".into());
+                        if ui.button(label).on_hover_text(
+                            "A WGSL effect file — runs identically in the preview and the render. \
+                             Drop files in ~/.config/reel/effects; see docs/PLUGINS.md",
+                        ).clicked() {
+                            app.picker_target = crate::app::PickerTarget::Plugin(id);
+                            app.open_picker_inner_for_target();
+                        }
+                        if fx.plugin.is_some() && ui.small_button("off").clicked() {
+                            fx.plugin = None;
+                        }
+                    });
+                    if let Some(plug) = fx.plugin
+                        .and_then(|i| app.project.plugin_path(i))
+                        .and_then(|path| crate::plugins::load(path).ok())
+                    {
+                        for (i, d) in plug.params.iter().enumerate() {
+                            ui.add(
+                                egui::Slider::new(&mut fx.plugin_params[i], d.min..=d.max)
+                                    .text(&d.name),
+                            );
+                        }
+                    }
+                }
+
                 // Expert escape hatch: raw ffmpeg filters on this clip.
                 {
                     let current = app.project.clip(id).and_then(|c| c.raw_filter.clone());
@@ -1952,6 +1983,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     // The stacked lattice (clip grade + adjustment layers)
                     // when in the editor; the plain per-fx one elsewhere.
                     lut: app.preview_lut().or_else(|| app.lut_view(effects)),
+                    plugin: app.plugin_for(effects),
                 },
             ));
             // The incoming half of a crossfade, blended over the outgoing
@@ -2007,6 +2039,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                                     use_src_alpha: false,
                                     effects: fx,
                                     lut: app.lut_view(fx),
+                                    plugin: app.plugin_for(fx),
                                 },
                             ));
                         }
@@ -2194,6 +2227,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
                         use_src_alpha: false,
                         effects: fx,
                         lut: app.lut_view(fx),
+                        plugin: app.plugin_for(fx),
                     },
                 ));
                 drew = true;
@@ -3538,6 +3572,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         markers: &app.project.markers,
                         marker_labels: &app.project.marker_labels,
                         luts: &app.project.luts,
+                        plugins: &app.project.plugins,
                         audio_clips: &app.project.audio_clips(),
                     },
                 ) {
