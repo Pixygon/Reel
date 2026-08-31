@@ -74,6 +74,12 @@ impl ksni::Tray for ReelTray {
                 ..Default::default()
             }
             .into(),
+            StandardItem {
+                label: if self.recording { "⏹ Stop recording".into() } else { "⏺ Record webcam".into() },
+                activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ToggleWebcam)),
+                ..Default::default()
+            }
+            .into(),
             MenuItem::Separator,
             StandardItem {
                 label: "Quit Reel".into(),

@@ -238,6 +238,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "comp-thresh", value: Some("DB"), help: "Threshold, dBFS (default -18)" },
             Flag { name: "comp-ratio", value: Some("N"), help: "Ratio N:1 (default 3)" },
             Flag { name: "comp-off", value: None, help: "Compressor off" },
+            Flag { name: "fade-curve", value: Some("SHAPE"), help: "Audio fade shape: linear, smooth (qsin) or exp" },
             Flag { name: "fix", value: None, help: "Fix voice on export: rumble/hum off, noise down, clicks patched" },
             Flag { name: "fix-off", value: None, help: "Stop fixing" },
             Flag { name: "reset", value: None, help: "Back to untouched audio" },
@@ -370,10 +371,14 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "color", value: Some("RRGGBB"), help: "Hex colour, e.g. ffcc00" },
             Flag { name: "no-bold", value: None, help: "Regular weight" },
             Flag { name: "no-outline", value: None, help: "No dark outline" },
+            Flag { name: "preset", value: Some("NAME"), help: "A title preset (style + motion) from ~/.config/reel/titles — name or path" },
+            Flag { name: "fade-in", value: Some("SECONDS"), help: "Fade (and slide, if set) up over this long" },
+            Flag { name: "fade-out", value: Some("SECONDS"), help: "Fade away over this long" },
+            Flag { name: "slide", value: Some("EDGE"), help: "Slide in from left, right, top or bottom (needs --fade-in)" },
             Flag { name: "index", value: Some("N"), help: "Which title (for remove)" },
             F_JSON,
         ],
-        help: "ACTION is add, list or remove — text placed on the picture",
+        help: "ACTION is add, list or remove — text placed on the picture, optionally animated",
     },
     Cmd {
         name: "music",
@@ -1297,6 +1302,14 @@ fn cmd_audio(p: &Parsed) -> Result<Output> {
         if p.on("comp-off") {
             c.audio.comp = false;
         }
+        if let Some(shape) = p.str("fade-curve") {
+            c.audio.fade_curve = match shape {
+                "linear" => crate::edit::FadeCurve::Linear,
+                "smooth" => crate::edit::FadeCurve::Smooth,
+                "exp" => crate::edit::FadeCurve::Exp,
+                other => bail!("--fade-curve wants linear, smooth or exp, got {other:?}"),
+            };
+        }
         if p.on("fix") {
             c.audio.voice_fix = true;
         }
@@ -1763,19 +1776,35 @@ fn cmd_title(p: &Parsed) -> Result<Output> {
             let text = p.str("text").ok_or_else(|| anyhow!("--text is required"))?;
             let at = p.num::<f64>("at")?.unwrap_or(0.0);
             let dur = p.num::<f64>("duration")?.unwrap_or(3.0);
+            // A preset seeds the style + motion; explicit flags then win.
+            let base = match p.str("preset") {
+                Some(name) => crate::titles::load_preset(name)?,
+                None => crate::titles::Title::default(),
+            };
             let t = crate::titles::Title {
                 text: text.to_string(),
                 start: at,
                 end: at + dur.max(0.05),
-                x: p.num::<f32>("x")?.unwrap_or(0.5),
-                y: p.num::<f32>("y")?.unwrap_or(0.5),
-                size: p.num::<f32>("size")?.unwrap_or(0.09),
+                x: p.num::<f32>("x")?.unwrap_or(base.x),
+                y: p.num::<f32>("y")?.unwrap_or(base.y),
+                size: p.num::<f32>("size")?.unwrap_or(base.size),
                 color: match p.str("color") {
                     Some(c) => parse_hex(c)?,
-                    None => [255, 255, 255],
+                    None => base.color,
                 },
-                bold: !p.on("no-bold"),
-                outline: !p.on("no-outline"),
+                bold: !p.on("no-bold") && base.bold,
+                outline: !p.on("no-outline") && base.outline,
+                fade_in: p.num::<f64>("fade-in")?.unwrap_or(base.fade_in),
+                fade_out: p.num::<f64>("fade-out")?.unwrap_or(base.fade_out),
+                slide_from: match p.str("slide") {
+                    Some("left") => crate::titles::Slide::Left,
+                    Some("right") => crate::titles::Slide::Right,
+                    Some("top") => crate::titles::Slide::Top,
+                    Some("bottom") => crate::titles::Slide::Bottom,
+                    Some(other) => bail!("--slide wants left/right/top/bottom, got {other:?}"),
+                    None => base.slide_from,
+                },
+                ..base
             };
             proj.titles.push(t.clone());
             let index = proj.titles.len() - 1;

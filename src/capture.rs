@@ -225,6 +225,73 @@ pub fn start_recording() -> Result<Recording> {
     start_tool_recording().map(Recording::Tool)
 }
 
+/// Record the WEBCAM (with the default microphone when one answers) —
+/// ffmpeg's v4l2 input, stopped with its quit key like the grab paths.
+#[cfg(target_os = "linux")]
+pub fn start_webcam_recording() -> Result<Recording> {
+    let device = webcam_device()
+        .ok_or_else(|| anyhow!("no webcam found (looked for /dev/video*)"))?;
+    let out = stamped(&out_dir("Videos"), "webcam", "mp4");
+    let out_s = out.to_string_lossy().to_string();
+    // Mic via PulseAudio/PipeWire default source; if that input fails the
+    // whole command fails, so probe first and fall back to video-only.
+    let has_mic = Command::new("ffmpeg")
+        .args(["-v", "error", "-f", "pulse", "-i", "default", "-t", "0.1", "-f", "null", "-"])
+        .stdin(Stdio::null())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    let mut args: Vec<String> = vec![
+        "-y".into(), "-f".into(), "v4l2".into(), "-framerate".into(), "30".into(),
+        "-i".into(), device.clone(),
+    ];
+    if has_mic {
+        args.extend(["-f".into(), "pulse".into(), "-i".into(), "default".into()]);
+    }
+    args.extend([
+        "-c:v".into(), "libx264".into(), "-preset".into(), "veryfast".into(),
+        "-pix_fmt".into(), "yuv420p".into(),
+    ]);
+    if has_mic {
+        args.extend(["-c:a".into(), "aac".into(), "-b:a".into(), "128k".into()]);
+    }
+    args.push(out_s);
+    let child = Command::new("ffmpeg")
+        .args(&args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| anyhow!("ffmpeg failed to start: {e}"))?;
+    log::info!(
+        "webcam recording via {device}{} → {}",
+        if has_mic { " + mic" } else { " (no mic found)" },
+        out.display()
+    );
+    Ok(Recording::Tool(Recorder { child, stop: StopMethod::QuitKey, path: out, tool: "ffmpeg" }))
+}
+
+/// The first webcam that actually delivers frames.
+#[cfg(target_os = "linux")]
+pub fn webcam_device() -> Option<String> {
+    for i in 0..4 {
+        let dev = format!("/dev/video{i}");
+        if !std::path::Path::new(&dev).exists() {
+            continue;
+        }
+        let ok = Command::new("ffmpeg")
+            .args(["-v", "error", "-f", "v4l2", "-i", &dev, "-frames:v", "1", "-f", "null", "-"])
+            .stdin(Stdio::null())
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        if ok {
+            return Some(dev);
+        }
+    }
+    None
+}
+
 /// Start a full-screen recording via an external capture tool.
 fn start_tool_recording() -> Result<Recorder> {
     let out = stamped(&out_dir("Videos"), "rec", "mp4");
@@ -324,5 +391,32 @@ mod tests {
         assert!(name.ends_with(".png"));
         // reel-shot-YYYYMMDD-HHMMSS.png
         assert_eq!(name.len(), "reel-shot-20260827-120000.png".len(), "{name}");
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod webcam_tests {
+    use super::*;
+
+    /// End to end on real hardware: 2 s from the webcam lands as a
+    /// playable clip. Skips cleanly on machines without a camera.
+    #[test]
+    fn webcam_records_a_real_clip() {
+        if webcam_device().is_none() {
+            eprintln!("no webcam on this machine — skipping");
+            return;
+        }
+        let rec = match start_webcam_recording() {
+            Ok(r) => r,
+            Err(e) => {
+                eprintln!("webcam busy or unavailable — skipping ({e})");
+                return;
+            }
+        };
+        std::thread::sleep(std::time::Duration::from_secs(2));
+        let path = rec.stop().expect("finalize webcam clip");
+        let info = crate::video::decoder::probe(&path.to_string_lossy()).expect("probe clip");
+        assert!(info.width > 0 && info.duration > 0.5, "real frames: {info:?}");
+        let _ = std::fs::remove_file(&path);
     }
 }

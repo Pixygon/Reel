@@ -1288,6 +1288,24 @@ pub(crate) fn build_timeline_audio_wav_args(
             } else {
                 String::new()
             };
+            // A clip fading to black dips its SOUND too — the live mixer
+            // always did this; the export silently didn't (a preview-lies
+            // bug, fixed here). Curve choice rides AudioFx.fade_curve.
+            let curve = seg.audio.fade_curve.afade_name();
+            let mut seg_fades = String::new();
+            if seg.effects.fade_in > 0.0 {
+                seg_fades.push_str(&format!(
+                    ",afade=t=in:st=0:d={:.3}:curve={curve}",
+                    seg.effects.fade_in.min(seg.duration)
+                ));
+            }
+            if seg.effects.fade_out > 0.0 {
+                let d = seg.effects.fade_out.min(seg.duration);
+                seg_fades.push_str(&format!(
+                    ",afade=t=out:st={:.3}:d={d:.3}:curve={curve}",
+                    (seg.duration - d).max(0.0)
+                ));
+            }
             if seg.has_ramp() {
                 // A speed RAMP: the audio approximates the curve piecewise —
                 // one atempo per keyframe interval at that interval's TRUE
@@ -1328,7 +1346,7 @@ pub(crate) fn build_timeline_audio_wav_args(
                     graph.push_str(&format!("[{l}]"));
                 }
                 graph.push_str(&format!(
-                    "concat=n={}:v=0:a=1{}{gain}[a{k}];",
+                    "concat=n={}:v=0:a=1{}{gain}{seg_fades}[a{k}];",
                     labels.len(),
                     audio_fx_chain(&seg.audio)
                 ));
@@ -1336,7 +1354,7 @@ pub(crate) fn build_timeline_audio_wav_args(
                 let rate = seg.speed.clamp(0.05, 20.0) as f64;
                 let src_len = seg.duration * rate;
                 graph.push_str(&format!(
-                    "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{}{gain}[a{k}];",
+                    "[{i}:a]atrim=start={:.4}:duration={src_len:.4},asetpts=PTS-STARTPTS,{anorm}{}{}{gain}{seg_fades}[a{k}];",
                     seg.in_point,
                     atempo_chain(rate),
                     audio_fx_chain(&seg.audio)
@@ -1383,13 +1401,14 @@ pub(crate) fn build_timeline_audio_wav_args(
             } else {
                 String::new()
             };
+            let ccurve = c.audio.fade_curve.afade_name();
             let mut fades = String::new();
             if c.fade_in > 0.0 {
-                fades.push_str(&format!(",afade=t=in:st=0:d={:.3}", c.fade_in));
+                fades.push_str(&format!(",afade=t=in:st=0:d={:.3}:curve={ccurve}", c.fade_in));
             }
             if c.fade_out > 0.0 {
                 fades.push_str(&format!(
-                    ",afade=t=out:st={:.3}:d={:.3}",
+                    ",afade=t=out:st={:.3}:d={:.3}:curve={ccurve}",
                     (c.duration - c.fade_out).max(0.0),
                     c.fade_out
                 ));
@@ -2456,6 +2475,50 @@ mod tests {
             .unwrap_or_else(|| panic!("no mean_volume in ffmpeg output:\n{text}"))
     }
 
+    /// A clip fading to black dips its SOUND in the export too — the live
+    /// mixer always did this; the wav pass silently didn't (preview-lies
+    /// bug, fixed). Measured: the last half-second is far quieter than the
+    /// middle, and a Smooth curve sits above Linear mid-fade.
+    #[test]
+    fn video_fades_dip_the_exported_audio() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-afade-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=4",
+                   "-f", "lavfi", "-i", "sine=frequency=500:duration=4",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let render = |curve: crate::edit::FadeCurve| -> std::path::PathBuf {
+            let out = dir.join(format!("reel-afade-{:?}-{}.wav", curve, std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            let mut sg = seg(&src.to_string_lossy(), 0.0, 4.0);
+            sg.effects.fade_out = 2.0;
+            sg.audio.fade_curve = curve;
+            let wav = build_timeline_audio_wav_args(
+                &[sg], true, None, &[], None, &out.to_string_lossy()).expect("wav args");
+            assert!(std::process::Command::new("ffmpeg").args(&wav)
+                .status().map(|s| s.success()).unwrap_or(false));
+            out
+        };
+        let lin = render(crate::edit::FadeCurve::Linear);
+        let mid = band_level(&lin, 0.5, 1.5, 500); // before the fade
+        let tail = band_level(&lin, 3.6, 3.95, 500); // deep in the fade
+        assert!(mid - tail > 12.0,
+            "the fade must dip the exported audio (mid {mid} dB vs tail {tail} dB)");
+        // Curve ordering at the fade's midpoint (t=3.0): Smooth > Linear.
+        let smooth = render(crate::edit::FadeCurve::Smooth);
+        let l_mid = band_level(&lin, 2.9, 3.1, 500);
+        let s_mid = band_level(&smooth, 2.9, 3.1, 500);
+        assert!(s_mid > l_mid + 1.5,
+            "qsin sits above linear mid-fade (smooth {s_mid} vs linear {l_mid})");
+        for f in [&src, &lin, &smooth] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// Fit-to-edit: a 2 s music bed under a 4 s cut stretches so its LAST
     /// note still sounds at the end — measured on the bed's own band at the
     /// tail, where an unstretched bed would have run out.
@@ -2895,6 +2958,68 @@ mod tests {
         for f in [&src, &out] {
             let _ = std::fs::remove_file(f);
         }
+    }
+
+    /// Title motion burns as it previews: a slide-in-from-left title is
+    /// LEFT of its resting place early in the fade and AT it afterwards —
+    /// measured by the burned text's horizontal centroid, compared against
+    /// the very formula the preview draws (`Title::animated_at`).
+    #[test]
+    fn title_slides_burn_where_the_preview_says() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-tmove-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=black:size=640x360:rate=25:duration=3",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let title = crate::titles::Title {
+            text: "SLIDE".into(),
+            start: 0.0,
+            end: 3.0,
+            x: 0.5,
+            y: 0.5,
+            size: 0.12,
+            fade_in: 1.0,
+            fade_out: 0.0,
+            slide_from: crate::titles::Slide::Left,
+            slide_dist: 0.25,
+            ..Default::default()
+        };
+        let segs = vec![seg(&src.to_string_lossy(), 0.0, 3.0)];
+        let titles = [title.clone()];
+        let overlays = Overlays { titles: &titles, ..Default::default() };
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let centroid_at = |t: f64| -> Option<f64> {
+            let out = dir.join(format!("reel-tmove-{}-{t}.png", std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            crate::engine::render::still_png(&segs, &overlays, (640, 360, 25.0), &s, t, &out.to_string_lossy()).ok()?;
+            let img = image::open(&out).ok()?.to_luma8();
+            let _ = std::fs::remove_file(&out);
+            let (mut sum, mut wsum) = (0.0f64, 0.0f64);
+            for (x, _y, p) in img.enumerate_pixels() {
+                if p.0[0] > 100 {
+                    sum += 1.0;
+                    wsum += x as f64;
+                }
+            }
+            if sum < 20.0 { None } else { Some(wsum / sum / 640.0) }
+        };
+        let Some(early) = centroid_at(0.5) else {
+            eprintln!("no GPU or libass — skipping title-motion test");
+            return;
+        };
+        let settled = centroid_at(2.0).expect("settled frame has text");
+        // The formula the preview uses, at the same moments.
+        let (pe, _) = title.animated_at(0.5);
+        let (ps, _) = title.animated_at(2.0);
+        assert!((settled - ps[0] as f64).abs() < 0.03,
+            "settled centroid {settled:.3} vs formula {:.3}", ps[0]);
+        assert!((early - pe[0] as f64).abs() < 0.04,
+            "mid-slide centroid {early:.3} vs formula {:.3} (settled {settled:.3})", pe[0]);
+        assert!(settled - early > 0.06, "the slide must actually travel: {early:.3} → {settled:.3}");
+        let _ = std::fs::remove_file(&src);
     }
 
     /// A WGSL effect plugin runs in the real render: the bundled invert
@@ -3799,6 +3924,7 @@ mod tests {
             color: [255, 0, 0],
             bold: true,
             outline: false,
+            ..Default::default()
         }];
 
         let job = start_timeline_with_captions(

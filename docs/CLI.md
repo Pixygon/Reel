@@ -189,6 +189,7 @@ A clip's audio processing: pan, EQ, compressor, repair — live mix and export a
 | `--comp-thresh` | `DB` | Threshold, dBFS (default -18) |
 | `--comp-ratio` | `N` | Ratio N:1 (default 3) |
 | `--comp-off` | — | Compressor off |
+| `--fade-curve` | `SHAPE` | Audio fade shape: linear, smooth (qsin) or exp |
 | `--fix` | — | Fix voice on export: rumble/hum off, noise down, clicks patched |
 | `--fix-off` | — | Stop fixing |
 | `--reset` | — | Back to untouched audio |
@@ -303,7 +304,7 @@ Crossfade from the previous clip into this one
 
 ### `reel title ACTION PROJECT`
 
-ACTION is add, list or remove — text placed on the picture
+ACTION is add, list or remove — text placed on the picture, optionally animated
 
 | Flag | Value | Meaning |
 | --- | --- | --- |
@@ -316,7 +317,12 @@ ACTION is add, list or remove — text placed on the picture
 | `--color` | `RRGGBB` | Hex colour, e.g. ffcc00 |
 | `--no-bold` | — | Regular weight |
 | `--no-outline` | — | No dark outline |
+| `--preset` | `NAME` | A title preset (style + motion) from ~/.config/reel/titles — name or path |
+| `--fade-in` | `SECONDS` | Fade (and slide, if set) up over this long |
+| `--fade-out` | `SECONDS` | Fade away over this long |
+| `--slide` | `EDGE` | Slide in from left, right, top or bottom (needs --fade-in) |
 | `--index` | `N` | Which title (for remove) |
+| `--json` | — | Print the result as JSON |
 
 ### `reel music ACTION PROJECT AUDIO?`
 

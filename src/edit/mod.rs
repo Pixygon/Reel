@@ -117,6 +117,48 @@ pub struct AudioFx {
     /// render time. The preview stays raw — repair is a real FFT pass.
     #[serde(default)]
     pub voice_fix: bool,
+    /// The shape of this clip's audio fades (video fades stay linear —
+    /// light and loudness read differently).
+    #[serde(default)]
+    pub fade_curve: FadeCurve,
+}
+
+/// Audio fade shapes, matched between the live mixer and ffmpeg's afade.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FadeCurve {
+    /// Straight line (afade `tri`).
+    #[default]
+    Linear,
+    /// Equal-power-ish sine — the natural-sounding default for music
+    /// (afade `qsin`).
+    Smooth,
+    /// Exponential — fast drop, long tail (afade `exp`).
+    Exp,
+}
+
+impl FadeCurve {
+    pub fn afade_name(self) -> &'static str {
+        match self {
+            FadeCurve::Linear => "tri",
+            FadeCurve::Smooth => "qsin",
+            FadeCurve::Exp => "exp",
+        }
+    }
+
+    /// The gain multiplier at fade progress `p` (0 = silent end, 1 = full)
+    /// — the SAME curves afade applies, for the live mixer.
+    pub fn shape(self, p: f32) -> f32 {
+        let p = p.clamp(0.0, 1.0);
+        match self {
+            FadeCurve::Linear => p,
+            FadeCurve::Smooth => (p * std::f32::consts::FRAC_PI_2).sin(),
+            FadeCurve::Exp => {
+                // ffmpeg's exp curve: p^3-ish rise. exp in afade is
+                // defined as pow(0.1, (1-p)*5) ≈ -100 dB..0 linear-in-dB.
+                (0.1f32).powf((1.0 - p) * 5.0)
+            }
+        }
+    }
 }
 
 fn default_mid_freq() -> f32 {
@@ -141,6 +183,7 @@ impl Default for AudioFx {
             comp_thresh: default_comp_thresh(),
             comp_ratio: default_comp_ratio(),
             voice_fix: false,
+            fade_curve: FadeCurve::default(),
         }
     }
 }

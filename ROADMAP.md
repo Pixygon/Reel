@@ -279,9 +279,15 @@ Ordered by leverage; each lands with measured tests like everything above.
       vignette corner falloff) and verified live. Examples in
       examples/effects/, guide in docs/PLUGINS.md. Keyframed params and
       the graph fallback: open (it warns).
-- [ ] Title/motion preset format (keyframe templates as data) with an
-      in-app browser.
-- [ ] LADSPA/LV2 hosting for audio inserts.
+- [x] **Title/motion presets** (v1.12.0): titles animate — fades and
+      slide-ins compile to native ASS \fad/\move and the preview draws
+      the SAME formula (`Title::animated_at`; burned-centroid test proves
+      the pixels land where the preview says). Presets are JSON files in
+      ~/.config/reel/titles (three seeded), browsable in the panel,
+      saveable from any title, `title add --preset`.
+- [ ] LADSPA/LV2 hosting for audio inserts. (This machine's ffmpeg lacks
+      the lv2 filter; proper lilv hosting is a real dependency lift —
+      still open.)
 
 ## S2.C — Images: rival Photoshop where creators live
 
@@ -302,14 +308,25 @@ via CLI, RAW ingest.
 
 ## S2.D — Capture, everywhere, properly
 
-Live capture preview, mic + system audio mixed by the audio engine,
-webcam as a source (PiP over screen = the streamer layout), replay buffer,
-Windows capture backend, virtual camera out.
+- [x] **Webcam recording** (v1.12.0): tray/☰ → Record webcam — first
+      working /dev/video* via a real probe, default mic muxed in when one
+      answers (probed, video-only fallback), same finalize flow as screen
+      capture. End-to-end tested on real hardware.
+
+Still open: live capture preview, webcam as a live PiP over screen (the
+streamer layout), replay buffer, Windows capture backend, virtual camera.
 
 ## S2.E — The rest of the DAW
 
-Spectrum overlay on the EQ, de-esser, room tone generation, fade handles
-with curve choice, LUFS meters everywhere delivery happens.
+- [x] **Audio fade curves** (v1.12.0): linear / smooth (qsin) / exp per
+      clip, matched between afade and the live mixer (`FadeCurve::shape`
+      is the one formula; ordering measured on both sides). And a real
+      preview-lies bug found and fixed on the way: V1 clip fades dimmed
+      audio in the live mixer but NOT in the export — segments now get
+      afade legs (regression-tested: mid vs tail band levels).
+
+Still open: spectrum overlay on the EQ, de-esser, room tone generation,
+LUFS meters everywhere delivery happens.
 
 When reality disagrees with this document, reality wins — and this
 document gets edited.

@@ -286,6 +286,7 @@ impl ReelApp {
         self.debug_open_export = std::env::var("REEL_DEBUG_OPEN").as_deref() == Ok("export");
         self.debug_autoplay = std::env::var("REEL_DEBUG_PLAY").as_deref() == Ok("1");
         crate::plugins::seed_examples();
+        crate::titles::seed_presets();
         #[cfg(target_os = "linux")]
         {
             if let Err(e) = crate::integration::install_desktop_entry() {
@@ -806,6 +807,24 @@ impl ReelApp {
         }
     }
 
+    /// Start/stop a WEBCAM recording — same finalize plumbing as the
+    /// screen path; one recording at a time (whichever slot is live stops).
+    #[cfg(target_os = "linux")]
+    pub fn toggle_webcam_record(&mut self) {
+        if self.recorder.is_some() {
+            self.toggle_record(); // stop whatever is rolling
+            return;
+        }
+        if self.rec_start_rx.is_none() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            std::thread::spawn(move || {
+                let _ = tx.send(capture::start_webcam_recording().map_err(|e| e.to_string()));
+            });
+            self.rec_start_rx = Some(rx);
+            self.status = "Starting webcam recording…".into();
+        }
+    }
+
     /// Collect finished captures (screenshot / recording) and open them.
     pub fn poll_captures(&mut self) {
         if let Some(rx) = &self.rec_start_rx {
@@ -1030,6 +1049,7 @@ impl ReelApp {
                     fade_out: c.effects.fade_out,
                     speed: avg,
                     fx: c.audio.with_track_pan(track_pan),
+                    fade_curve: c.audio.fade_curve,
                     bus,
                 });
             }

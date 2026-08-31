@@ -573,6 +573,16 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
                 ui.close_menu();
             }
+            #[cfg(target_os = "linux")]
+            if app.recorder.is_none()
+                && !app.record_starting()
+                && ui.button("⏺ Record webcam").on_hover_text(
+                    "Record the camera (plus the default mic when one answers) to ~/Videos",
+                ).clicked()
+            {
+                app.toggle_webcam_record();
+                ui.close_menu();
+            }
         }
         ui.separator();
         if ui.button("Quit").clicked() {
@@ -1361,6 +1371,16 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             );
                             ui.add(egui::Slider::new(&mut afx.comp_ratio, 1.5..=10.0).text("Ratio"));
                         }
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new("Fade shape").small());
+                            for (label, v) in [
+                                ("linear", crate::edit::FadeCurve::Linear),
+                                ("smooth", crate::edit::FadeCurve::Smooth),
+                                ("exp", crate::edit::FadeCurve::Exp),
+                            ] {
+                                ui.selectable_value(&mut afx.fade_curve, v, label);
+                            }
+                        });
                         ui.checkbox(&mut afx.voice_fix, "Fix voice on export")
                             .on_hover_text(
                                 "Rumble/hum off, background noise down, clicks patched. \
@@ -1899,6 +1919,79 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     changed |= ui.checkbox(&mut t.bold, "Bold").changed();
                     changed |= ui.checkbox(&mut t.outline, "Outline").changed();
                 });
+                // Motion: fades + a slide-in edge; and the preset browser —
+                // apply one, or save this title's look for reuse.
+                ui.horizontal(|ui| {
+                    let mut fi = t.fade_in as f32;
+                    if ui.add(egui::DragValue::new(&mut fi).speed(0.05).range(0.0..=3.0).prefix("in ").suffix("s")).changed() {
+                        t.fade_in = fi as f64;
+                        changed = true;
+                    }
+                    let mut fo = t.fade_out as f32;
+                    if ui.add(egui::DragValue::new(&mut fo).speed(0.05).range(0.0..=3.0).prefix("out ").suffix("s")).changed() {
+                        t.fade_out = fo as f64;
+                        changed = true;
+                    }
+                    egui::ComboBox::from_id_salt(("slide", i))
+                        .selected_text(match t.slide_from {
+                            crate::titles::Slide::None => "no slide",
+                            crate::titles::Slide::Left => "from left",
+                            crate::titles::Slide::Right => "from right",
+                            crate::titles::Slide::Top => "from top",
+                            crate::titles::Slide::Bottom => "from bottom",
+                        })
+                        .width(92.0)
+                        .show_ui(ui, |ui| {
+                            for (label, v) in [
+                                ("no slide", crate::titles::Slide::None),
+                                ("from left", crate::titles::Slide::Left),
+                                ("from right", crate::titles::Slide::Right),
+                                ("from top", crate::titles::Slide::Top),
+                                ("from bottom", crate::titles::Slide::Bottom),
+                            ] {
+                                if ui.selectable_value(&mut t.slide_from, v, label).changed() {
+                                    changed = true;
+                                }
+                            }
+                        });
+                });
+                ui.horizontal(|ui| {
+                    egui::ComboBox::from_id_salt(("preset", i))
+                        .selected_text("Preset…")
+                        .width(110.0)
+                        .show_ui(ui, |ui| {
+                            for name in crate::titles::list_presets() {
+                                if ui.button(&name).clicked() {
+                                    if let Ok(preset) = crate::titles::load_preset(&name) {
+                                        let keep = (t.text.clone(), t.start, t.end);
+                                        *t = preset;
+                                        (t.text, t.start, t.end) = keep;
+                                        changed = true;
+                                    }
+                                    ui.close_menu();
+                                }
+                            }
+                        });
+                    if ui.small_button("save preset").on_hover_text(
+                        "Save this title's style + motion as a reusable preset (a JSON file — share it)",
+                    ).clicked() {
+                        let dir = crate::titles::preset_dir();
+                        let _ = std::fs::create_dir_all(&dir);
+                        let slug: String = t.text.chars().take(20)
+                            .map(|c| if c.is_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+                            .collect();
+                        let path = dir.join(format!("{}.json", if slug.is_empty() { "preset".into() } else { slug }));
+                        let saved = serde_json::to_string_pretty(&t)
+                            .ok()
+                            .and_then(|json| std::fs::write(&path, json).ok())
+                            .is_some();
+                        app.status = if saved {
+                            format!("Preset saved: {}", path.display())
+                        } else {
+                            "Could not save the preset.".into()
+                        };
+                    }
+                });
                 ui.horizontal(|ui| {
                     if ui.button("Start here").on_hover_text("Begin at the playhead").clicked() {
                         t.start = head;
@@ -2287,9 +2380,15 @@ fn draw_titles(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
         if !title.covers(t) {
             continue;
         }
-        let pos = pic.min + Vec2::new(title.x * pic.width(), title.y * pic.height());
+        // Motion previews exactly as it burns: same formula as the ASS
+        // \fad/\move tags (titles::Title::animated_at).
+        let ([ax, ay], alpha) = title.animated_at(t);
+        let fade = |c: Color32| -> Color32 {
+            Color32::from_rgba_unmultiplied(c.r(), c.g(), c.b(), (alpha * 255.0) as u8)
+        };
+        let pos = pic.min + Vec2::new(ax * pic.width(), ay * pic.height());
         let font = egui::FontId::proportional((title.size * pic.height()).max(7.0));
-        let colour = Color32::from_rgb(title.color[0], title.color[1], title.color[2]);
+        let colour = fade(Color32::from_rgb(title.color[0], title.color[1], title.color[2]));
         if title.outline {
             let o = (crate::titles::OUTLINE_FRAC * pic.height()).max(1.0);
             for (dx, dy) in [
@@ -2301,7 +2400,7 @@ fn draw_titles(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
                     egui::Align2::CENTER_CENTER,
                     &title.text,
                     font.clone(),
-                    Color32::BLACK,
+                    fade(Color32::BLACK),
                 );
             }
         }

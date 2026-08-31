@@ -310,6 +310,8 @@ pub struct PlanClip {
     pub speed: f64,
     /// Pan/EQ/compressor for this clip (repair is export-only).
     pub fx: crate::edit::AudioFx,
+    /// Fade shape — matched to the export's afade curve.
+    pub fade_curve: crate::edit::FadeCurve,
     /// Which meter bus (track index) this clip reports to.
     pub bus: usize,
 }
@@ -354,11 +356,11 @@ impl PlanClip {
         }
         let mut g = self.gain;
         if self.fade_in > 0.0 && local < self.fade_in {
-            g *= (local / self.fade_in) as f32;
+            g *= self.fade_curve.shape((local / self.fade_in) as f32);
         }
         let remain = self.duration - local;
         if self.fade_out > 0.0 && remain < self.fade_out {
-            g *= (remain / self.fade_out) as f32;
+            g *= self.fade_curve.shape((remain / self.fade_out) as f32);
         }
         (self.pcm.data[idx * 2] * g, self.pcm.data[idx * 2 + 1] * g)
     }
@@ -979,6 +981,7 @@ mod tests {
                     fade_out: 0.0,
                     speed: 1.0,
                     fx: Default::default(),
+                    fade_curve: Default::default(),
                     bus: 0,
                 },
             ],
@@ -1000,6 +1003,29 @@ mod tests {
         assert!(out.iter().all(|v| *v == 0.0));
     }
 
+    /// Fade curves shape the ramp the way afade does: halfway through a
+    /// fade-in, Smooth (qsin) sits above Linear, and Exp far below — the
+    /// same ordering the export renders.
+    #[test]
+    fn fade_curves_shape_the_ramp() {
+        use crate::edit::FadeCurve;
+        let mid = |curve: FadeCurve| -> f32 {
+            let mut plan = clip_with_fx(tone(10.0, 0.8), Default::default());
+            plan.clips[0].fade_in = 2.0;
+            plan.clips[0].fade_curve = curve;
+            let mut st = MixState::default();
+            st.install(plan);
+            let (l, _) = channel_rms(&pull(&mut st, 1.0, 0.05));
+            l
+        };
+        let (lin, smooth, exp) = (mid(FadeCurve::Linear), mid(FadeCurve::Smooth), mid(FadeCurve::Exp));
+        assert!((lin - 0.4).abs() < 0.02, "linear midpoint = half level, got {lin}");
+        assert!(smooth > lin + 0.1, "qsin rises faster: {smooth} vs {lin}");
+        assert!(exp < lin * 0.2, "exp stays low till late: {exp} vs {lin}");
+        // And they all match the formula the export's afade uses.
+        assert!((FadeCurve::Smooth.shape(0.5) - (std::f32::consts::FRAC_PI_2 * 0.5).sin()).abs() < 1e-6);
+    }
+
     /// Fades ramp the clip's gain inside the clip.
     #[test]
     fn fades_ramp_at_the_edges() {
@@ -1014,6 +1040,7 @@ mod tests {
                 fade_out: 1.0,
                 speed: 1.0,
                 fx: Default::default(),
+                fade_curve: Default::default(),
                 bus: 0,
             }],
             music: None,
@@ -1051,6 +1078,7 @@ mod tests {
                 fade_out: 0.0,
                 speed: 1.0,
                 fx,
+                fade_curve: Default::default(),
                 bus: 0,
             }],
             music: None,
@@ -1197,6 +1225,7 @@ mod tests {
                 fade_out: 0.0,
                 speed: 1.0,
                 fx: Default::default(),
+                fade_curve: Default::default(),
                 bus: 0,
             }],
             music: Some(PlanMusic {

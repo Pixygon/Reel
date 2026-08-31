@@ -42,6 +42,7 @@ pub enum UserEvent {
     Show,
     Shot(capture::ShotMode),
     ToggleRecord,
+    ToggleWebcam,
     Quit,
     /// AccessKit adapter events (screen readers) — egui consumes these.
     Access(egui_winit::accesskit_winit::Event),
@@ -222,6 +223,11 @@ impl ApplicationHandler<UserEvent> for Reel {
             UserEvent::Shot(mode) => self.app.take_screenshot(mode),
             UserEvent::ToggleRecord => {
                 self.app.toggle_record();
+                self.sync_tray();
+            }
+            UserEvent::ToggleWebcam => {
+                #[cfg(target_os = "linux")]
+                self.app.toggle_webcam_record();
                 self.sync_tray();
             }
             UserEvent::Quit => event_loop.exit(),
