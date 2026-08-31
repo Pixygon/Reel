@@ -118,7 +118,12 @@ not the finished tool, but real, honest software you can build and run today.
   every silence in the edit, cuts it with breathing room around your words,
   and closes the timeline up — the podcast jump-cut pass, undoable.
 - **A mixer.** Per-track faders, mute and solo — and the live mix and the
-  export obey the same routing, so what you solo is what renders.
+  export obey the same routing, so what you solo is what renders. A live
+  spectrum analyzer sits above the per-clip EQ, and every render reports
+  the integrated LUFS it actually delivered.
+- **The streamer layout.** One click records your screen and webcam
+  together; stopping hands you a ready-to-edit project with the camera
+  already picture-in-picture in the corner.
 - **You hear the whole edit.** Editor playback mixes the timeline live —
   every clip's audio with its gain and fades, and the music bed ducking
   under speech in real time — through a native PipeWire stream on Linux.

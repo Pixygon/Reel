@@ -21,7 +21,10 @@ The contract:
 - `uv` is the sampled position, 0..1 across the picture.
 - `p` carries up to four user parameters. Declare them with
   `//! param: <name> <min>..<max> = <default>` and they become labelled
-  sliders in the clip panel (and `--plugin-params` on the CLI).
+  sliders in the clip panel (and `--plugin-params` on the CLI). Each
+  slider is keyframable like any other clip property — key it at the
+  playhead and the value animates through the same engine in the preview
+  and the render.
 - The plugin runs **after the grade** (LUT/levels/curves) and **before the
   trims** (exposure/contrast/saturation).
 
