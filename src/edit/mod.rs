@@ -242,6 +242,12 @@ pub enum Param {
     MaskY,
     MaskW,
     MaskH,
+    /// The effect plugin's four parameter sliders — animatable, so a
+    /// vignette can breathe or a glitch can pulse.
+    Plugin1,
+    Plugin2,
+    Plugin3,
+    Plugin4,
 }
 
 impl Param {
@@ -258,10 +264,13 @@ impl Param {
             Param::Speed => (0.25, 4.0),
             Param::MaskX | Param::MaskY => (0.0, 1.0),
             Param::MaskW | Param::MaskH => (0.02, 0.8),
+            // Plugins declare their own ranges; the lane shows a generous
+            // window and the plugin clamps as it sees fit.
+            Param::Plugin1 | Param::Plugin2 | Param::Plugin3 | Param::Plugin4 => (0.0, 2.0),
         }
     }
 
-    pub const ALL: [Param; 15] = [
+    pub const ALL: [Param; 19] = [
         Param::Exposure,
         Param::Contrast,
         Param::Saturation,
@@ -277,6 +286,10 @@ impl Param {
         Param::MaskY,
         Param::MaskW,
         Param::MaskH,
+        Param::Plugin1,
+        Param::Plugin2,
+        Param::Plugin3,
+        Param::Plugin4,
     ];
 
     pub fn name(self) -> &'static str {
@@ -296,6 +309,10 @@ impl Param {
             Param::MaskY => "mask-y",
             Param::MaskW => "mask-w",
             Param::MaskH => "mask-h",
+            Param::Plugin1 => "plugin-1",
+            Param::Plugin2 => "plugin-2",
+            Param::Plugin3 => "plugin-3",
+            Param::Plugin4 => "plugin-4",
         }
     }
 
@@ -612,6 +629,10 @@ impl Clip {
                         m.h = v;
                     }
                 }
+                Param::Plugin1 => fx.plugin_params[0] = v,
+                Param::Plugin2 => fx.plugin_params[1] = v,
+                Param::Plugin3 => fx.plugin_params[2] = v,
+                Param::Plugin4 => fx.plugin_params[3] = v,
             }
         }
         (fx, pip, opacity)
@@ -790,6 +811,10 @@ impl Segment {
                         m.h = v;
                     }
                 }
+                Param::Plugin1 => fx.plugin_params[0] = v,
+                Param::Plugin2 => fx.plugin_params[1] = v,
+                Param::Plugin3 => fx.plugin_params[2] = v,
+                Param::Plugin4 => fx.plugin_params[3] = v,
                 _ => {}
             }
         }

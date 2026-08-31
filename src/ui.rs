@@ -16,6 +16,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
     app.poll_audition();
     app.poll_tracking();
     app.poll_nesting();
+    #[cfg(target_os = "linux")]
+    app.poll_streamer();
     if let Some(z) = app.pending_zoom.take() {
         ctx.set_zoom_factor(z.clamp(0.7, 2.0));
     }
@@ -583,6 +585,22 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
                 app.toggle_webcam_record();
                 ui.close_menu();
             }
+            #[cfg(target_os = "linux")]
+            {
+                let streamer_label = if app.streamer.is_some() {
+                    "⏹ Stop streamer layout"
+                } else {
+                    "⏺ Streamer layout (screen + cam)"
+                };
+                if ui.button(streamer_label).on_hover_text(
+                    "Record the screen AND the camera together; stopping builds a \
+                     ready-made project — screen full-frame, camera as a corner \
+                     PiP you can still move, resize or recut",
+                ).clicked() {
+                    app.toggle_streamer_record();
+                    ui.close_menu();
+                }
+            }
         }
         ui.separator();
         if ui.button("Quit").clicked() {
@@ -981,6 +999,10 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 crate::edit::Param::MaskH => {
                                     fx2.mask.map(|m| m.h).unwrap_or(0.25)
                                 }
+                                crate::edit::Param::Plugin1 => fx2.plugin_params[0],
+                                crate::edit::Param::Plugin2 => fx2.plugin_params[1],
+                                crate::edit::Param::Plugin3 => fx2.plugin_params[2],
+                                crate::edit::Param::Plugin4 => fx2.plugin_params[3],
                             };
                             c.set_key(param, local, v, crate::edit::Interp::Linear);
                         }
@@ -1355,7 +1377,46 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     let mut afx = app.project.clip(id).map(|c| c.audio).unwrap_or_default();
                     let before_afx = afx;
-                    ui.collapsing("Audio", |ui| {
+                    egui::CollapsingHeader::new("Audio")
+                        .default_open(std::env::var("REEL_DEBUG_AUDIOPANEL").is_ok())
+                        .show(ui, |ui| {
+                        // A live spectrum of what's playing, right where the
+                        // EQ decisions get made (low | mid | high thirds).
+                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        if let Some(mixer) = &app.mixer {
+                            let bins = 42usize;
+                            let spec = mixer.spectrum(bins);
+                            let width = ui.available_width().max(60.0);
+                            let (rect, _) = ui.allocate_exact_size(Vec2::new(width, 34.0), Sense::hover());
+                            let sp = ui.painter_at(rect);
+                            sp.rect_filled(rect, 3.0, theme::VOID_2);
+                            let bw = rect.width() / bins as f32;
+                            for (i, v) in spec.iter().enumerate() {
+                                let h = v * (rect.height() - 3.0);
+                                if h > 0.5 {
+                                    sp.rect_filled(
+                                        Rect::from_min_max(
+                                            egui::pos2(rect.left() + i as f32 * bw + 0.5, rect.bottom() - 1.5 - h),
+                                            egui::pos2(rect.left() + (i + 1) as f32 * bw - 0.5, rect.bottom() - 1.5),
+                                        ),
+                                        1.0,
+                                        Color32::from_rgba_unmultiplied(120, 220, 235, 130),
+                                    );
+                                }
+                            }
+                            // Band boundaries roughly at the shelf corners.
+                            for f in [0.33f32, 0.66] {
+                                let x = rect.left() + rect.width() * f;
+                                sp.line_segment(
+                                    [egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom())],
+                                    Stroke::new(0.5, Color32::from_gray(70)),
+                                );
+                            }
+                            ui.ctx().request_repaint_after(std::time::Duration::from_millis(120));
+                            if std::env::var("REEL_DEBUG_AUDIOPANEL").is_ok() {
+                                ui.scroll_to_rect(rect, Some(egui::Align::Center));
+                            }
+                        }
                         ui.add(egui::Slider::new(&mut afx.pan, -1.0..=1.0).text("Pan"));
                         ui.add(egui::Slider::new(&mut afx.eq_low, -18.0..=18.0).text("Low (dB)"));
                         ui.add(egui::Slider::new(&mut afx.eq_mid, -18.0..=18.0).text("Mid (dB)"));

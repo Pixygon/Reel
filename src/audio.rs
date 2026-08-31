@@ -187,6 +187,56 @@ impl LufsMeter {
     }
 }
 
+/// In-place radix-2 FFT (real input in `re`, zeros in `im`). 2048 points
+/// is plenty for a display spectrum; hand-rolled to keep the dependency
+/// count at zero. Pure — unit-tested against a known tone.
+pub fn fft(re: &mut [f32], im: &mut [f32]) {
+    let n = re.len();
+    debug_assert!(n.is_power_of_two() && im.len() == n);
+    // Bit-reversal permutation.
+    let mut j = 0usize;
+    for i in 1..n {
+        let mut bit = n >> 1;
+        while j & bit != 0 {
+            j ^= bit;
+            bit >>= 1;
+        }
+        j |= bit;
+        if i < j {
+            re.swap(i, j);
+            im.swap(i, j);
+        }
+    }
+    let mut len = 2;
+    while len <= n {
+        let ang = -2.0 * std::f32::consts::PI / len as f32;
+        let (wr, wi) = (ang.cos(), ang.sin());
+        let mut i = 0;
+        while i < n {
+            let (mut cr, mut ci) = (1.0f32, 0.0f32);
+            for k in 0..len / 2 {
+                let (ur, ui) = (re[i + k], im[i + k]);
+                let (vr, vi) = (
+                    re[i + k + len / 2] * cr - im[i + k + len / 2] * ci,
+                    re[i + k + len / 2] * ci + im[i + k + len / 2] * cr,
+                );
+                re[i + k] = ur + vr;
+                im[i + k] = ui + vi;
+                re[i + k + len / 2] = ur - vr;
+                im[i + k + len / 2] = ui - vi;
+                let ncr = cr * wr - ci * wi;
+                ci = cr * wi + ci * wr;
+                cr = ncr;
+            }
+            i += len;
+        }
+        len <<= 1;
+    }
+}
+
+/// The display-spectrum size.
+pub const SPECTRUM_N: usize = 2048;
+
 /// What the strips read: decaying peaks per bus, master peaks, momentary
 /// loudness. A snapshot type — cloned out under the lock.
 #[derive(Clone, Default)]
@@ -381,6 +431,9 @@ pub struct MixState {
     duck_gain: f32,
     /// Per-plan-clip DSP state, index-aligned with plan.clips.
     dsp: Vec<ClipDsp>,
+    /// Rolling mono snapshot of the master output — the spectrum's food.
+    spec_ring: Vec<f32>,
+    spec_idx: usize,
     /// Live levels for the meter strips.
     pub levels: Levels,
     lufs: LufsMeter,
@@ -395,6 +448,8 @@ impl Default for MixState {
             master: 1.0,
             duck_gain: 1.0,
             dsp: Vec::new(),
+            spec_ring: vec![0.0; SPECTRUM_N],
+            spec_idx: 0,
             levels: Levels::default(),
             lufs: LufsMeter::default(),
         }
@@ -526,6 +581,8 @@ pub fn render_into(state: &mut MixState, out: &mut [f32]) {
         }
         let (ol, or_) = ((l * state.master).clamp(-1.0, 1.0), (r * state.master).clamp(-1.0, 1.0));
         state.lufs.push(ol, or_);
+        state.spec_ring[state.spec_idx] = (ol + or_) * 0.5;
+        state.spec_idx = (state.spec_idx + 1) % SPECTRUM_N;
         let m = &mut state.levels.master;
         m[0] = if ol.abs() > m[0] { ol.abs() } else { m[0] + (ol.abs() - m[0]) * meter_decay };
         m[1] = if or_.abs() > m[1] { or_.abs() } else { m[1] + (or_.abs() - m[1]) * meter_decay };
@@ -783,6 +840,54 @@ impl Mixer {
     }
 }
 
+// Spectrum readout — pure math over the shared MixState ring, so one
+// definition serves every platform backend.
+#[cfg(any(target_os = "linux", target_os = "windows"))]
+impl Mixer {
+    /// The master's magnitude spectrum, folded into `bins` log-spaced
+    /// bands from ~43 Hz to ~16 kHz, normalised 0..1. FFT runs on the UI
+    /// thread — the audio callback only fills a ring.
+    pub fn spectrum(&self, bins: usize) -> Vec<f32> {
+        let (mut re, hann): (Vec<f32>, Vec<f32>) = {
+            let st = self.state.lock().unwrap();
+            let mut buf = Vec::with_capacity(SPECTRUM_N);
+            for i in 0..SPECTRUM_N {
+                buf.push(st.spec_ring[(st.spec_idx + i) % SPECTRUM_N]);
+            }
+            let hann = (0..SPECTRUM_N)
+                .map(|i| {
+                    let x = i as f32 / (SPECTRUM_N - 1) as f32;
+                    0.5 - 0.5 * (2.0 * std::f32::consts::PI * x).cos()
+                })
+                .collect();
+            (buf, hann)
+        };
+        for (v, w) in re.iter_mut().zip(&hann) {
+            *v *= w;
+        }
+        let mut im = vec![0.0f32; SPECTRUM_N];
+        fft(&mut re, &mut im);
+        // Fold |X(k)| into log-spaced display bins over 2..N/6 (≈43 Hz–8 kHz
+        // musical range at 48 kHz; the top octave rarely matters visually).
+        let lo = 2.0f32;
+        let hi = (SPECTRUM_N / 3) as f32;
+        let mut out = vec![0.0f32; bins];
+        for (b, slot) in out.iter_mut().enumerate() {
+            let k0 = (lo * (hi / lo).powf(b as f32 / bins as f32)) as usize;
+            let k1 = ((lo * (hi / lo).powf((b + 1) as f32 / bins as f32)) as usize).max(k0 + 1);
+            let mut peak = 0.0f32;
+            for k in k0..k1.min(SPECTRUM_N / 2) {
+                peak = peak.max((re[k] * re[k] + im[k] * im[k]).sqrt());
+            }
+            // dB-ish mapping into 0..1 for drawing (-60..0 dB window).
+            let db = 20.0 * (peak / (SPECTRUM_N as f32 / 4.0)).max(1e-6).log10();
+            *slot = ((db + 60.0) / 60.0).clamp(0.0, 1.0);
+        }
+        out
+    }
+
+}
+
 // ── Voice recording ──────────────────────────────────────────────────────
 //
 // A PipeWire capture stream on its own thread, same architecture as the
@@ -1012,6 +1117,31 @@ mod tests {
         let mut out = vec![1.0f32; 96];
         render_into(&mut st, &mut out);
         assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    /// The FFT finds a tone in the right bin — 1 kHz in, 1 kHz out.
+    #[test]
+    fn the_fft_finds_the_tone() {
+        let n = SPECTRUM_N;
+        let freq = 1000.0f32;
+        let mut re: Vec<f32> = (0..n)
+            .map(|i| (2.0 * std::f32::consts::PI * freq * i as f32 / RATE as f32).sin())
+            .collect();
+        let mut im = vec![0.0f32; n];
+        fft(&mut re, &mut im);
+        let mag = |k: usize| (re[k] * re[k] + im[k] * im[k]).sqrt();
+        let expect_k = (freq / RATE as f32 * n as f32).round() as usize;
+        let peak_k = (1..n / 2).max_by(|a, b| mag(*a).total_cmp(&mag(*b))).unwrap();
+        assert!(
+            (peak_k as i64 - expect_k as i64).abs() <= 1,
+            "peak at bin {peak_k}, expected ~{expect_k}"
+        );
+        // Leakage from a non-bin-centred tone is real; the peak must still
+        // dominate the typical bin by a mile.
+        let mut mags: Vec<f32> = (1..n / 2).map(mag).collect();
+        mags.sort_by(|a, b| a.total_cmp(b));
+        let median = mags[mags.len() / 2];
+        assert!(mag(peak_k) > 50.0 * median.max(1e-6), "the peak stands well proud of the floor");
     }
 
     /// Fade curves shape the ramp the way afade does: halfway through a

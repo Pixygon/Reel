@@ -105,6 +105,13 @@ pub struct ReelApp {
     pub voice_rec: Option<crate::audio::Recorder>,
     /// A punch-in in progress: the timeline position recording began at.
     pub punch_in_at: Option<f64>,
+    /// A streamer-layout recording in flight: (screen, webcam).
+    #[cfg(target_os = "linux")]
+    pub streamer: Option<(capture::Recording, capture::Recording)>,
+    #[cfg(target_os = "linux")]
+    streamer_start_rx: Option<crossbeam_channel::Receiver<Result<(capture::Recording, capture::Recording), String>>>,
+    #[cfg(target_os = "linux")]
+    streamer_done_rx: Option<crossbeam_channel::Receiver<Result<(std::path::PathBuf, std::path::PathBuf), String>>>,
     /// Media-pool search box contents.
     pub pool_search: String,
     /// The source being auditioned in the source monitor (player mode over
@@ -229,6 +236,12 @@ impl ReelApp {
             #[cfg(target_os = "linux")]
             voice_rec: None,
             punch_in_at: None,
+            #[cfg(target_os = "linux")]
+            streamer: None,
+            #[cfg(target_os = "linux")]
+            streamer_start_rx: None,
+            #[cfg(target_os = "linux")]
+            streamer_done_rx: None,
             pool_search: String::new(),
             source_preview: None,
             src_mark_in: None,
@@ -678,8 +691,10 @@ impl ReelApp {
         if std::env::var("REEL_DEBUG_SELECT").as_deref() == Ok("1")
             && self.editor.selected.is_none()
         {
-            self.show_scopes = true; // the headless check photographs these too
-            self.scroll_to_scopes = true;
+            if std::env::var("REEL_DEBUG_AUDIOPANEL").is_err() {
+                self.show_scopes = true; // the headless check photographs these too
+                self.scroll_to_scopes = true;
+            }
             self.editor.show_curve_lane = true;
             let first = self
                 .project
@@ -807,6 +822,87 @@ impl ReelApp {
             });
             self.rec_start_rx = Some(rx);
             self.status = "Starting recording — pick what to share…".into();
+        }
+    }
+
+    /// The STREAMER LAYOUT: screen + webcam recorded together; stopping
+    /// assembles a project with the screen on V1 and the camera as a PiP
+    /// overlay, ready to trim and publish. The layout stays editable —
+    /// that's the point of assembling a project instead of baking pixels.
+    #[cfg(target_os = "linux")]
+    pub fn toggle_streamer_record(&mut self) {
+        if let Some((screen, cam)) = self.streamer.take() {
+            let (tx, rx) = crossbeam_channel::bounded(1);
+            std::thread::spawn(move || {
+                let s = screen.stop().map_err(|e| e.to_string());
+                let c = cam.stop().map_err(|e| e.to_string());
+                let _ = tx.send(s.and_then(|sp| c.map(|cp| (sp, cp))));
+            });
+            self.streamer_done_rx = Some(rx);
+            self.status = "Finalizing the streamer recording…".into();
+            return;
+        }
+        if self.streamer_start_rx.is_some() {
+            return;
+        }
+        let (tx, rx) = crossbeam_channel::bounded(1);
+        std::thread::spawn(move || {
+            let result = (|| -> Result<_, String> {
+                let cam = capture::start_webcam_recording().map_err(|e| e.to_string())?;
+                // Screen second: its portal picker is the interactive step.
+                match capture::start_recording() {
+                    Ok(screen) => Ok((screen, cam)),
+                    Err(e) => {
+                        let _ = cam.stop();
+                        Err(e.to_string())
+                    }
+                }
+            })();
+            let _ = tx.send(result);
+        });
+        self.streamer_start_rx = Some(rx);
+        self.status = "Streamer layout: starting camera, then pick the screen…".into();
+    }
+
+    #[cfg(target_os = "linux")]
+    pub fn poll_streamer(&mut self) {
+        if let Some(rx) = &self.streamer_start_rx {
+            match rx.try_recv() {
+                Ok(Ok(pair)) => {
+                    self.streamer_start_rx = None;
+                    self.streamer = Some(pair);
+                    self.status = "⏺ Streamer layout recording — stop from the ☰ menu.".into();
+                }
+                Ok(Err(e)) => {
+                    self.streamer_start_rx = None;
+                    self.status = format!("Streamer recording: {e}");
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => self.streamer_start_rx = None,
+            }
+        }
+        if let Some(rx) = &self.streamer_done_rx {
+            match rx.try_recv() {
+                Ok(Ok((screen, cam))) => {
+                    self.streamer_done_rx = None;
+                    match crate::capture::assemble_streamer_project(
+                        &screen.to_string_lossy(),
+                        &cam.to_string_lossy(),
+                    ) {
+                        Ok(project_path) => {
+                            self.status = "Streamer project assembled — trim and publish.".into();
+                            self.open(&project_path);
+                        }
+                        Err(e) => self.status = format!("Could not assemble the project: {e}"),
+                    }
+                }
+                Ok(Err(e)) => {
+                    self.streamer_done_rx = None;
+                    self.status = format!("Streamer finalize: {e}");
+                }
+                Err(crossbeam_channel::TryRecvError::Empty) => {}
+                Err(crossbeam_channel::TryRecvError::Disconnected) => self.streamer_done_rx = None,
+            }
         }
     }
 

@@ -640,6 +640,22 @@ fn probe_color(path: &str) -> Option<(String, String, String)> {
     Some((field("color_primaries")?, field("color_transfer")?, field("color_space")?))
 }
 
+/// Integrated loudness of a finished file (EBU R128), for the delivery
+/// report — measured off the real output, never assumed from settings.
+pub fn measure_lufs(path: &str) -> Option<f32> {
+    let out = std::process::Command::new("ffmpeg")
+        .args(["-i", path, "-af", "ebur128", "-f", "null", "-"])
+        .output()
+        .ok()?;
+    let text = String::from_utf8_lossy(&out.stderr);
+    // The summary block's "I: -14.2 LUFS" line.
+    let tail = &text[text.rfind("Summary:")?..];
+    tail.lines()
+        .find_map(|l| l.trim().strip_prefix("I:"))
+        .and_then(|v| v.trim().split_whitespace().next())
+        .and_then(|v| v.parse().ok())
+}
+
 /// Does the file have an audio stream? (Timeline export needs to know before
 /// building the filter graph.)
 pub fn has_audio_stream(path: &str) -> bool {
@@ -3082,6 +3098,53 @@ mod tests {
         for f in [&src, &out] {
             let _ = std::fs::remove_file(f);
         }
+    }
+
+    /// Plugin parameters ANIMATE: a vignette whose strength ramps 0 → 0.95
+    /// leaves corners bright early and crushes them late — evaluated by the
+    /// same keyframe machinery as every built-in parameter.
+    #[test]
+    fn plugin_params_animate_in_the_render() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-panim-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "color=c=white:size=320x240:rate=25:duration=2",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let vignette = format!("{}/examples/effects/vignette.wgsl", env!("CARGO_MANIFEST_DIR"));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 2.0);
+        sg.effects.plugin = Some(0);
+        sg.effects.plugin_params = [0.0, 0.75, 0.0, 0.0];
+        sg.keys.push((crate::edit::Param::Plugin1, vec![
+            crate::edit::Keyframe { t: 0.0, value: 0.0, interp: crate::edit::Interp::Linear },
+            crate::edit::Keyframe { t: 2.0, value: 0.95, interp: crate::edit::Interp::Linear },
+        ]));
+        let plugins = [vignette];
+        let overlays = Overlays { plugins: &plugins, ..Default::default() };
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let corner_at = |t: f64| -> Option<u8> {
+            let out = dir.join(format!("reel-panim-{}-{t}.png", std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            crate::engine::render::still_png(
+                std::slice::from_ref(&sg), &overlays, (320, 240, 25.0), &s, t, &out.to_string_lossy(),
+            ).ok()?;
+            let img = image::open(&out).ok()?.to_rgb8();
+            let _ = std::fs::remove_file(&out);
+            Some(img.get_pixel(6, 6).0[0])
+        };
+        let Some(early) = corner_at(0.1) else {
+            eprintln!("no GPU — skipping animated-plugin test");
+            return;
+        };
+        let late = corner_at(1.9).expect("late still");
+        assert!(early > 200, "strength ~0 leaves the corner bright, got {early}");
+        // At radius 0.75 the corner's falloff is ~0.47 → ~134 encoded; the
+        // point is the RAMP: a big, animated delta between the two moments.
+        assert!(late < 180 && early as i32 - late as i32 > 60,
+            "strength ~0.95 must darken the corner substantially ({early} → {late})");
+        let _ = std::fs::remove_file(&src);
     }
 
     /// Rotation is decode geometry in both engines: a left-red/right-blue

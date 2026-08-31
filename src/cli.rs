@@ -3159,14 +3159,21 @@ fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
     )?;
     await_job(job, p.on("quiet") || p.on("json"))?;
     let duration = crate::edit::render_duration(&segments);
+    // The delivery report: what loudness actually shipped — measured on
+    // the file, not inferred from the settings.
+    let lufs = crate::export::measure_lufs(out);
+    let loud_note = lufs
+        .map(|l| format!(" · delivered at {l:.1} LUFS"))
+        .unwrap_or_default();
     Ok(Output::new(
-        format!("Rendered {out} — {:.2}s from {} clip(s)", duration, segments.len()),
+        format!("Rendered {out} — {:.2}s from {} clip(s){loud_note}", duration, segments.len()),
         serde_json::json!({
             "output": out,
             "duration": duration,
             "clips": segments.len(),
             "captions": proj.captions.len(),
             "titles": proj.titles.len(),
+            "lufs": lufs,
         }),
     ))
 }

@@ -277,8 +277,11 @@ Ordered by leverage; each lands with measured tests like everything above.
       by path+mtime = hot reload; a broken file logs and degrades to the
       built-in look, never crashes). Pixel-tested (invert → cyan,
       vignette corner falloff) and verified live. Examples in
-      examples/effects/, guide in docs/PLUGINS.md. Keyframed params and
-      the graph fallback: open (it warns).
+      examples/effects/, guide in docs/PLUGINS.md. **Keyframable params**
+      (v1.14.0): `Param::Plugin1–4` animate plugin sliders through the
+      same keyframe engine as everything else — pixel-tested (vignette
+      strength keyed 0→0.95 across a render, corner darkens over time).
+      The graph fallback remains open (it warns).
 - [x] **Title/motion presets** (v1.12.0): titles animate — fades and
       slide-ins compile to native ASS \fad/\move and the preview draws
       the SAME formula (`Title::animated_at`; burned-centroid test proves
@@ -313,8 +316,14 @@ via CLI, RAW ingest.
       answers (probed, video-only fallback), same finalize flow as screen
       capture. End-to-end tested on real hardware.
 
-Still open: live capture preview, webcam as a live PiP over screen (the
-streamer layout), replay buffer, Windows capture backend, virtual camera.
+- [x] **Streamer layout** (v1.14.0): one click records screen AND webcam
+      together (webcam starts first — the portal picker is interactive),
+      and stopping assembles a ready-to-edit project: screen on V1, cam
+      as a corner PiP overlay (`assemble_streamer_project`, unit-tested
+      from two real files), opened in the editor automatically.
+
+Still open: live capture preview, replay buffer, Windows capture
+backend, virtual camera.
 
 ## S2.E — The rest of the DAW
 
@@ -334,8 +343,16 @@ streamer layout), replay buffer, Windows capture backend, virtual camera.
       cuts never drop to digital black. Comparative band test proves the
       loop outlives the sample.
 
-Still open: spectrum overlay on the EQ, LUFS meters everywhere delivery
-happens.
+- [x] **Spectrum analyzer** (v1.14.0): a live frequency readout above the
+      EQ — hand-rolled radix-2 FFT over the mixer's master tap (Hann
+      window, log-spaced bins, −60..0 dB), unit-tested (a 1 kHz tone
+      peaks where it should), verified drawing live under Xvfb.
+- [x] **Loudness delivery report** (v1.14.0): `reel render` measures the
+      finished file with ebur128 and reports the integrated LUFS it
+      actually delivered (`measure_lufs`, in the JSON too) — the number a
+      platform will judge the upload by.
+
+Still open: LV2/LADSPA inserts, LUFS meters in the export dialog itself.
 
 When reality disagrees with this document, reality wins — and this
 document gets edited.

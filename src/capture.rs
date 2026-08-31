@@ -271,6 +271,34 @@ pub fn start_webcam_recording() -> Result<Recording> {
     Ok(Recording::Tool(Recorder { child, stop: StopMethod::QuitKey, path: out, tool: "ffmpeg" }))
 }
 
+/// Build the streamer project: screen on V1, camera as a bottom-right PiP
+/// overlay, saved beside the recordings. Returns the .reel path. Pure over
+/// two existing files — unit-tested with fixtures.
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+pub fn assemble_streamer_project(screen: &str, webcam: &str) -> Result<String> {
+    let s_info = crate::video::decoder::probe(screen)
+        .map_err(|e| anyhow!("could not probe the screen recording: {e}"))?;
+    let c_info = crate::video::decoder::probe(webcam)
+        .map_err(|e| anyhow!("could not probe the camera recording: {e}"))?;
+    let mut p = crate::edit::Project::default();
+    p.width = s_info.width.max(2);
+    p.height = s_info.height.max(2);
+    p.fps = if s_info.fps > 1.0 { s_info.fps } else { 30.0 };
+    let len = s_info.duration.min(c_info.duration).max(0.2);
+    p.add_clip(screen, crate::edit::TrackKind::Video, 0.0, 0.0, len);
+    let cam = p.add_clip(webcam, crate::edit::TrackKind::Overlay, 0.0, 0.0, len);
+    if let Some(c) = p.clip_mut(cam) {
+        // The classic corner cam: bottom-right quarter-ish.
+        c.pip.x = 0.82;
+        c.pip.y = 0.8;
+        c.pip.scale = 0.28;
+    }
+    let out = std::path::Path::new(screen).with_extension("streamer.reel");
+    p.save(&out.to_string_lossy())
+        .map_err(|e| anyhow!("could not save the streamer project: {e}"))?;
+    Ok(out.to_string_lossy().into_owned())
+}
+
 /// The first webcam that actually delivers frames.
 #[cfg(target_os = "linux")]
 pub fn webcam_device() -> Option<String> {
@@ -397,6 +425,37 @@ mod tests {
 #[cfg(all(test, target_os = "linux"))]
 mod webcam_tests {
     use super::*;
+
+    /// The streamer assembler: two recordings become one editable project —
+    /// screen on V1, camera as a corner PiP, length = the shorter of the two.
+    #[test]
+    fn streamer_project_assembles_from_two_files() {
+        let dir = std::env::temp_dir();
+        let mk = |name: &str, size: &str, dur: f64| -> std::path::PathBuf {
+            let f = dir.join(format!("reel-strm-{name}-{}.mp4", std::process::id()));
+            assert!(std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi",
+                       "-i", &format!("testsrc2=size={size}:rate=30:duration={dur}"),
+                       "-pix_fmt", "yuv420p", &f.to_string_lossy()])
+                .status().map(|s| s.success()).unwrap_or(false));
+            f
+        };
+        let screen = mk("screen", "640x360", 3.0);
+        let cam = mk("cam", "320x240", 2.5);
+        let path = assemble_streamer_project(&screen.to_string_lossy(), &cam.to_string_lossy())
+            .expect("assemble");
+        let p = crate::edit::Project::load(&path).expect("load project");
+        assert_eq!((p.width, p.height), (640, 360), "canvas = the screen");
+        let v1 = p.tracks.iter().find(|t| t.kind == crate::edit::TrackKind::Video).unwrap();
+        let ov = p.tracks.iter().find(|t| t.kind == crate::edit::TrackKind::Overlay).unwrap();
+        assert_eq!(v1.clips.len(), 1);
+        assert_eq!(ov.clips.len(), 1);
+        assert!((v1.clips[0].duration - 2.5).abs() < 0.2, "trimmed to the shorter take");
+        assert!(ov.clips[0].pip.x > 0.7 && ov.clips[0].pip.scale < 0.4, "corner cam");
+        for f in [&screen, &cam, &std::path::PathBuf::from(&path)] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
 
     /// End to end on real hardware: 2 s from the webcam lands as a
     /// playable clip. Skips cleanly on machines without a camera.
