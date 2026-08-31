@@ -378,6 +378,12 @@ impl MpvPlayer {
         self.set_f64("speed", speed);
     }
 
+    /// Rotate the rendered picture (degrees, multiples of 90) — mpv does
+    /// the geometry, so a rotated clip previews without re-decoding.
+    pub fn set_rotate(&mut self, degrees: f64) {
+        self.set_f64("video-rotate", degrees);
+    }
+
     /// Play backwards (J in every NLE). mpv can genuinely decode in reverse;
     /// it is expensive, so callers should keep it to shuttle speeds.
     pub fn set_direction(&mut self, backward: bool) {

@@ -116,6 +116,8 @@ pub struct ReelApp {
     pub show_keymap: bool,
     /// A saved UI scale to apply on the first frame (ctx isn't here yet).
     pub pending_zoom: Option<f32>,
+    /// The quarter-turn currently applied to the preview player.
+    pub preview_rotate: u8,
     /// Publish-everywhere filename template — {name}, {platform} expand.
     pub publish_template: String,
     /// Preset slugs whose publish render should NOT burn captions.
@@ -233,6 +235,7 @@ impl ReelApp {
             src_mark_out: None,
             show_keymap: false,
             pending_zoom: None,
+            preview_rotate: 0,
             publish_template: "{name}-{platform}".into(),
             publish_no_captions: std::collections::HashSet::new(),
             mix_built_at: std::time::Instant::now() - std::time::Duration::from_secs(3600),
@@ -1053,6 +1056,11 @@ impl ReelApp {
                     bus,
                 });
             }
+            if let Some(rt) = &self.project.roomtone {
+                if let Some(pcm) = self.samples.get(&rt.source.clone()) {
+                    plan.roomtone = Some((pcm, crate::audio::db_to_gain(rt.gain_db)));
+                }
+            }
             if let Some(m) = &self.project.music {
                 if let Some(pcm) = self.samples.get(&m.source.clone()) {
                     let total = crate::edit::render_duration(&self.project.export_segments());
@@ -1280,6 +1288,7 @@ impl ReelApp {
                 caption_size: self.project.caption_size,
                 titles: self.project.titles.clone(),
                 music: self.project.music.clone(),
+                roomtone: self.project.roomtone.clone(),
                 overlays: self.project.overlay_segments(),
                 markers: self.project.markers.clone(),
                 marker_labels: self.project.marker_labels.clone(),
@@ -1511,6 +1520,7 @@ impl ReelApp {
             caption_size: self.project.caption_size,
             titles: &self.project.titles,
             music: None,
+            roomtone: None,
             overlays: &overlays_owned,
             markers: &[],
             marker_labels: &[],
@@ -1581,6 +1591,7 @@ impl ReelApp {
                     caption_size: self.project.caption_size,
                     titles: self.project.titles.clone(),
                     music: self.project.music.clone(),
+                    roomtone: self.project.roomtone.clone(),
                     overlays: self.project.overlay_segments(),
                     markers: self.project.markers.clone(),
                     marker_labels: self.project.marker_labels.clone(),
@@ -1639,6 +1650,7 @@ impl ReelApp {
             caption_size: self.project.caption_size,
             titles: &[],
             music: None,
+            roomtone: None,
             overlays: &[],
             markers: &[],
             marker_labels: &[],
@@ -2039,6 +2051,15 @@ impl ReelApp {
         if (player_speed - want_rate).abs() > 0.01 {
             if let Some(p) = self.player.as_mut() {
                 p.set_speed(want_rate);
+            }
+        }
+        // The active clip's quarter-turn, mirrored by mpv (tracked so the
+        // property isn't spammed every frame).
+        let want_rot = clip.effects.rotate % 4;
+        if self.preview_rotate != want_rot {
+            self.preview_rotate = want_rot;
+            if let Some(p) = self.player.as_mut() {
+                p.set_rotate(want_rot);
             }
         }
         // Stop at the out-marker when a range is set.

@@ -121,6 +121,10 @@ pub struct AudioFx {
     /// light and loudness read differently).
     #[serde(default)]
     pub fade_curve: FadeCurve,
+    /// De-esser intensity 0..1 (0 = off). Render-time, like the repair
+    /// chain — sibilance detection is a real filter pass.
+    #[serde(default)]
+    pub deess: f32,
 }
 
 /// Audio fade shapes, matched between the live mixer and ffmpeg's afade.
@@ -184,6 +188,7 @@ impl Default for AudioFx {
             comp_ratio: default_comp_ratio(),
             voice_fix: false,
             fade_curve: FadeCurve::default(),
+            deess: 0.0,
         }
     }
 }
@@ -930,6 +935,10 @@ pub struct Project {
     /// An optional music bed under the whole edit.
     #[serde(default)]
     pub music: Option<Music>,
+    /// Room tone: a sampled slice of the recording's own silence, looped
+    /// quietly under the whole edit so cuts never drop to digital black.
+    #[serde(default)]
+    pub roomtone: Option<Roomtone>,
     /// Timeline positions flagged by the user. Part of the document: a
     /// marker you dropped yesterday should still be there today.
     #[serde(default)]
@@ -987,6 +996,17 @@ pub struct Session {
     pub selected: Option<u64>,
 }
 
+/// The room-tone bed: a wav sampled from the quietest stretch of the
+/// footage itself (never synthetic noise), looped under everything.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Roomtone {
+    pub source: String,
+    /// Level, dB. Room tone sits far below dialogue by nature; the default
+    /// plays it exactly as sampled (0 = as recorded).
+    #[serde(default)]
+    pub gain_db: f32,
+}
+
 /// One multicam angle.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Angle {
@@ -1019,6 +1039,7 @@ impl Default for Project {
             caption_size: default_caption_size(),
             titles: Vec::new(),
             music: None,
+            roomtone: None,
             markers: Vec::new(),
             marker_labels: Vec::new(),
             luts: Vec::new(),

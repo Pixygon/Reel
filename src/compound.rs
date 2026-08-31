@@ -54,6 +54,7 @@ pub fn render_flat(reel_path: &str) -> Result<PathBuf> {
         caption_size: proj.caption_size,
         titles: &proj.titles,
         music: proj.music.as_ref(),
+        roomtone: proj.roomtone.as_ref(),
         overlays: &proj.overlay_segments(),
         markers: &[],
         marker_labels: &[],

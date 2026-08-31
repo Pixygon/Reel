@@ -102,6 +102,11 @@ pub struct Effects {
     /// The plugin's user parameters (the //! param: sliders).
     #[serde(default)]
     pub plugin_params: [f32; 4],
+    /// Quarter turns clockwise (0..3). Geometry happens at DECODE time
+    /// (transpose before the fit, so a 90° portrait letterboxes right);
+    /// the live preview rotates through mpv's own video-rotate.
+    #[serde(default)]
+    pub rotate: u8,
     /// Mirror the picture left-right. With flip_v = a 180° rotation.
     #[serde(default)]
     pub flip_h: bool,
@@ -363,6 +368,7 @@ impl Default for Effects {
             hsl: None,
             plugin: None,
             plugin_params: [0.0; 4],
+            rotate: 0,
             flip_h: false,
             flip_v: false,
         }
@@ -373,6 +379,17 @@ impl Default for Effects {
 pub const LUMA: [f32; 3] = [0.2126, 0.7152, 0.0722];
 
 impl Effects {
+    /// The decode-time rotation chain (empty at 0°). Same filter in the
+    /// frame-server readers, the still grab and the graph fallback.
+    pub fn rotate_chain(&self) -> Option<String> {
+        match self.rotate % 4 {
+            1 => Some("transpose=1".into()),           // 90° CW
+            2 => Some("transpose=1,transpose=1".into()), // 180°
+            3 => Some("transpose=2".into()),           // 90° CCW
+            _ => None,
+        }
+    }
+
     /// Does this clip grade through a lattice? LUT, curves, levels, white
     /// balance and HSL qualifiers all bake into the same 33³ texture.
     pub fn has_lattice(&self) -> bool {
@@ -448,6 +465,7 @@ impl Effects {
             && !self.has_grade()
             && !self.flip_h
             && !self.flip_v
+            && self.rotate % 4 == 0
             && self.plugin.is_none()
     }
 

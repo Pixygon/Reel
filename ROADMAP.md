@@ -325,8 +325,17 @@ streamer layout), replay buffer, Windows capture backend, virtual camera.
       audio in the live mixer but NOT in the export — segments now get
       afade legs (regression-tested: mid vs tail band levels).
 
-Still open: spectrum overlay on the EQ, de-esser, room tone generation,
-LUFS meters everywhere delivery happens.
+- [x] **De-esser** (v1.13.0): per-clip intensity, render-time like the
+      repair chain — measured: bursty 7 kHz sibilance drops, the 800 Hz
+      body stays.
+- [x] **Room tone** (v1.13.0, `reel roomtone`): samples the quietest
+      0.8 s of the footage ITSELF (pure quietest-span finder, tested),
+      loops it under the whole edit in the wav pass AND the live mixer —
+      cuts never drop to digital black. Comparative band test proves the
+      loop outlives the sample.
+
+Still open: spectrum overlay on the EQ, LUFS meters everywhere delivery
+happens.
 
 When reality disagrees with this document, reality wins — and this
 document gets edited.

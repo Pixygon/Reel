@@ -288,6 +288,15 @@ impl Player {
         self.shuttle_rate
     }
 
+    /// The preview-side quarter-turn (mpv renders it; the subprocess
+    /// fallback shows the clip unrotated — the render always rotates).
+    pub fn set_rotate(&mut self, quarter_turns: u8) {
+        if let Backend::Mpv(m) = &mut self.backend {
+            m.set_rotate((quarter_turns % 4) as f64 * 90.0);
+            self.dirty = true;
+        }
+    }
+
     pub fn set_speed(&mut self, speed: f64) {
         let speed = speed.clamp(0.25, 4.0);
         match &mut self.backend {

@@ -333,6 +333,8 @@ pub struct PlanMusic {
 pub struct Plan {
     pub clips: Vec<PlanClip>,
     pub music: Option<PlanMusic>,
+    /// Room tone: looped under everything at a fixed gain.
+    pub roomtone: Option<(Arc<Pcm>, f32)>,
     /// Bus (track) count for the meters; music meters separately.
     pub buses: usize,
 }
@@ -512,6 +514,14 @@ pub fn render_into(state: &mut MixState, out: &mut [f32]) {
                     l += ml;
                     r += mr;
                 }
+            }
+        }
+        if let Some((pcm, g)) = &plan.roomtone {
+            let n = pcm.frames();
+            if n > 0 {
+                let idx = ((t * RATE as f64) as usize) % n;
+                l += pcm.data[idx * 2] * g;
+                r += pcm.data[idx * 2 + 1] * g;
             }
         }
         let (ol, or_) = ((l * state.master).clamp(-1.0, 1.0), (r * state.master).clamp(-1.0, 1.0));
@@ -986,6 +996,7 @@ mod tests {
                 },
             ],
             music: None,
+            roomtone: None,
             buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };
@@ -1044,6 +1055,7 @@ mod tests {
                 bus: 0,
             }],
             music: None,
+            roomtone: None,
             buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };
@@ -1082,6 +1094,7 @@ mod tests {
                 bus: 0,
             }],
             music: None,
+            roomtone: None,
             buses: 1,
         }
     }
@@ -1237,6 +1250,7 @@ mod tests {
                 total: 8.0,
                 rate: 1.0,
             }),
+            roomtone: None,
             buses: 1,
         };
         let mut st = MixState { plan: Arc::new(plan), ..Default::default() };

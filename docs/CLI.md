@@ -189,6 +189,7 @@ A clip's audio processing: pan, EQ, compressor, repair — live mix and export a
 | `--comp-thresh` | `DB` | Threshold, dBFS (default -18) |
 | `--comp-ratio` | `N` | Ratio N:1 (default 3) |
 | `--comp-off` | — | Compressor off |
+| `--deess` | `0..1` | De-esser intensity (render-time; tames harsh S sounds) |
 | `--fade-curve` | `SHAPE` | Audio fade shape: linear, smooth (qsin) or exp |
 | `--fix` | — | Fix voice on export: rumble/hum off, noise down, clicks patched |
 | `--fix-off` | — | Stop fixing |
@@ -230,6 +231,7 @@ Colour, fades and reframing for one clip
 | `--hsl-push-sat` | `N` | Saturation multiplier inside the window |
 | `--hsl-push-lum` | `N` | Lightness multiplier inside the window |
 | `--hsl-off` | — | Remove the qualifier |
+| `--rotate` | `DEG` | Quarter turns: 0, 90, 180 or 270 (clockwise) |
 | `--flip-h` | — | Mirror left-right (toggle) |
 | `--flip-v` | — | Mirror top-bottom (toggle; both = 180° rotation) |
 | `--plugin` | `FILE.wgsl` | An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md |
@@ -440,6 +442,16 @@ Multicam: register synced angles, then cut between them (keys 1-9 in the editor 
 | `--cut` | `SECONDS` | Cut to --angle at this timeline time |
 | `--angle` | `N` | Angle index for --cut (0-based) |
 | `--clear` | — | Forget every angle |
+| `--json` | — | Print the result as JSON |
+
+### `reel roomtone PROJECT`
+
+Sample the quietest breath of the footage and loop it under the whole edit — cuts never drop to digital black
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--gain-db` | `DB` | Level trim for the bed (default 0 = as sampled) |
+| `--off` | — | Remove the room tone |
 | `--json` | — | Print the result as JSON |
 
 ### `reel beats TARGET`

@@ -780,6 +780,11 @@ pub fn build_timeline_args_full(
         if let Some(raw) = &seg.raw_filter {
             fx.insert(0, raw.clone());
         }
+        // Rotation is source geometry: before EVERYTHING, so the fit
+        // letterboxes the rotated frame — same order as the frame server.
+        if let Some(rot) = seg.effects.rotate_chain() {
+            fx.insert(0, rot);
+        }
         let fx = if fx.is_empty() { String::new() } else { format!("{},", fx.join(",")) };
         let reframe = seg
             .effects
@@ -925,6 +930,8 @@ pub struct Overlays<'a> {
     pub titles: &'a [crate::titles::Title],
     /// A music bed laid under the cut (and ducked under it, if asked).
     pub music: Option<&'a crate::edit::Music>,
+    /// Room tone looped quietly under the whole edit.
+    pub roomtone: Option<&'a crate::edit::Roomtone>,
     /// Picture composited on top of the cut.
     pub overlays: &'a [crate::edit::OverlaySegment],
     /// Timeline markers — written into the output as CHAPTERS, so a long
@@ -1223,6 +1230,9 @@ fn audio_fx_chain(fx: &crate::edit::AudioFx) -> String {
     if fx.eq_high.abs() > 0.01 {
         f.push_str(&format!(",treble=g={:.2}:f=8000", fx.eq_high.clamp(-24.0, 24.0)));
     }
+    if fx.deess > 0.001 {
+        f.push_str(&format!(",deesser=i={:.3}", fx.deess.clamp(0.0, 1.0)));
+    }
     if fx.comp {
         // acompressor's threshold is linear; ours is stated in dBFS.
         let thresh = 10f32.powf(fx.comp_thresh.clamp(-60.0, 0.0) / 20.0);
@@ -1244,13 +1254,15 @@ pub(crate) fn build_timeline_audio_wav_args(
     with_audio: bool,
     music: Option<&crate::edit::Music>,
     audio_clips: &[crate::edit::AudioClip],
+    roomtone: Option<&crate::edit::Roomtone>,
     loudness: Option<f32>,
     wav_out: &str,
 ) -> Option<Vec<String>> {
     let music = music.filter(|m| !m.source.is_empty());
+    let roomtone = roomtone.filter(|r| std::path::Path::new(&r.source).exists());
     let audio_clips: Vec<&crate::edit::AudioClip> =
         audio_clips.iter().filter(|c| has_audio_stream(&c.source)).collect();
-    if !with_audio && music.is_none() && audio_clips.is_empty() {
+    if !with_audio && music.is_none() && audio_clips.is_empty() && roomtone.is_none() {
         return None;
     }
     let anorm = "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo";
@@ -1269,6 +1281,12 @@ pub(crate) fn build_timeline_audio_wav_args(
     let music_input = music.map(|m| {
         a.extend(["-i".into(), m.source.clone()]);
         sources.len()
+    });
+    // Room tone loops for the whole cut: stream_loop on the input, trimmed
+    // to length in the graph.
+    let roomtone_input = roomtone.map(|r| {
+        a.extend(["-stream_loop".into(), "-1".into(), "-i".into(), r.source.clone()]);
+        sources.len() + music.iter().count()
     });
     let clip_inputs: Vec<usize> = audio_clips
         .iter()
@@ -1461,6 +1479,18 @@ pub(crate) fn build_timeline_audio_wav_args(
         }
         push_music_mix(&mut graph, &mut audio_out, idx, m, crate::edit::render_duration(segments));
     }
+    // Room tone: the sampled silence, looped under EVERYTHING — mixed
+    // before loudnorm so delivery measures the finished bed too.
+    if let (Some(idx), Some(r)) = (roomtone_input, roomtone) {
+        if let Some(cur) = &audio_out {
+            let total = crate::edit::render_duration(segments);
+            graph.push_str(&format!(
+                ";[{idx}:a]{anorm},volume={:.2}dB,atrim=0:{total:.4},asetpts=PTS-STARTPTS[rt];{cur}[rt]amix=inputs=2:duration=first:normalize=0:dropout_transition=0[artone]",
+                r.gain_db
+            ));
+            audio_out = Some("[artone]".into());
+        }
+    }
     let mut out_label = audio_out?;
     // Loudness delivery: one-pass loudnorm to the platform target. Sits at
     // the very end so it measures the finished mix, music and all.
@@ -1595,6 +1625,7 @@ pub enum Job {
         caption_size: u32,
         titles: Vec<crate::titles::Title>,
         music: Option<crate::edit::Music>,
+        roomtone: Option<crate::edit::Roomtone>,
         overlays: Vec<crate::edit::OverlaySegment>,
         markers: Vec<f64>,
         marker_labels: Vec<(f64, String)>,
@@ -1690,8 +1721,8 @@ impl Queue {
                         start(path, &next.output, &next.settings, *duration)
                     }
                     Job::Timeline {
-                        segments, project, captions, caption_size, titles, music, overlays,
-                        markers, marker_labels, luts, plugins, audio_clips,
+                        segments, project, captions, caption_size, titles, music, roomtone,
+                        overlays, markers, marker_labels, luts, plugins, audio_clips,
                     } => start_timeline_with_captions(
                         segments,
                         &next.output,
@@ -1702,6 +1733,7 @@ impl Queue {
                             caption_size: *caption_size,
                             titles,
                             music: music.as_ref(),
+                            roomtone: roomtone.as_ref(),
                             overlays,
                             markers,
                             marker_labels,
@@ -2388,7 +2420,7 @@ mod tests {
             .status().map(|s| s.success()).unwrap_or(false));
         let mut sg = seg(&src.to_string_lossy(), 0.0, 1.5);
         sg.audio.pan = 1.0;
-        let args = build_timeline_audio_wav_args(&[sg], true, None, &[], None, &wav.to_string_lossy())
+        let args = build_timeline_audio_wav_args(&[sg], true, None, &[], None, None, &wav.to_string_lossy())
             .expect("wav args");
         assert!(std::process::Command::new("ffmpeg").args(&args)
             .status().map(|s| s.success()).unwrap_or(false), "wav render failed");
@@ -2432,7 +2464,7 @@ mod tests {
         let _ = std::fs::remove_file(&wav_raw);
         for (sg, out) in [(&raw, &wav_raw), (&fixed, &wav)] {
             let args = build_timeline_audio_wav_args(
-                std::slice::from_ref(sg), true, None, &[], None, &out.to_string_lossy())
+                std::slice::from_ref(sg), true, None, &[], None, None, &out.to_string_lossy())
                 .expect("wav args");
             assert!(std::process::Command::new("ffmpeg").args(&args)
                 .status().map(|s| s.success()).unwrap_or(false), "wav render failed");
@@ -2475,6 +2507,98 @@ mod tests {
             .unwrap_or_else(|| panic!("no mean_volume in ffmpeg output:\n{text}"))
     }
 
+    /// The de-esser tames the sibilance band and leaves the voice body:
+    /// bursty 7 kHz drops measurably, 800 Hz barely moves.
+    #[test]
+    fn the_deesser_tames_sibilance_and_keeps_the_body() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-ds-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        // Voice body at 800 Hz + gated "esses" at 7 kHz.
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=3",
+                   "-f", "lavfi", "-i", "sine=frequency=800:duration=3,volume=0.3",
+                   "-f", "lavfi", "-i",
+                   "sine=frequency=7000:duration=3,volume=volume='0.4*gt(sin(2*PI*t*3),0.3)':eval=frame",
+                   "-filter_complex", "[1][2]amix=inputs=2:normalize=0[a]",
+                   "-map", "0:v", "-map", "[a]",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &src.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let render = |deess: f32| -> std::path::PathBuf {
+            let out = dir.join(format!("reel-ds-{deess}-{}.wav", std::process::id()));
+            let _ = std::fs::remove_file(&out);
+            let mut sg = seg(&src.to_string_lossy(), 0.0, 2.5);
+            sg.audio.deess = deess;
+            let wav = build_timeline_audio_wav_args(
+                &[sg], true, None, &[], None, None, &out.to_string_lossy()).expect("args");
+            assert!(std::process::Command::new("ffmpeg").args(&wav)
+                .status().map(|s| s.success()).unwrap_or(false));
+            out
+        };
+        let raw = render(0.0);
+        let tamed = render(0.9);
+        let ess_drop = band_level(&raw, 0.3, 2.2, 7000) - band_level(&tamed, 0.3, 2.2, 7000);
+        let body_drop = band_level(&raw, 0.3, 2.2, 800) - band_level(&tamed, 0.3, 2.2, 800);
+        assert!(ess_drop > 3.0, "sibilance must come down, dropped {ess_drop:.1} dB");
+        assert!(body_drop < 2.0, "the voice body must survive, dropped {body_drop:.1} dB");
+        for f in [&src, &raw, &tamed] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Room tone keeps the silence alive: a timeline whose V1 audio is
+    /// pure digital silence renders with the looped tone audible across
+    /// the WHOLE length — including past the sampled slice's own 0.8 s.
+    #[test]
+    fn roomtone_loops_under_the_whole_edit() {
+        let dir = std::env::temp_dir();
+        let vid = dir.join(format!("reel-rt-vid-{}.mp4", std::process::id()));
+        let tone = dir.join(format!("reel-rt-tone-{}.wav", std::process::id()));
+        let out = dir.join(format!("reel-rt-out-{}.wav", std::process::id()));
+        for f in [&vid, &tone, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+        // 4 s silent video; 0.8 s of 300 Hz "room".
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=4",
+                   "-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo:d=4",
+                   "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+                   "-c:a", "aac", "-shortest", &vid.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi",
+                   "-i", "sine=frequency=300:duration=0.8", "-ac", "2",
+                   &tone.to_string_lossy()])
+            .status().map(|s| s.success()).unwrap_or(false));
+        let segs = vec![seg(&vid.to_string_lossy(), 0.0, 4.0)];
+        let rt = crate::edit::Roomtone { source: tone.to_string_lossy().into(), gain_db: -6.0 };
+        let wav = build_timeline_audio_wav_args(
+            &segs, true, None, &[], Some(&rt), None, &out.to_string_lossy())
+            .expect("wav args");
+        assert!(std::process::Command::new("ffmpeg").args(&wav)
+            .status().map(|s| s.success()).unwrap_or(false), "roomtone render failed");
+        // The tone's band, WELL past the sample's own length (3.0–3.8 s) —
+        // compared against a control render without room tone.
+        let late = band_level(&out, 3.0, 3.8, 300);
+        let ctrl = dir.join(format!("reel-rt-ctrl-{}.wav", std::process::id()));
+        let _ = std::fs::remove_file(&ctrl);
+        let wav0 = build_timeline_audio_wav_args(
+            &segs, true, None, &[], None, None, &ctrl.to_string_lossy())
+            .expect("control args");
+        assert!(std::process::Command::new("ffmpeg").args(&wav0)
+            .status().map(|s| s.success()).unwrap_or(false));
+        let silent = band_level(&ctrl, 3.0, 3.8, 300);
+        assert!(late > silent + 20.0,
+            "the loop must still sound at the tail (tone {late} dB vs silence {silent} dB)");
+        let _ = std::fs::remove_file(&ctrl);
+        for f in [&vid, &tone, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
     /// A clip fading to black dips its SOUND in the export too — the live
     /// mixer always did this; the wav pass silently didn't (preview-lies
     /// bug, fixed). Measured: the last half-second is far quieter than the
@@ -2498,7 +2622,7 @@ mod tests {
             sg.effects.fade_out = 2.0;
             sg.audio.fade_curve = curve;
             let wav = build_timeline_audio_wav_args(
-                &[sg], true, None, &[], None, &out.to_string_lossy()).expect("wav args");
+                &[sg], true, None, &[], None, None, &out.to_string_lossy()).expect("wav args");
             assert!(std::process::Command::new("ffmpeg").args(&wav)
                 .status().map(|s| s.success()).unwrap_or(false));
             out
@@ -2553,7 +2677,7 @@ mod tests {
             fit: true,
         };
         let wav = build_timeline_audio_wav_args(
-            &segs, true, Some(&music), &[], None, &out.to_string_lossy())
+            &segs, true, Some(&music), &[], None, None, &out.to_string_lossy())
             .expect("wav args");
         assert!(wav.iter().any(|a| a.contains("rubberband")), "fit rides rubberband: {wav:?}");
         assert!(std::process::Command::new("ffmpeg").args(&wav)
@@ -2956,6 +3080,61 @@ mod tests {
         );
 
         for f in [&src, &out] {
+            let _ = std::fs::remove_file(f);
+        }
+    }
+
+    /// Rotation is decode geometry in both engines: a left-red/right-blue
+    /// source turned 90° clockwise puts red at the TOP — and the turned
+    /// portrait letterboxes (pillarboxes) instead of stretching.
+    #[test]
+    fn quarter_turns_rotate_identically_in_both_engines() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("reel-rot-src-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&src);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error",
+                   "-f", "lavfi", "-i", "color=c=red:size=320x240:rate=25:duration=1",
+                   "-f", "lavfi", "-i", "color=c=blue:size=160x240:rate=25:duration=1",
+                   "-filter_complex", "[0][1]overlay=x=160:y=0",
+                   "-pix_fmt", "yuv420p", &src.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        let mut sg = seg(&src.to_string_lossy(), 0.0, 1.0);
+        sg.effects.rotate = 1; // 90° CW: left edge → top
+        let s = ExportSettings { quality: Quality::High, hardware: false, ..Default::default() };
+        let check = |img: &image::RgbImage, engine: &str| {
+            // Rotated 240x320 into 320x240: pillarboxed to 180 wide, centred.
+            let top = img.get_pixel(160, 30).0;
+            let bottom = img.get_pixel(160, 210).0;
+            let bar = img.get_pixel(20, 120).0;
+            assert!(top[0] > 180 && top[2] < 80, "{engine}: top must be red, got {top:?}");
+            assert!(bottom[2] > 180 && bottom[0] < 80, "{engine}: bottom must be blue, got {bottom:?}");
+            assert!(bar[0] < 40 && bar[1] < 40 && bar[2] < 40,
+                "{engine}: the pillarbox must be dark, got {bar:?} — a stretch instead of a fit");
+        };
+        let out = dir.join(format!("reel-rot-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        match crate::engine::render::still_png(
+            &[sg.clone()], &Overlays::default(), (320, 240, 25.0), &s, 0.5, &out.to_string_lossy(),
+        ) {
+            Ok(_) => check(&image::open(&out).unwrap().to_rgb8(), "frame server"),
+            Err(e) => eprintln!("no GPU — frame-server leg skipped ({e})"),
+        }
+        let gout = dir.join(format!("reel-rot-g-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&gout);
+        let args = build_timeline_args(&[sg], &gout.to_string_lossy(),
+            &ExportSettings { quality: Quality::Small, hardware: false, ..Default::default() },
+            false, (320, 240, 25.0));
+        assert!(std::process::Command::new("ffmpeg").arg("-y").args(&args)
+            .status().map(|st| st.success()).unwrap_or(false));
+        let png = dir.join(format!("reel-rot-gp-{}.png", std::process::id()));
+        let _ = std::fs::remove_file(&png);
+        assert!(std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-ss", "0.4", "-i", &gout.to_string_lossy(),
+                   "-frames:v", "1", &png.to_string_lossy()])
+            .status().map(|st| st.success()).unwrap_or(false));
+        check(&image::open(&png).unwrap().to_rgb8(), "graph");
+        for f in [&src, &out, &gout, &png] {
             let _ = std::fs::remove_file(f);
         }
     }
@@ -3932,7 +4111,7 @@ mod tests {
             &out.to_string_lossy(),
             &s,
             (640, 480, 25.0),
-            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, overlays: &[], markers: &[], marker_labels: &[], luts: &[], plugins: &[], audio_clips: &[] },
+            Overlays { captions: &cues, caption_size: 20, titles: &titles, music: None, roomtone: None, overlays: &[], markers: &[], marker_labels: &[], luts: &[], plugins: &[], audio_clips: &[] },
         )
         .expect("start export");
         let deadline = Instant::now() + Duration::from_secs(120);

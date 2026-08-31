@@ -189,6 +189,7 @@ pub fn start_timeline(
         with_audio,
         overlays.music,
         overlays.audio_clips,
+        overlays.roomtone,
         settings.loudness,
         &format!("{output}.audio.wav"),
     );
@@ -287,10 +288,18 @@ pub fn render_still(
         let tone = super::sources::hdr_tonemap_chain(tone_src.as_deref());
         let fit = settings.fit.chain(tw, th, "s");
         let src_at = seg.in_point + seg.source_offset_at(t - p.start);
-        let pre = match (&tone, &seg.raw_filter) {
-            (Some(tn), Some(r)) => Some(format!("{tn},{r}")),
-            (None, Some(r)) => Some(r.clone()),
-            (tn, None) => tn.clone(),
+        let pre = {
+            let mut parts: Vec<String> = Vec::new();
+            if let Some(r) = seg.effects.rotate_chain() {
+                parts.push(r);
+            }
+            if let Some(tn) = &tone {
+                parts.push(tn.clone());
+            }
+            if let Some(r) = &seg.raw_filter {
+                parts.push(r.clone());
+            }
+            if parts.is_empty() { None } else { Some(parts.join(",")) }
         };
         if let Some(buf) = grab(&seg.source, src_at, pre.as_deref(), &fit, (tw, th))? {
             let (fx, key_op) = seg.animated(t - p.start);
@@ -698,12 +707,21 @@ fn run(
                             None => stab,
                         });
                     }
-                    // Expert raw filter joins the decode chain after tone
-                    // mapping — the same splice point stabilization uses.
-                    let pre = match (&tone, &seg.raw_filter) {
-                        (Some(t), Some(r)) => Some(format!("{t},{r}")),
-                        (None, Some(r)) => Some(r.clone()),
-                        (t, None) => t.clone(),
+                    // Decode chain order: rotation (geometry) first, then
+                    // tone mapping (+stab already folded in), then the
+                    // expert raw filter.
+                    let pre = {
+                        let mut parts: Vec<String> = Vec::new();
+                        if let Some(r) = seg.effects.rotate_chain() {
+                            parts.push(r);
+                        }
+                        if let Some(t) = &tone {
+                            parts.push(t.clone());
+                        }
+                        if let Some(r) = &seg.raw_filter {
+                            parts.push(r.clone());
+                        }
+                        if parts.is_empty() { None } else { Some(parts.join(",")) }
                     };
                     let feed = match ramp_fps[p.seg] {
                         Some(src_fps) => Feed::Ramped(NativeReader::open(

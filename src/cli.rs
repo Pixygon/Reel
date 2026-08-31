@@ -238,6 +238,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "comp-thresh", value: Some("DB"), help: "Threshold, dBFS (default -18)" },
             Flag { name: "comp-ratio", value: Some("N"), help: "Ratio N:1 (default 3)" },
             Flag { name: "comp-off", value: None, help: "Compressor off" },
+            Flag { name: "deess", value: Some("0..1"), help: "De-esser intensity (render-time; tames harsh S sounds)" },
             Flag { name: "fade-curve", value: Some("SHAPE"), help: "Audio fade shape: linear, smooth (qsin) or exp" },
             Flag { name: "fix", value: None, help: "Fix voice on export: rumble/hum off, noise down, clicks patched" },
             Flag { name: "fix-off", value: None, help: "Stop fixing" },
@@ -279,6 +280,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "hsl-push-sat", value: Some("N"), help: "Saturation multiplier inside the window" },
             Flag { name: "hsl-push-lum", value: Some("N"), help: "Lightness multiplier inside the window" },
             Flag { name: "hsl-off", value: None, help: "Remove the qualifier" },
+            Flag { name: "rotate", value: Some("DEG"), help: "Quarter turns: 0, 90, 180 or 270 (clockwise)" },
             Flag { name: "flip-h", value: None, help: "Mirror left-right (toggle)" },
             Flag { name: "flip-v", value: None, help: "Mirror top-bottom (toggle; both = 180° rotation)" },
             Flag { name: "plugin", value: Some("FILE.wgsl"), help: "An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md" },
@@ -499,6 +501,16 @@ pub static COMMANDS: &[Cmd] = &[
             F_JSON,
         ],
         help: "Multicam: register synced angles, then cut between them (keys 1-9 in the editor do this live)",
+    },
+    Cmd {
+        name: "roomtone",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "gain-db", value: Some("DB"), help: "Level trim for the bed (default 0 = as sampled)" },
+            Flag { name: "off", value: None, help: "Remove the room tone" },
+            F_JSON,
+        ],
+        help: "Sample the quietest breath of the footage and loop it under the whole edit — cuts never drop to digital black",
     },
     Cmd {
         name: "beats",
@@ -792,6 +804,7 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "tighten" => cmd_tighten(p),
         "fillers" => cmd_fillers(p),
         "beats" => cmd_beats(p),
+        "roomtone" => cmd_roomtone(p),
         "snapshot" => cmd_snapshot(p),
         "adjust" => cmd_adjust(p),
         "pool" => cmd_pool(p),
@@ -1302,6 +1315,9 @@ fn cmd_audio(p: &Parsed) -> Result<Output> {
         if p.on("comp-off") {
             c.audio.comp = false;
         }
+        if let Some(v) = p.num::<f32>("deess")? {
+            c.audio.deess = v.clamp(0.0, 1.0);
+        }
         if let Some(shape) = p.str("fade-curve") {
             c.audio.fade_curve = match shape {
                 "linear" => crate::edit::FadeCurve::Linear,
@@ -1420,6 +1436,15 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
                     .map_err(|_| anyhow!("--plugin-params wants numbers, got {tok:?}"))?;
             }
             c.effects.plugin_params = params;
+        }
+        if let Some(deg) = p.num::<u32>("rotate")? {
+            c.effects.rotate = match deg {
+                0 => 0,
+                90 => 1,
+                180 => 2,
+                270 => 3,
+                other => bail!("--rotate wants 0, 90, 180 or 270, got {other}"),
+            };
         }
         if p.on("flip-h") {
             c.effects.flip_h = !c.effects.flip_h;
@@ -2441,6 +2466,65 @@ fn cmd_multicam(p: &Parsed) -> Result<Output> {
     ))
 }
 
+fn cmd_roomtone(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let mut proj = load(path)?;
+    if p.on("off") {
+        proj.roomtone = None;
+        save(&proj, path)?;
+        return Ok(Output::new("Room tone removed.", serde_json::json!({ "roomtone": false })));
+    }
+    // The quietest stretch across the timeline's own sources — real air
+    // from the real room, never synthesized.
+    let mut best: Option<(String, f64, f32)> = None; // (source, start, loudness)
+    for t in proj.tracks.iter().filter(|t| t.kind == crate::edit::TrackKind::Video || t.kind == crate::edit::TrackKind::Audio) {
+        for c in &t.clips {
+            if c.source.is_empty() {
+                continue;
+            }
+            let Some(peaks) = crate::waveform::compute(&c.source) else { continue };
+            let Some((start, _len)) = crate::waveform::quietest_span(
+                &peaks.data,
+                crate::waveform::BUCKETS_PER_SEC,
+                0.8,
+            ) else { continue };
+            let win = (start * crate::waveform::BUCKETS_PER_SEC) as usize;
+            let loud: f32 = peaks.data[win..(win + 32).min(peaks.data.len())].iter().sum();
+            if best.as_ref().map(|(_, _, b)| loud < *b).unwrap_or(true) {
+                best = Some((c.source.clone(), start, loud));
+            }
+        }
+    }
+    let Some((source, start, _)) = best else {
+        bail!("no audio anywhere on the timeline to sample room tone from");
+    };
+    let tone_path = std::path::Path::new(path).with_extension("roomtone.wav");
+    let ok = std::process::Command::new("ffmpeg")
+        .args(["-y", "-v", "error", "-ss", &format!("{start:.3}"), "-t", "0.8",
+               "-i", &source, "-vn", "-ac", "2", "-ar", "48000",
+               "-af", "afade=t=in:d=0.05,afade=t=out:st=0.75:d=0.05",
+               &tone_path.to_string_lossy()])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if !ok {
+        bail!("could not extract the sampled span from {source}");
+    }
+    let gain = p.num::<f32>("gain-db")?.unwrap_or(0.0);
+    proj.roomtone = Some(crate::edit::Roomtone {
+        source: tone_path.to_string_lossy().into_owned(),
+        gain_db: gain,
+    });
+    save(&proj, path)?;
+    Ok(Output::new(
+        format!(
+            "Room tone sampled from {source} at {start:.2}s → {} (looped under the edit at {gain:+.1} dB)",
+            tone_path.display()
+        ),
+        serde_json::json!({ "roomtone": tone_path.to_string_lossy(), "sampled_from": source, "at": start }),
+    ))
+}
+
 fn cmd_beats(p: &Parsed) -> Result<Output> {
     let target = p.at(0)?;
     let every = p.num::<usize>("every")?.unwrap_or(1).max(1);
@@ -2873,6 +2957,7 @@ fn cmd_bench(p: &Parsed) -> Result<Output> {
             caption_size: crate::edit::Project::default().caption_size,
             titles: &[],
             music: None,
+            roomtone: None,
             overlays: &[],
             markers: &[],
             marker_labels: &[],
@@ -2942,6 +3027,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             caption_size: proj.caption_size,
             titles: &proj.titles,
             music: None,
+            roomtone: None,
             overlays: &proj.overlay_segments(),
             markers: &[],
             marker_labels: &[],
@@ -3062,6 +3148,7 @@ fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
             caption_size: proj.caption_size,
             titles: &proj.titles,
             music: proj.music.as_ref(),
+            roomtone: proj.roomtone.as_ref(),
             overlays: &proj.overlay_segments(),
             markers: &proj.markers,
             marker_labels: &proj.marker_labels,

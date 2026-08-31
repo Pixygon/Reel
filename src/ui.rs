@@ -877,9 +877,15 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     if ui.selectable_label(fx.flip_v, "Flip ↕").clicked() {
                         fx.flip_v = !fx.flip_v;
                     }
-                    if ui.small_button("180°").on_hover_text("Rotate half a turn (both flips)").clicked() {
-                        fx.flip_h = !fx.flip_h;
-                        fx.flip_v = !fx.flip_v;
+                    if ui.button("Rotate 90°").on_hover_text(
+                        "Quarter turn clockwise (click again for 180°, 270°, back). \
+                         The render rotates before fitting, so a turned portrait \
+                         letterboxes correctly.",
+                    ).clicked() {
+                        fx.rotate = (fx.rotate + 1) % 4;
+                    }
+                    if fx.rotate % 4 != 0 {
+                        ui.label(RichText::new(format!("{}°", fx.rotate as u16 * 90)).small().color(theme::EMBER));
                     }
                 });
                 ui.add(egui::Slider::new(&mut fx.zoom, 1.0..=3.0).text("Zoom"));
@@ -1381,6 +1387,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 ui.selectable_value(&mut afx.fade_curve, v, label);
                             }
                         });
+                        ui.add(egui::Slider::new(&mut afx.deess, 0.0..=1.0).text("De-ess"))
+                            .on_hover_text("Tame harsh S sounds — render-time, like Fix voice");
                         ui.checkbox(&mut afx.voice_fix, "Fix voice on export")
                             .on_hover_text(
                                 "Rumble/hum off, background noise down, clicks patched. \
@@ -3667,6 +3675,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         caption_size: app.project.caption_size,
                         titles: &app.project.titles,
                         music: app.project.music.as_ref(),
+                        roomtone: app.project.roomtone.as_ref(),
                         overlays: &app.project.overlay_segments(),
                         markers: &app.project.markers,
                         marker_labels: &app.project.marker_labels,

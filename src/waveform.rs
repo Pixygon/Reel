@@ -279,9 +279,42 @@ pub fn best_lag(a: &[f32], b: &[f32], max_lag: usize) -> Option<(isize, f32)> {
     (best.1 > f32::MIN).then_some(best)
 }
 
+/// The quietest window of at least `min_len` seconds in a peaks envelope —
+/// where the room breathes without anyone talking. Returns (start_secs,
+/// len_secs). Pure; the room-tone sampler is built on it.
+pub fn quietest_span(peaks: &[f32], per_sec: f64, min_len: f64) -> Option<(f64, f64)> {
+    let win = (min_len * per_sec).ceil() as usize;
+    if peaks.len() < win || win == 0 {
+        return None;
+    }
+    let mut sum: f32 = peaks[..win].iter().sum();
+    let mut best = (0usize, sum);
+    for i in win..peaks.len() {
+        sum += peaks[i] - peaks[i - win];
+        if sum < best.1 {
+            best = (i - win + 1, sum);
+        }
+    }
+    Some((best.0 as f64 / per_sec, min_len))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The quietest-span finder lands on the actual hole in the envelope.
+    #[test]
+    fn quietest_span_finds_the_silence() {
+        let per_sec = 40.0;
+        let mut env = vec![0.8f32; 400]; // 10 s of loud
+        for v in env.iter_mut().skip(240).take(48) {
+            *v = 0.02; // 6.0–7.2 s: the room breathing
+        }
+        let (start, len) = quietest_span(&env, per_sec, 0.8).expect("span");
+        assert!((start - 6.0).abs() < 0.3, "found {start}, wanted ~6.0");
+        assert!((len - 0.8).abs() < 1e-9);
+        assert!(quietest_span(&env[..10], per_sec, 0.8).is_none(), "too short = none");
+    }
 
     /// The disk cache is real: a second compute of the same file reads the
     /// cached array instead of decoding again. Proven by planting a marker
