@@ -281,19 +281,24 @@ pub fn plan_shot(opts: &ShotOpts, out: &Path, env: &Env) -> Vec<Attempt> {
         }
         Os::Linux => {
             // spectacle covers screen/region/window from the CLI, but has no
-            // rectangle flag — so an exact area skips it.
-            if !matches!(opts.mode, ShotMode::Area(_)) {
+            // rectangle flag — so an exact area skips it. It also talks to
+            // KWin rather than to X, so it IGNORES $DISPLAY: on an X11
+            // session it would happily photograph a different screen than
+            // the one asked for. It therefore leads on Wayland only, and
+            // comes last on X11 behind the tools that honour the display.
+            let spectacle = (!matches!(opts.mode, ShotMode::Area(_))).then(|| {
                 let m = match opts.mode {
                     ShotMode::Region => vec!["-r".into()],
                     ShotMode::Window => vec!["-a".into()],
                     _ => vec![],
                 };
-                v.push(attempt(
+                attempt(
                     "spectacle",
                     [vec!["-b".into(), "-n".into()], m, vec!["-o".into(), o.clone()]].concat(),
-                ));
-            }
+                )
+            });
             if env.wayland {
+                v.extend(spectacle.clone());
                 match opts.mode {
                     ShotMode::Full => {
                         let mut a = vec![];
@@ -364,6 +369,9 @@ pub fn plan_shot(opts: &ShotOpts, out: &Path, env: &Env) -> Vec<Attempt> {
                         },
                     });
                 }
+                // Only if nothing X-native answered: it captures whatever
+                // KWin is showing, which may not be $DISPLAY at all.
+                v.extend(spectacle);
             }
         }
     }
@@ -1553,6 +1561,17 @@ mod tests {
         let region = ShotOpts { mode: ShotMode::Region, ..Default::default() };
         let plan = plan_shot(&region, Path::new("/tmp/a.png"), &linux_x11(&["maim", "ffmpeg"]));
         assert!(plan.iter().all(|a| a.tool != "ffmpeg"), "{plan:?}");
+
+        // spectacle talks to KWin, not to X: on an X11 session it ignores
+        // $DISPLAY and can photograph a screen nobody asked for, so every
+        // display-honouring tool must be tried before it. (It really did
+        // return the whole Wayland desktop for a shot aimed at an Xvfb.)
+        let plan = plan_shot(&opts, Path::new("/tmp/a.png"), &linux_x11(&["spectacle", "ffmpeg", "scrot"]));
+        let order: Vec<&str> = plan.iter().map(|a| a.tool.as_str()).collect();
+        assert_eq!(*order.last().unwrap(), "spectacle", "{order:?}");
+        // …but on Wayland it is the one that knows how, so it leads.
+        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["spectacle".into(), "grim".into()], display: ":0".into() };
+        assert_eq!(plan_shot(&opts, Path::new("/tmp/a.png"), &wl)[0].tool, "spectacle");
     }
 
     /// Recording options reach the tool, and one that cannot honour them
