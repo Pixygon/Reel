@@ -593,6 +593,45 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Transcode one file, no project needed",
     },
     Cmd {
+        name: "screenshot",
+        args: &["OUT?"],
+        flags: &[
+            Flag { name: "area", value: Some("X,Y,WxH"), help: "Grab exactly this rectangle — no picker, no user" },
+            Flag { name: "region", value: None, help: "Drag-select a rectangle (waits for a person)" },
+            Flag { name: "window", value: None, help: "The active window" },
+            Flag { name: "display", value: Some("NAME"), help: "A monitor by name — see `reel devices`" },
+            Flag { name: "delay", value: Some("SECONDS"), help: "Wait before grabbing (menus, hover states)" },
+            F_JSON,
+        ],
+        help: "Take a screenshot. Default is the whole desktop, saved under ~/Pictures/Reel",
+    },
+    Cmd {
+        name: "record",
+        args: &["OUT?"],
+        flags: &[
+            Flag { name: "duration", value: Some("SECONDS"), help: "Record exactly this long, then return the file" },
+            Flag { name: "stop", value: None, help: "Finish the recording already running and return its file" },
+            Flag { name: "status", value: None, help: "Is a recording running? For how long, into what?" },
+            Flag { name: "area", value: Some("X,Y,WxH"), help: "Record exactly this rectangle of the screen" },
+            Flag { name: "display", value: Some("NAME"), help: "A monitor by name — see `reel devices`" },
+            Flag { name: "fps", value: Some("N"), help: "Frame rate (default 30)" },
+            Flag { name: "audio", value: Some("MODE"), help: "none, system, mic or both (default system)" },
+            Flag { name: "no-cursor", value: None, help: "Leave the mouse pointer out" },
+            Flag { name: "webcam", value: None, help: "Record a camera instead of the screen" },
+            Flag { name: "device", value: Some("PATH"), help: "Which camera (default: the first one that answers)" },
+            Flag { name: "streamer", value: None, help: "Record screen AND camera, then build the PiP project — needs --duration" },
+            Flag { name: "project", value: Some("FILE.reel"), help: "Append the finished recording to this project as a clip" },
+            F_JSON,
+        ],
+        help: "Record the screen or a camera. Starts in the background; `--stop` finishes it",
+    },
+    Cmd {
+        name: "devices",
+        args: &[],
+        flags: &[F_JSON],
+        help: "What this machine can capture: monitors, cameras, audio sources, and the backends behind them",
+    },
+    Cmd {
         name: "presets",
         args: &[],
         flags: &[F_JSON],
@@ -815,6 +854,9 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "frame" => cmd_frame(p),
         "render" => cmd_render(p),
         "convert" => cmd_convert(p),
+        "screenshot" => cmd_screenshot(p),
+        "record" => cmd_record(p),
+        "devices" => cmd_devices(p),
         "presets" => cmd_presets(),
         "schema" => cmd_schema(),
         // The servers own stdio for the whole process and are dispatched
@@ -3193,6 +3235,257 @@ fn cmd_convert(p: &Parsed) -> Result<Output> {
         format!("Wrote {out}"),
         serde_json::json!({ "output": out, "input": input, "duration": duration }),
     ))
+}
+
+// ── Capture ──────────────────────────────────────────────────────────────
+//
+// The same engine the app's tray uses, with every choice a flag instead of
+// a picker — which is what makes screenshots and recordings reachable from
+// a script, from `reel serve`, and from an agent over MCP.
+
+fn cmd_screenshot(p: &Parsed) -> Result<Output> {
+    use crate::capture::{Rect, ShotMode, ShotOpts};
+    let mode = match (p.str("area"), p.on("region"), p.on("window")) {
+        (Some(a), _, _) => ShotMode::Area(Rect::parse(a)?),
+        (None, true, _) => ShotMode::Region,
+        (None, false, true) => ShotMode::Window,
+        _ => ShotMode::Full,
+    };
+    let opts = ShotOpts {
+        mode,
+        out: p.positional.first().map(std::path::PathBuf::from),
+        delay: p.num::<f32>("delay")?.unwrap_or(0.0),
+        display: p.str("display").map(String::from),
+    };
+    if mode.interactive() {
+        eprintln!("waiting for the selection…");
+    }
+    let file = crate::capture::screenshot_with(&opts)?;
+    let (w, h) = crate::video::decoder::probe(&file.to_string_lossy())
+        .map(|i| (i.width, i.height))
+        .unwrap_or((0, 0));
+    Ok(Output::new(
+        format!("Screenshot: {} ({w}×{h})", file.display()),
+        serde_json::json!({ "file": file.to_string_lossy(), "width": w, "height": h }),
+    ))
+}
+
+/// Read the recording flags shared by every start path.
+fn record_opts(p: &Parsed) -> Result<crate::capture::RecordOpts> {
+    use crate::capture::{AudioSource, Rect, RecordOpts};
+    Ok(RecordOpts {
+        out: p.positional.first().map(std::path::PathBuf::from),
+        area: match p.str("area") {
+            Some(a) => Some(Rect::parse(a)?),
+            None => None,
+        },
+        fps: p.num::<u32>("fps")?.unwrap_or(30),
+        audio: match p.str("audio") {
+            Some(a) => AudioSource::parse(a)?,
+            None => AudioSource::System,
+        },
+        display: p.str("display").map(String::from),
+        duration: p.num::<f64>("duration")?,
+        cursor: !p.on("no-cursor"),
+        webcam: None,
+    })
+}
+
+/// Describe a finished recording, appending it to a project when asked.
+fn finished_recording(path: &std::path::Path, p: &Parsed, what: &str) -> Result<Output> {
+    let file = path.to_string_lossy().into_owned();
+    let info = crate::video::decoder::probe(&file).ok();
+    let secs = info.as_ref().map(|i| i.duration).unwrap_or(0.0);
+    let mut data = serde_json::json!({
+        "file": file,
+        "duration": secs,
+        "width": info.as_ref().map(|i| i.width).unwrap_or(0),
+        "height": info.as_ref().map(|i| i.height).unwrap_or(0),
+    });
+    let mut text = format!("{what}: {file} ({secs:.1}s)");
+    if let Some(proj_path) = p.str("project") {
+        let mut proj = load(proj_path)?;
+        let at = proj
+            .tracks
+            .iter()
+            .filter(|t| t.kind == TrackKind::Video)
+            .flat_map(|t| t.clips.iter())
+            .map(|c| c.end())
+            .fold(0.0, f64::max);
+        let abs = std::fs::canonicalize(path)
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|_| file.clone());
+        let id = proj.add_clip(&abs, TrackKind::Video, at, 0.0, secs.max(0.1));
+        save(&proj, proj_path)?;
+        text.push_str(&format!(" — added to {proj_path} as clip {id} at {at:.2}s"));
+        data["project"] = serde_json::json!(proj_path);
+        data["clip"] = serde_json::json!(id);
+    }
+    Ok(Output::new(text, data))
+}
+
+fn cmd_record(p: &Parsed) -> Result<Output> {
+    use crate::capture::{self, AudioSource};
+
+    // The child half of a portal-backed recording (see capture.rs): it holds
+    // the recorder open until `reel record --stop` removes the session file.
+    // Entered by environment, not by flag, so the public table stays a
+    // description of the interface people and agents actually use.
+    #[cfg(target_os = "linux")]
+    if std::env::var("REEL_PORTAL_SESSION").is_ok() {
+        let out = p
+            .positional
+            .first()
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| anyhow!("a portal session needs an output path"))?;
+        let path = capture::run_portal_session(out)?;
+        return Ok(Output::new(
+            format!("Recording: {}", path.display()),
+            serde_json::json!({ "file": path.to_string_lossy() }),
+        ));
+    }
+
+    if p.on("status") {
+        return Ok(match capture::active_session() {
+            Some(s) => {
+                let secs = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(s.started)
+                    .saturating_sub(s.started);
+                Output::new(
+                    format!("Recording {} into {} for {secs}s (pid {}, {})", s.kind, s.path, s.pid, s.tool),
+                    serde_json::json!({ "recording": true, "session": s, "elapsed": secs }),
+                )
+            }
+            None => Output::new(
+                "No recording is running.".to_string(),
+                serde_json::json!({ "recording": false }),
+            ),
+        });
+    }
+
+    if p.on("stop") {
+        let (session, path) = capture::stop_detached()?;
+        let mut out = finished_recording(&path, p, "Recording")?;
+        out.data["tool"] = serde_json::json!(session.tool);
+        return Ok(out);
+    }
+
+    let mut opts = record_opts(p)?;
+
+    // Screen AND camera in one go — the streamer layout, headless.
+    if p.on("streamer") {
+        let seconds = opts
+            .duration
+            .ok_or_else(|| anyhow!("`--streamer` records two sources at once, so it needs `--duration SECONDS`"))?;
+        let cam_device = match p.str("device") {
+            Some(d) if !d.is_empty() => d.to_string(),
+            _ => capture::cameras()
+                .first()
+                .map(|c| c.path.clone())
+                .ok_or_else(|| anyhow!("no camera answered — see `reel devices`"))?,
+        };
+        let cam_opts = capture::RecordOpts {
+            out: None,
+            webcam: Some(cam_device),
+            duration: Some(seconds),
+            audio: if opts.audio.wants_mic() { AudioSource::Mic } else { AudioSource::None },
+            ..opts.clone()
+        };
+        // The camera starts first: it opens instantly, while a screen
+        // backend may still be negotiating.
+        let cam = capture::start_tool_recording(&cam_opts)?;
+        let screen = capture::start_tool_recording(&opts)?;
+        let screen_file = screen.stop_after(seconds + 0.4)?;
+        let cam_file = cam.stop()?;
+        let project = capture::assemble_streamer_project(
+            &screen_file.to_string_lossy(),
+            &cam_file.to_string_lossy(),
+        )?;
+        return Ok(Output::new(
+            format!(
+                "Streamer layout: {} + {} → {project}",
+                screen_file.display(),
+                cam_file.display()
+            ),
+            serde_json::json!({
+                "project": project,
+                "screen": screen_file.to_string_lossy(),
+                "webcam": cam_file.to_string_lossy(),
+                "duration": seconds,
+            }),
+        ));
+    }
+
+    if p.on("webcam") || p.str("device").is_some() {
+        let device = match p.str("device") {
+            Some(d) if !d.is_empty() => d.to_string(),
+            _ => capture::cameras()
+                .first()
+                .map(|c| c.path.clone())
+                .ok_or_else(|| anyhow!("no camera answered — see `reel devices`"))?,
+        };
+        opts.webcam = Some(device);
+        if p.str("audio").is_none() {
+            // A camera's natural partner is the microphone, not the desktop.
+            opts.audio = if capture::microphone_answers() { AudioSource::Mic } else { AudioSource::None };
+        }
+    }
+
+    // A fixed length runs here and hands back the finished file — the shape
+    // an agent wants, because there is nothing to remember afterwards.
+    if let Some(seconds) = opts.duration {
+        if seconds <= 0.0 {
+            bail!("--duration wants a positive number of seconds");
+        }
+        let (rec, _file, tool) = capture::start_headless(&opts)?;
+        // A tool given `-t` stops itself; the extra moment covers the
+        // trailer. A portal recording is stopped by us, exactly on time.
+        let path = rec.stop_after(seconds + 0.4)?;
+        let mut out = finished_recording(&path, p, "Recorded")?;
+        out.data["audio"] = serde_json::json!(opts.audio.name());
+        out.data["tool"] = serde_json::json!(tool);
+        return Ok(out);
+    }
+
+    let s = capture::start_detached(&opts)?;
+    Ok(Output::new(
+        format!(
+            "Recording {} via {} → {}\nFinish it with `reel record --stop`.",
+            s.kind, s.tool, s.path
+        ),
+        serde_json::json!({ "started": true, "session": s }),
+    ))
+}
+
+fn cmd_devices(_p: &Parsed) -> Result<Output> {
+    let report = crate::capture::devices_report();
+    let list = |key: &str, f: &dyn Fn(&serde_json::Value) -> String| -> String {
+        report[key]
+            .as_array()
+            .map(|a| a.iter().map(|v| format!("    {}", f(v))).collect::<Vec<_>>().join("\n"))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "    (none)".into())
+    };
+    let text = format!(
+        "Session: {} ({})\nScreenshots via {} · recording via {}\n\n  Monitors:\n{}\n\n  Cameras:\n{}\n\n  Audio sources:\n{}",
+        report["session"].as_str().unwrap_or("?"),
+        report["display"].as_str().unwrap_or("?"),
+        report["screenshot_backends"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" → "))
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "the desktop portal".into()),
+        report["recording_backend"].as_str().unwrap_or("?"),
+        list("displays", &|v| format!("{} {}", v["name"].as_str().unwrap_or(""), v["geometry"].as_str().unwrap_or(""))),
+        list("cameras", &|v| format!("{} — {}", v["path"].as_str().unwrap_or(""), v["name"].as_str().unwrap_or(""))),
+        list("audio_sources", &|v| {
+            let n = v["name"].as_str().unwrap_or("");
+            if v["monitor"].as_bool().unwrap_or(false) { format!("{n} (what's playing)") } else { n.to_string() }
+        }),
+    );
+    Ok(Output::new(text, report))
 }
 
 fn cmd_presets() -> Result<Output> {

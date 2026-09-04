@@ -64,6 +64,19 @@ impl ksni::Tray for ReelTray {
                         ..Default::default()
                     }
                     .into(),
+                    MenuItem::Separator,
+                    StandardItem {
+                        label: "Full screen after 3s".into(),
+                        activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ShotAfter(ShotMode::Full, 3.0))),
+                        ..Default::default()
+                    }
+                    .into(),
+                    StandardItem {
+                        label: "Full screen after 10s".into(),
+                        activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ShotAfter(ShotMode::Full, 10.0))),
+                        ..Default::default()
+                    }
+                    .into(),
                 ],
                 ..Default::default()
             }

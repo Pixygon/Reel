@@ -788,15 +788,27 @@ impl ReelApp {
     /// Take a screenshot (full/region/window) on a worker thread; when it
     /// lands, open it.
     pub fn take_screenshot(&mut self, mode: capture::ShotMode) {
+        self.take_screenshot_after(mode, 0.0);
+    }
+
+    /// The same, after a countdown — which is the only way to photograph a
+    /// menu, a hover state or a tooltip, since holding one open means you
+    /// cannot also be clicking "capture".
+    pub fn take_screenshot_after(&mut self, mode: capture::ShotMode, delay: f32) {
         if self.shot_rx.is_some() {
             return;
         }
         let (tx, rx) = crossbeam_channel::bounded(1);
+        let opts = capture::ShotOpts { mode, delay, ..Default::default() };
         std::thread::spawn(move || {
-            let _ = tx.send(capture::screenshot(mode).map_err(|e| e.to_string()));
+            let _ = tx.send(capture::screenshot_with(&opts).map_err(|e| e.to_string()));
         });
         self.shot_rx = Some(rx);
-        self.status = "Taking screenshot…".into();
+        self.status = if delay > 0.0 {
+            format!("Screenshot in {delay:.0}s…")
+        } else {
+            "Taking screenshot…".into()
+        };
     }
 
     /// Is a recording being started (system picker open) right now?

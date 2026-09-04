@@ -555,6 +555,68 @@ Transcode one file, no project needed
 | `--overwrite` | — | Replace the output file if it exists |
 | `--quiet` | — | Don't print progress |
 
+## Capture
+
+Reel is also the screen recorder, and every choice the app offers through a
+picker is a flag here — which is what makes capture reachable from a script
+or an agent. Files land in `~/Pictures/Reel` and `~/Videos/Reel` unless you
+name one.
+
+`reel devices` first: it reports the monitors, cameras and audio sources by
+the exact names the other two commands accept, plus which backend will
+actually run. A capability this machine lacks is reported as a missing tool,
+never silently substituted.
+
+```bash
+reel devices --json                                  # what can I capture?
+reel screenshot shot.png --area 0,0,1280x720         # exact pixels, no picker
+reel screenshot --delay 3                            # time to open a menu
+reel record clip.mp4 --duration 10 --audio both      # blocks, returns the file
+reel record --area 100,80,1920x1080 --fps 60         # starts, returns at once
+reel record --stop                                   # …and finishes it
+reel record --duration 20 --streamer                 # screen + camera → .reel
+```
+
+Recording without `--duration` returns immediately and keeps running in the
+background, so a later `reel record --stop` — from a different process, a
+different session, a different agent — finishes it and hands back the file.
+`reel record --status` says whether one is running and for how long.
+
+### `reel screenshot OUT`
+
+Take a screenshot. Default is the whole desktop, saved under ~/Pictures/Reel
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--area` | `X,Y,WxH` | Grab exactly this rectangle — no picker, no user |
+| `--region` | — | Drag-select a rectangle (waits for a person) |
+| `--window` | — | The active window |
+| `--display` | `NAME` | A monitor by name — see `reel devices` |
+| `--delay` | `SECONDS` | Wait before grabbing (menus, hover states) |
+
+### `reel record OUT`
+
+Record the screen or a camera. Starts in the background; `--stop` finishes it
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--duration` | `SECONDS` | Record exactly this long, then return the file |
+| `--stop` | — | Finish the recording already running and return its file |
+| `--status` | — | Is a recording running? For how long, into what? |
+| `--area` | `X,Y,WxH` | Record exactly this rectangle of the screen |
+| `--display` | `NAME` | A monitor by name — see `reel devices` |
+| `--fps` | `N` | Frame rate (default 30) |
+| `--audio` | `MODE` | none, system, mic or both (default system) |
+| `--no-cursor` | — | Leave the mouse pointer out |
+| `--webcam` | — | Record a camera instead of the screen |
+| `--device` | `PATH` | Which camera (default: the first one that answers) |
+| `--streamer` | — | Record screen AND camera, then build the PiP project — needs --duration |
+| `--project` | `FILE.reel` | Append the finished recording to this project as a clip |
+
+### `reel devices`
+
+What this machine can capture: monitors, cameras, audio sources, and the backends behind them
+
 ### `reel presets`
 
 The one-click destinations (YouTube, TikTok, Reels…)

@@ -12,7 +12,12 @@
         "ffmpeg"
       ],
       "desktop": "assets/reel.desktop",
-      "icon": "assets/reel-icon.svg"
+      "icon": "assets/reel-icon.svg",
+      "pkgname": "reel-bin",
+      "description": "Reel — play anything, edit everything: a native media player, editor and screen recorder",
+      "url": "https://reel.pixygon.io",
+      "categories": "AudioVideo;Player;Video;AudioVideoEditing;",
+      "license": "MIT"
     }
   }
 }

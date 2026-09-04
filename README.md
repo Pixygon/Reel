@@ -124,6 +124,13 @@ not the finished tool, but real, honest software you can build and run today.
 - **The streamer layout.** One click records your screen and webcam
   together; stopping hands you a ready-to-edit project with the camera
   already picture-in-picture in the corner.
+- **Capture that a script can drive.** `reel screenshot --area 0,0,1280x720`
+  grabs exactly those pixels with no picker and no person; `reel record
+  --duration 30` hands back a finished file; a recording started without a
+  length keeps running in the background until `reel record --stop` — from
+  any later process. `reel devices` reports the monitors, cameras and audio
+  sources by name. All of it is in `reel serve` and `reel mcp` too, so an
+  agent records your screen the same way you do.
 - **You hear the whole edit.** Editor playback mixes the timeline live —
   every clip's audio with its gain and fades, and the music bed ducking
   under speech in real time — through a native PipeWire stream on Linux.

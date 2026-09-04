@@ -322,8 +322,39 @@ via CLI, RAW ingest.
       as a corner PiP overlay (`assemble_streamer_project`, unit-tested
       from two real files), opened in the editor automatically.
 
-Still open: live capture preview, replay buffer, Windows capture
-backend, virtual camera.
+- [x] **Capture from the command line — and from agents** (v1.15.0): the
+      whole capture engine is now driven by flags rather than pickers, so
+      `reel screenshot`, `reel record` and `reel devices` exist — and,
+      because they are rows in the same COMMANDS table, they are `reel
+      serve` methods and MCP tools for free. What that took:
+      - `--area X,Y,WxH` grabs an exact rectangle with no picker and no
+        person, honoured natively by grim/maim/ffmpeg/screencapture/gdigrab
+        and cropped out of a full grab where the desktop's own tool has no
+        geometry flag (KDE) — so it means the same thing everywhere.
+      - Recording grew region, fps, cursor, monitor and audio-source
+        (none/system/mic/both, mixed with `normalize=0`) options, plus
+        `--duration` for the one-call-one-file shape agents want.
+      - A recording started without a length **outlives the process**:
+        the child is detached and described in
+        `~/.cache/reel/recording.json`, so a later `reel record --stop`
+        finishes it. Portal-backed recordings stop by watching that file
+        disappear (they must finalize inside their own process).
+      - ffmpeg is now the universal floor for screenshots, and Reel's own
+        portal capture is the last-resort recorder — a Wayland desktop
+        with no capture tools installed went from "recording via none" to
+        working.
+      - `reel devices` reports monitors, cameras and audio sources by the
+        names the flags accept, plus the backend chain behind them.
+      - Both planners (`plan_shot`, `plan_recording`) are PURE functions
+        of a probed `Env`, so every backend's arguments are unit-tested on
+        one machine, and an option no backend can honour is an error
+        naming the tool that would. Proven end to end against a real X
+        server: an area shot comes back at that exact size, a timed
+        recording is playable and the right length, and a detached session
+        really survives the call that started it (CI grew xvfb so these
+        run there too, rather than skipping).
+
+Still open: live capture preview, replay buffer, virtual camera.
 
 ## S2.E — The rest of the DAW
 

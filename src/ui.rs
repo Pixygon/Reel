@@ -551,13 +551,15 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
         if !app.tray_available {
             ui.separator();
             ui.menu_button("📷 Screenshot", |ui| {
-                for (label, mode) in [
-                    ("Full screen", crate::capture::ShotMode::Full),
-                    ("Region…", crate::capture::ShotMode::Region),
-                    ("Window…", crate::capture::ShotMode::Window),
+                for (label, mode, delay) in [
+                    ("Full screen", crate::capture::ShotMode::Full, 0.0),
+                    ("Region…", crate::capture::ShotMode::Region, 0.0),
+                    ("Window…", crate::capture::ShotMode::Window, 0.0),
+                    ("Full screen after 3s", crate::capture::ShotMode::Full, 3.0),
+                    ("Full screen after 10s", crate::capture::ShotMode::Full, 10.0),
                 ] {
                     if ui.button(label).clicked() {
-                        app.take_screenshot(mode);
+                        app.take_screenshot_after(mode, delay);
                         ui.close_menu();
                     }
                 }

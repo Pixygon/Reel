@@ -41,6 +41,8 @@ mod tray;
 pub enum UserEvent {
     Show,
     Shot(capture::ShotMode),
+    /// A screenshot after a countdown — the tray's way to catch a menu.
+    ShotAfter(capture::ShotMode, f32),
     ToggleRecord,
     ToggleWebcam,
     Quit,
@@ -221,6 +223,7 @@ impl ApplicationHandler<UserEvent> for Reel {
                 }
             }
             UserEvent::Shot(mode) => self.app.take_screenshot(mode),
+            UserEvent::ShotAfter(mode, delay) => self.app.take_screenshot_after(mode, delay),
             UserEvent::ToggleRecord => {
                 self.app.toggle_record();
                 self.sync_tray();

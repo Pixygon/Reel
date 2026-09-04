@@ -86,6 +86,49 @@ reel render ep.reel preview.mp4 --watch --quality small &
 Autosave writes the project ~0.7 s after every change; the watch re-renders
 on each save.
 
+## Capture the screen and cut it, without touching a mouse
+
+```bash
+reel devices --json                                    # names to point at
+reel record demo.mp4 --duration 30 --audio both        # blocks; returns the file
+reel new demo.reel
+reel add demo.reel demo.mp4
+reel tighten demo.reel                                 # drop the dead air
+reel captions demo.reel
+reel render demo.reel demo-final.mp4 --preset youtube
+```
+
+`--duration` is the shape to reach for from an agent: one call, one finished
+file, nothing to remember. Without it the recording runs in the background
+and a later `reel record --stop` finishes it — useful when the length isn't
+known up front:
+
+```bash
+reel record --area 0,0,1920x1080 --fps 60 --json      # returns immediately
+reel record --status --json                           # running? how long?
+reel record --stop --project demo.reel                # finish, append as a clip
+```
+
+## A screenshot of exactly the pixels you mean
+
+```bash
+reel screenshot bug.png --area 240,120,1280x720       # no picker, no person
+reel screenshot menu.png --delay 3                    # time to open the menu
+```
+
+Exact rectangles are honoured natively by grim, maim and ffmpeg, and cropped
+out of a full-screen grab where the desktop's own tool has no geometry flag —
+so `--area` means the same thing on every machine.
+
+## Streamer layout in one call
+
+```bash
+reel record --duration 60 --streamer
+```
+
+Records the screen and the camera together and hands back a `.reel` with the
+screen on V1 and the camera as a corner PiP, ready to open or render.
+
 ## Long-lived session (no process-per-command)
 
 ```bash
