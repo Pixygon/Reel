@@ -104,8 +104,15 @@ mpv_fns! {
 const LIB_NAMES: &[&str] = &["libmpv.so.2", "libmpv.so", "libmpv.so.1"];
 #[cfg(target_os = "windows")]
 const LIB_NAMES: &[&str] = &["libmpv-2.dll", "mpv-2.dll", "mpv-1.dll"];
+// Homebrew on Apple Silicon installs to /opt/homebrew/lib, which is not on
+// dlopen's default search path (Intel Homebrew's /usr/local/lib is).
 #[cfg(target_os = "macos")]
-const LIB_NAMES: &[&str] = &["libmpv.2.dylib", "libmpv.dylib"];
+const LIB_NAMES: &[&str] = &[
+    "libmpv.2.dylib",
+    "libmpv.dylib",
+    "/opt/homebrew/lib/libmpv.2.dylib",
+    "/opt/homebrew/lib/libmpv.dylib",
+];
 
 /// The process-wide libmpv, loaded on first use. `None` means it isn't on this
 /// machine (or REEL_BACKEND=ffmpeg forced it off) — callers fall back.

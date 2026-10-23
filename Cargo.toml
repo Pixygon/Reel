@@ -49,8 +49,8 @@ ureq = { version = "3", default-features = false, features = ["rustls"] }
 opt-level = 3
 lto = "thin"
 
-[target.'cfg(target_os = "windows")'.dependencies]
-# The Windows mixer speaks WASAPI through cpal. Linux deliberately does NOT
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+# The Windows and macOS mixers speak WASAPI / CoreAudio through cpal. Linux deliberately does NOT
 # use cpal (its ALSA backend is dead on PipeWire-only desktops) — see
 # audio.rs for the native PipeWire stream.
 cpal = "0.16"

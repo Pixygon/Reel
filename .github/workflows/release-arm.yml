@@ -1,0 +1,64 @@
+name: Release ARM
+
+# Apple Silicon (aarch64-apple-darwin) and Linux ARM (aarch64-unknown-linux-gnu)
+# release builds, on native GitHub runners. `pearl build` (build.targets
+# mac-arm64 / linux-arm64 in .pixygon.json) dispatches this for the commit it
+# just released, waits, downloads the tarballs and publishes them to the CDN
+# itself with checksums — no release credentials live in GitHub.
+#
+# Unsigned on purpose: signing + notarization need an Apple Developer account
+# (a founder decision). A curl-installed binary carries no quarantine flag;
+# the ld64 linker on the macOS runner ad-hoc signs it, which arm64 requires.
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to build
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+  BIN: reel
+  MACOSX_DEPLOYMENT_TARGET: "11.0"
+
+jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: mac-arm64
+            triple: aarch64-apple-darwin
+            os: macos-14
+          - target: linux-arm64
+            triple: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04-arm
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+      - name: System deps (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends pkg-config libclang-dev libpipewire-0.3-dev libspa-0.2-dev
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.triple }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.triple }}
+      - name: Build
+        run: cargo build --release --target ${{ matrix.triple }} --bin "$BIN"
+      - name: Package
+        run: tar czf "$BIN-${{ matrix.target }}.tar.gz" -C "target/${{ matrix.triple }}/release" "$BIN"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.BIN }}-${{ matrix.target }}
+          path: ${{ env.BIN }}-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+          retention-days: 7

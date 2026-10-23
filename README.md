@@ -199,6 +199,18 @@ generated from the same table that parses the arguments, so it can't go stale.
 See [AGENTS.md](AGENTS.md) to get going in a minute, or
 [docs/CLI.md](docs/CLI.md) for the full reference.
 
+## Install
+
+```bash
+curl -fsSL https://reel.pixygon.io/install.sh | bash   # Linux x86_64 / ARM64, macOS on Apple Silicon
+```
+
+On a Mac, playback and conversion want `brew install mpv ffmpeg` (Reel finds
+Homebrew's libmpv in /opt/homebrew/lib), and the editor's mixer plays through
+CoreAudio. The Mac build is unsigned: installed with the line above it just
+runs; a browser-downloaded tarball needs `xattr -d com.apple.quarantine reel`
+(or right-click → Open once).
+
 ## Build & run
 
 ```bash
