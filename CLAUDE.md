@@ -406,3 +406,22 @@ guessing: `Xvfb :97 -screen 0 1600x1000x24 &` then
 `env -u WAYLAND_DISPLAY DISPLAY=:97 LIBGL_ALWAYS_SOFTWARE=1 ./target/release/reel <file>`
 and `DISPLAY=:97 import -window root shot.png`. Kill test instances by PID —
 never `pkill reel`, which also kills the copy the user is watching.
+
+<!-- pixygon:workflow-start v3 -->
+## Working in this repo
+
+1. **Start:** if your opening prompt has no `✦ Preflight <token>` line, run `pearl preflight` and begin your first reply with the line it prints.
+2. **Memory:** the estate's memory is `/home/pixygon/.claude/projects/-home-pixygon-repos/memory/` (index `MEMORY.md`, older facts in `MEMORY-ARCHIVE.md`). Read the index and the files matching your task before any claim about the estate or a re-audit; record a durable finding as one file per fact plus one index line (the `writing-for-agents` skill).
+3. **UI work:** read the design canon `/home/pixygon/repos/pixygon-packages/@pixygon/design/tokens.mjs` first and keep THIS site's brand voice. Mock → founder's yes → implement → screenshot against the real build.
+4. **Web/SPA:** crawlers must get real HTML: `@pixygon/seo` (prerender + `<PixygonSEO>`), never a hand-rolled prerender. Check it live with `pearl verify --only=crawler`.
+5. **Finish:** `pearl ship > <scratchpad>/ship.log 2>&1` from the repo root is the last step: tests, changelog, release, commit, push, live QA. Never commit by hand or call the release endpoints. Flags: `--review`, `--no-test`, `--dry`. Without `pearl` on PATH: `node /home/pixygon/repos/Dyson/scripts/pearl.mjs ship`.
+6. **Names or fiction:** the Universe Codex is canon; `pearl codex search "<name>"` before inventing one ([`Dyson/docs/CODEX.md`](../Dyson/docs/CODEX.md)).
+7. **Team rules:** [`Dyson/docs/TEAM-RULES.md`](../Dyson/docs/TEAM-RULES.md): improve the pot, front of house; rules come only from Anders.
+
+Workflow in full: [`Dyson/docs/WORKFLOW.md`](../Dyson/docs/WORKFLOW.md).
+
+**Project ID**: `6a8ff6bdddf9c5f6e9899f1c`
+
+_Managed by `Dyson/scripts/standardize-repos.mjs`; edit it there._
+<!-- pixygon:workflow-end -->
+
