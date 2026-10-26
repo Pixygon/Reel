@@ -22,7 +22,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - The releases link in the site footer now points to the GitHub Releases page instead of the raw manifest file, making it easier to browse release history.
 
 
-## [0.39.0] — 2026-08-29
+## [0.40.0] — 2026-08-29
 
 ### Added
 - Tone curves: adjust master and per-channel (R/G/B) five-point curves by dragging directly on a new curve widget. Curves are baked together with any LUT into a single lattice, so a full grade still costs just one GPU texture sample and previews exactly as it renders. _(b435f5f)_
@@ -34,14 +34,14 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - The caption panel's 'Remove' button is now 'Remove all', clarifying that it clears every caption rather than a single one. _(b435f5f)_
 
 
-## [0.38.0] — 2026-08-29
+## [0.39.0] — 2026-08-29
 
 ### Added
 - Added a mixer to the editor: each track now has its own gain fader, mute and solo button, right in the media panel. _(a667692)_
 - Soloing a track now works the way you'd expect — it silences every other track, including the base video's own audio — and mute/solo/gain routing is identical between live preview and the exported file, so what you hear while editing is what you get in the render. _(a667692)_
 
 
-## [0.37.0] — 2026-08-29
+## [0.38.0] — 2026-08-29
 
 ### Added
 - New power windows let you limit any colour grade (LUT and trims) to an ellipse or rectangle region — feathered at the edge, invertible, and keyframable so the window can follow a subject across the shot. Available both in the editor and via new --mask/--mask-x/--mask-y/--mask-w/--mask-h/--mask-feather/--mask-invert CLI flags. _(bb4d38d)_
@@ -50,7 +50,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Audio-track clips (voice-overs and sound effects) and overlay audio now render correctly on export. Previously these were audible in the live preview but silently dropped from the final exported file. _(bb4d38d)_
 
 
-## [0.36.0] — 2026-08-29
+## [0.37.0] — 2026-08-29
 
 ### Added
 - Grade clips through 3D LUTs — load any .cube file per clip and see it applied live in the preview, sampled on the GPU exactly as it will render on export. LUTs apply before your exposure/contrast/trim adjustments, so you conform the look first and fine-tune after. _(06b5092)_
@@ -61,7 +61,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Letterbox bars are now transparent under the hood so grades and chroma-key effects on your footage no longer bleed color into the black bars. _(06b5092)_
 
 
-## [0.35.0] — 2026-08-29
+## [0.36.0] — 2026-08-29
 
 ### Added
 - A real transition library: crossfade, dip-to-black, four wipes (left/right/up/down) and two slides. Pick one per cut with the `--kind` flag or the transition dropdown in the editor, and the live preview now shows the exact same geometry the final render produces. _(4318a20)_
@@ -72,14 +72,14 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - The `reel transition` command's `--seconds` flag is now described as controlling transition length generally (not just crossfade), reflecting the new range of transition types available via `--kind`. _(4318a20)_
 
 
-## [0.34.0] — 2026-08-28
+## [0.35.0] — 2026-08-28
 
 ### Added
 - New Tighten feature (the ✂ Tighten silence button, or `reel tighten` on the CLI) cuts the dead air out of your edit in one click — the classic podcast jump-cut pass. It scans each clip's own audio to find quiet spans, trims them out while keeping a little breathing room around your words so nothing clips, and closes the timeline up behind every cut. Fully undoable, with `--threshold`, `--min-gap`, and `--pad` flags on the CLI for fine control. _(2469c91)_
 - Multi-select on the timeline: shift-click to build a selection of clips. Dragging or deleting the selection now acts on the whole group at once — a group move keeps every clip's relative position, and delete removes them all together. _(2469c91)_
 
 
-## [0.33.0] — 2026-08-28
+## [0.34.0] — 2026-08-28
 
 ### Added
 - Roll, slip and slide edits have landed — the professional trims for adjusting a cut without moving the timeline (roll), changing what plays without moving when (slip), or sliding a clip between its neighbours. Use Ctrl+drag on an edge, Alt+drag on a clip body, or Ctrl+Alt+drag, or drive them from the CLI with `reel roll`, `reel slip` and `reel slide`. _(e9be24c)_
@@ -89,7 +89,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - You can now export the exact composed frame under the playhead — effects, overlays and animation included — as a PNG, either from a new editor button or via the `reel frame` CLI command, which also grabs frames from plain media files. _(e9be24c)_
 
 
-## [0.32.0] — 2026-08-28
+## [0.33.0] — 2026-08-28
 
 ### Added
 - Editing proxies for 4K and up: heavy sources now get an automatic background 720p editing copy that the preview scrubs through, so timelines with UHD footage feel as smooth as 1080p on a laptop. Exports, waveforms, thumbnails and captions always use the original file, so final quality is unaffected. Nothing to configure — proxies build automatically and are cached so they're instant to find again next session. _(3f12953)_
@@ -98,7 +98,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - HDR footage (HLG and HDR10/PQ, common from phones) no longer looks washed-out or murky. Reel now detects the source's colour transfer curve and properly tone-maps HDR to standard SDR before scaling, so clips look right straight after import. _(3f12953)_
 
 
-## [0.31.0] — 2026-08-28
+## [0.32.0] — 2026-08-28
 
 ### Added
 - Editor playback now mixes the entire timeline live, not just the main clip's own audio: every sounding clip's gain and fades, A1 clips, and the full music bed — including automatic ducking under speech — now play while you cut, the same way they'll sound in the exported video. _(e647513)_
@@ -110,14 +110,14 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Muting now consistently reflects your intent across the player and the editor's live mix, instead of being tied only to the player's own mute state. _(e647513)_
 
 
-## [0.30.0] — 2026-08-28
+## [0.31.0] — 2026-08-28
 
 ### Added
 - Speed ramps: add a `speed` keyframe track to a clip to accelerate or slow down playback over time while the clip's position on the timeline stays put. Video is decoded at its native rate to follow the ramp exactly, and audio tempo is adjusted piecewise to keep sound in sync with the changing pace. _(289643f)_
 - New curve editor for keyframes: see the animated curve for the selected parameter drawn live inside the clip panel. Drag keyframes to change their time and value, double-click to add a new key, and right-click a key to remove it — all synced to the preview's playhead. _(289643f)_
 
 
-## [0.29.0] — 2026-08-28
+## [0.30.0] — 2026-08-28
 
 ### Added
 - Crossfade transitions now preview as an actual fade in the editor, instead of showing a hard cut. The incoming clip plays live and blends over the outgoing picture at the transition's ramp, with colour effects applied, so what you see while editing matches the final render. _(0d3d9f4)_
@@ -126,7 +126,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Fixed an issue where playback could intermittently fail to switch to the next clip when a clip ended exactly at a cut point. _(0d3d9f4)_
 
 
-## [0.28.0] — 2026-08-28
+## [0.29.0] — 2026-08-28
 
 ### Added
 - Timeline exports now render through Reel's own GPU compositor, frame by frame, with ffmpeg only encoding the result — so what you see in the preview is exactly what you get in the exported file. The old filter-graph renderer is kept as an automatic fallback on machines without a usable GPU. _(808188d)_
@@ -139,7 +139,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Media and music files added via the CLI are now stored with their absolute path, so a project opened from a different working directory still finds its media instead of failing to locate it. _(808188d)_
 
 
-## [0.27.0] — 2026-08-28
+## [0.28.0] — 2026-08-28
 
 ### Added
 - You can now add a second video track for picture-in-picture: drop a clip on the overlay track and drag it into place on the preview (a reaction cam, a logo, a screen inset). Position and size are stored as fractions of the frame, so what you place is exactly what renders, at any resolution.
@@ -153,7 +153,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Timeline clips now show thumbnail previews of the footage along with the waveform, making it much easier to spot the shot you're looking for without scrubbing. Timeline lanes are also taller to fit both.
 
 
-## [0.26.1] — 2026-08-28
+## [0.27.0] — 2026-08-28
 
 ### Added
 - Reel can now be driven entirely from the command line, with no window required. New commands let you create projects, add and trim clips, apply effects, transitions, titles, captions and a music bed, and render — each with a matching --json output for scripts, CI or automation agents.
@@ -166,7 +166,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Fixed a bug where locally-generated captions could collapse into a single 30-second cue instead of following the speech — captions now track the spoken audio accurately throughout the video.
 
 
-## [0.26.0] — 2026-08-28
+## [0.26.1] — 2026-08-28
 
 ### Fixed
 - Pasting a clip into the middle of another clip now correctly splits it and opens a gap across every track, instead of shoving the clip aside and leaving a hole in the timeline that could throw audio out of sync with picture. _(9b44ef3)_
@@ -175,7 +175,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Replaced a few icons that rendered as empty boxes (missing glyphs in the app font) with characters that actually display, and updated on-screen shortcut hints to show "Left/Right" instead of arrow symbols. _(9b44ef3)_
 
 
-## [0.25.0] — 2026-08-28
+## [0.26.0] — 2026-08-28
 
 ### Added
 - Waveforms now appear on every clip in the timeline, decoded in the background and cached per source, so you can cut on a word instead of hunting for it. Splitting, trimming, moving or duplicating a clip never re-decodes the audio. _(7b57238)_
@@ -186,7 +186,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Arrow-key seeking and the M mute shortcut now ignore the Ctrl modifier so they don't collide with the new marker-jump and marker shortcuts. _(7b57238)_
 
 
-## [0.24.0] — 2026-08-28
+## [0.25.0] — 2026-08-28
 
 ### Added
 - Add titles: type text and drag it into place directly on the preview to set its position, then adjust size, colour, boldness and outline. Position is stored as a fraction of the frame, so a title placed on the preview lands in exactly the same spot in an export at any resolution, including 4K. _(acb6173)_
@@ -197,7 +197,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Corrected an issue where, under certain conditions, the exported video and audio streams could be swapped in the output file, which could cause some players or downstream tools to reject or misread the file. _(acb6173)_
 
 
-## [0.23.0] — 2026-08-28
+## [0.24.0] — 2026-08-28
 
 ### Added
 - Added one-button local auto-captions. Click ✦ Generate captions and Reel transcribes your speech entirely on your machine — no upload, no account, no per-minute billing. The speech engine and model are fetched automatically the first time (about 85MB, once), then captioning works fully offline. _(fe249ea)_
@@ -212,7 +212,7 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Fixed a bug where captions rendered far too large on high-resolution exports (e.g. ~3.7× too big on 4K), causing the exported captions to not match the preview. _(fe249ea)_
 
 
-## [0.22.0] — 2026-08-28
+## [0.23.0] — 2026-08-28
 
 ### Added
 - Added J-K-L shuttle controls: L steps up forward playback speed, J shuttles backwards (including true reverse playback), and K stops — the classic editor's shortcut for scrubbing through footage. _(39fdbb0)_
