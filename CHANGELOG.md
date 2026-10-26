@@ -4,6 +4,24 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [2.0.0] — 2026-10-22
+
+### Added
+- Added a proper 404 page. Visiting an unknown URL now shows a clear "page not found" page with links back to the home page, guides, and CLI reference.
+
+### Fixed
+- Unknown URLs now correctly return a 404 status instead of silently serving the homepage, which previously could confuse search engines and browsers into treating broken links as valid pages. **(BREAKING)**
+
+
+## [1.16.0] — 2026-10-22
+
+### Added
+- Added links to our Privacy Policy and Terms of Service in the site footer.
+
+### Changed
+- The releases link in the site footer now points to the GitHub Releases page instead of the raw manifest file, making it easier to browse release history.
+
+
 ## [0.39.0] — 2026-08-29
 
 ### Added
@@ -435,5 +453,3 @@ materialized from the Pixygon Changelog API — edit there, not here.
 ### Improved
 - Playing a video to the end and pressing play again now replays it from the start, VLC-style, instead of staying stuck at the end.
 - Redraws are now paced more precisely, keeping the UI responsive during playback and briefly after opening or seeking a file, without spinning the CPU when idle.
-
-
