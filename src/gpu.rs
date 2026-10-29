@@ -76,7 +76,14 @@ impl Gpu {
         };
 
         let surface_config = wgpu::SurfaceConfiguration {
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            // REEL_DEBUG_SHOT reads the window back (main.rs debug_shot).
+            usage: if std::env::var_os("REEL_DEBUG_SHOT").is_some()
+                && caps.usages.contains(wgpu::TextureUsages::COPY_SRC)
+            {
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC
+            } else {
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+            },
             format: surface_format,
             width,
             height,

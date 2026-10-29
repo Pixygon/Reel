@@ -1117,6 +1117,19 @@ fn escape_filter_path(p: &str) -> String {
 
 /// `atempo` only accepts 0.5–100 per instance, so anything slower than half
 /// speed has to be chained. Returns "" at normal speed.
+/// Whether this ffmpeg has the rubberband filter (librubberband) — probed
+/// once. Listed is enough: unlike libplacebo it has no GPU to fail on.
+fn have_rubberband() -> bool {
+    static HAVE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HAVE.get_or_init(|| {
+        std::process::Command::new("ffmpeg")
+            .args(["-hide_banner", "-filters"])
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains(" rubberband "))
+            .unwrap_or(false)
+    })
+}
+
 fn atempo_chain(rate: f64) -> String {
     if (rate - 1.0).abs() <= 1e-6 {
         return String::new();
@@ -1167,7 +1180,15 @@ fn push_music_mix(
             .unwrap_or(0.0);
         let want = (total - m.start).max(0.5);
         if src_len > 0.5 && (src_len / want - 1.0).abs() > 0.01 {
-            format!(",rubberband=tempo={:.6}", (src_len / want).clamp(0.25, 4.0))
+            let tempo = (src_len / want).clamp(0.25, 4.0);
+            if have_rubberband() {
+                format!(",rubberband=tempo={tempo:.6}")
+            } else {
+                // No librubberband in this ffmpeg (the static build inside
+                // Reel.app has none): atempo also keeps the pitch, with a
+                // little more smear on sustained notes.
+                atempo_chain(tempo)
+            }
         } else {
             String::new()
         }
@@ -2695,7 +2716,8 @@ mod tests {
         let wav = build_timeline_audio_wav_args(
             &segs, true, Some(&music), &[], None, None, &out.to_string_lossy())
             .expect("wav args");
-        assert!(wav.iter().any(|a| a.contains("rubberband")), "fit rides rubberband: {wav:?}");
+        let stretcher = if have_rubberband() { "rubberband" } else { "atempo" };
+        assert!(wav.iter().any(|a| a.contains(stretcher)), "fit rides {stretcher}: {wav:?}");
         assert!(std::process::Command::new("ffmpeg").args(&wav)
             .status().map(|s| s.success()).unwrap_or(false), "fit render failed");
         // The bed's band at 3.2–3.8 s: silent without fit, loud with it.

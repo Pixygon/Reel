@@ -27,7 +27,7 @@ use std::io::Read;
 use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::Arc;
-#[cfg(any(target_os = "linux", target_os = "windows", test))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos", test))]
 use std::sync::Mutex;
 
 pub const RATE: u32 = 48_000;
@@ -746,18 +746,18 @@ fn pw_playback(
     Ok(())
 }
 
-// ── The Windows shell ────────────────────────────────────────────────────
+// ── The Windows + macOS shell ────────────────────────────────────────────
 //
-// WASAPI through cpal — the reason cpal was rejected on Linux (an ALSA-only
+// WASAPI (Windows) or Core Audio (macOS) through cpal — the reason cpal was rejected on Linux (an ALSA-only
 // backend on PipeWire desktops) doesn't apply here. Same architecture: the
 // stream lives on its own thread; the app talks to shared MixState.
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub struct Mixer {
     pub state: Arc<Mutex<MixState>>,
 }
 
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 impl Mixer {
     pub fn open() -> Option<Self> {
         use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
@@ -808,7 +808,7 @@ impl Mixer {
             .ok()?;
         match ready_rx.recv_timeout(std::time::Duration::from_secs(3)) {
             Ok(true) => {
-                log::info!("audio mixer: live timeline mix via WASAPI");
+                log::info!("audio mixer: live timeline mix via {}", if cfg!(target_os = "macos") { "Core Audio" } else { "WASAPI" });
                 Some(Self { state })
             }
             _ => None,
@@ -842,7 +842,7 @@ impl Mixer {
 
 // Spectrum readout — pure math over the shared MixState ring, so one
 // definition serves every platform backend.
-#[cfg(any(target_os = "linux", target_os = "windows"))]
+#[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
 impl Mixer {
     /// The master's magnitude spectrum, folded into `bins` log-spaced
     /// bands from ~43 Hz to ~16 kHz, normalised 0..1. FFT runs on the UI

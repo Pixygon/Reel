@@ -201,8 +201,14 @@ read `10.00 / 8.00` at the end of a transitioned edit.
 
 ## H. Platform
 
-- [ ] **macOS**: the build (VideoToolbox probing exists; ScreenCaptureKit;
-      notarized dmg via the self-hosted runner). Needs Mac hardware/SDK.
+- [~] **macOS** (v2.1.0): `scripts/mac.sh` → Reel.app for Apple silicon with
+      bundled libmpv (media-kit, no scripting) + static ffmpeg 9 (no
+      libplacebo, no rubberband: HDR plays untone-mapped, music fit uses
+      atempo). Finder open via `application:openURLs:` (macos.rs), Core
+      Audio mixer through cpal. Ad-hoc signed only. Left: Developer ID
+      signing + notarization, ScreenCaptureKit capture (ffmpeg avfoundation
+      fallback untested), voice-over recorder, a caption engine (upstream
+      whisper.cpp ships no macOS CLI build).
 - [ ] Windows capture backend (Windows.Graphics.Capture). Needs a Windows
       box to verify against.
 - [~] AppImage ships (v1.8.0): `scripts/appimage.sh`, built and smoke-

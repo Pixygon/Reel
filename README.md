@@ -173,8 +173,12 @@ not the finished tool, but real, honest software you can build and run today.
   double-clicking one reopens the edit with its media loaded at the playhead.
 - **Native Pixygon stack.** winit + wgpu + egui — the same stack as Infinite —
   themed in the Pixygon master-brand voice (void grounds, signal cyan, ember).
-- **One binary, three platforms.** Builds to Linux + Windows via `pearl build`
-  (macOS once the SDK is seeded), same as the rest of the estate's native apps.
+- **One binary, three platforms.** Builds to Linux + Windows via `pearl build`,
+  same as the rest of the estate's native apps. **macOS (Apple silicon)**:
+  `scripts/mac.sh` builds `Reel.app` with its own libmpv and ffmpeg inside
+  (nothing to install), installs it into `~/Applications` and, with `--zip`,
+  writes the download. Finder double-clicks and "Open With" land in the
+  player; the editor's live mix runs on Core Audio.
 
 ## Drive it from the command line
 

@@ -7,7 +7,7 @@
 //! ROADMAP.md; this is the running foundation it builds on.
 
 mod app;
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), allow(dead_code))]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows", target_os = "macos")), allow(dead_code))]
 mod audio;
 mod beats;
 mod captions;
@@ -22,6 +22,8 @@ mod export;
 mod gpu;
 #[cfg(target_os = "linux")]
 mod integration;
+#[cfg(target_os = "macos")]
+mod macos;
 mod lut;
 mod media;
 mod perf;
@@ -46,6 +48,9 @@ pub enum UserEvent {
     ToggleRecord,
     ToggleWebcam,
     Quit,
+    /// A file macOS handed over (Finder double-click, Open With, Dock drop).
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    OpenFile(String),
     /// AccessKit adapter events (screen readers) — egui consumes these.
     Access(egui_winit::accesskit_winit::Event),
 }
@@ -187,6 +192,7 @@ impl ApplicationHandler<UserEvent> for Reel {
                     egui.render(&mut rpass, &prepared);
                 }
                 gpu.queue.submit(Some(encoder.finish()));
+                debug_shot(gpu, &frame.texture);
                 frame.present();
                 egui.post_render(prepared);
 
@@ -234,6 +240,18 @@ impl ApplicationHandler<UserEvent> for Reel {
                 self.sync_tray();
             }
             UserEvent::Quit => event_loop.exit(),
+            UserEvent::OpenFile(path) => {
+                if let Some(w) = &self.window {
+                    self.app.open(&path);
+                    w.focus_window();
+                    // ControlFlow::Wait: nothing else wakes the loop to land
+                    // the worker's open, so the file would sit unplayed.
+                    w.request_redraw();
+                } else {
+                    // Launched by the file: the window isn't up yet.
+                    self.initial_open = Some(path);
+                }
+            }
             UserEvent::Access(ev) => {
                 // Route AccessKit's action requests into egui.
                 if let egui_winit::accesskit_winit::WindowEvent::ActionRequested(req) =
@@ -263,6 +281,60 @@ impl ApplicationHandler<UserEvent> for Reel {
 }
 
 /// Process start, for cold-open timing logs.
+/// `REEL_DEBUG_SHOT=<file.png>` saves the window's own pixels once, after
+/// `REEL_DEBUG_SHOT_AFTER` seconds (default 3) — a screenshot that needs no
+/// screen-recording permission (macOS) and no X server (Xvfb's `import`).
+fn debug_shot(gpu: &Gpu, tex: &wgpu::Texture) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static DONE: AtomicBool = AtomicBool::new(false);
+    let Some(path) = std::env::var_os("REEL_DEBUG_SHOT") else { return };
+    let after: f64 = std::env::var("REEL_DEBUG_SHOT_AFTER").ok().and_then(|s| s.parse().ok()).unwrap_or(3.0);
+    if DONE.load(Ordering::Relaxed)
+        || t0().elapsed().as_secs_f64() < after
+        || !tex.usage().contains(wgpu::TextureUsages::COPY_SRC)
+    {
+        return;
+    }
+    DONE.store(true, Ordering::Relaxed);
+    let (w, h) = (tex.width(), tex.height());
+    let bpr = (w * 4).div_ceil(256) * 256;
+    let buf = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("reel-debug-shot"),
+        size: (bpr * h) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut enc = gpu.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("reel-debug-shot") });
+    enc.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo { texture: tex, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(h) },
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+    gpu.queue.submit(Some(enc.finish()));
+    let slice = buf.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |_| {});
+    let _ = gpu.device.poll(wgpu::Maintain::Wait);
+    let data = slice.get_mapped_range();
+    let bgra = matches!(tex.format(), wgpu::TextureFormat::Bgra8Unorm | wgpu::TextureFormat::Bgra8UnormSrgb);
+    let mut rgba = Vec::with_capacity((w * h * 4) as usize);
+    for row in 0..h {
+        let s = (row * bpr) as usize;
+        for px in data[s..s + (w * 4) as usize].chunks_exact(4) {
+            let (r, b) = if bgra { (px[2], px[0]) } else { (px[0], px[2]) };
+            rgba.extend_from_slice(&[r, px[1], b, 255]);
+        }
+    }
+    drop(data);
+    buf.unmap();
+    match image::save_buffer(&path, &rgba, w, h, image::ColorType::Rgba8) {
+        Ok(()) => log::info!("debug shot saved: {}", std::path::Path::new(&path).display()),
+        Err(e) => log::warn!("debug shot failed: {e}"),
+    }
+}
+
 static T0: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
 pub fn t0() -> std::time::Instant {
     *T0.get_or_init(std::time::Instant::now)
@@ -274,6 +346,25 @@ macro_rules! timing {
     };
 }
 
+/// PATH for a Mac launch: Reel.app/Contents/Resources/bin (the bundled
+/// ffmpeg + ffprobe), the binary's own folder, then Homebrew's prefixes.
+#[cfg(target_os = "macos")]
+fn mac_path() {
+    let mut dirs: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+        dirs.push(exe_dir.join("../Resources/bin"));
+        dirs.push(exe_dir);
+    }
+    dirs.push("/opt/homebrew/bin".into());
+    dirs.push("/usr/local/bin".into());
+    let old = std::env::var_os("PATH").unwrap_or_default();
+    let mut all: Vec<std::path::PathBuf> = dirs.into_iter().filter(|d| d.is_dir()).collect();
+    all.extend(std::env::split_paths(&old));
+    if let Ok(path) = std::env::join_paths(all) {
+        std::env::set_var("PATH", path);
+    }
+}
+
 fn main() {
     t0();
     perf::init();
@@ -281,6 +372,12 @@ fn main() {
         env_logger::Env::default().default_filter_or("info,zbus=warn,tracing=warn"),
     )
     .init();
+
+    // A Mac app launched from Finder gets a bare PATH (/usr/bin:/bin…), so
+    // every `Command::new("ffmpeg")` would miss both the copy inside
+    // Reel.app and Homebrew's. Put them in front, once, before any thread.
+    #[cfg(target_os = "macos")]
+    mac_path();
 
     // No ffmpeg on this machine? Fetch a static build in the background so
     // export/convert and the fallback decoder Just Work (mainly Windows).
@@ -325,6 +422,8 @@ fn main() {
     }
     let initial_open = argv.into_iter().next();
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
+    #[cfg(target_os = "macos")]
+    macos::install_open_handler(event_loop.create_proxy());
     event_loop.set_control_flow(ControlFlow::Wait);
 
     #[cfg(target_os = "linux")]

@@ -391,6 +391,34 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - CLI media paths are canonicalized at `add`/`music set` — a project must
   find its media when opened from any directory.
 
+## macOS (Apple silicon)
+
+- `scripts/mac.sh [--zip] [--no-install]` builds `target/mac/Reel.app`
+  (bundle id io.pixygon.reel) and installs it to `~/Applications`. The app
+  carries its engine: `Contents/Frameworks` = media-kit's libmpv dylibs
+  (rpaths rewritten to `@loader_path`), `Contents/Resources/bin` = Martin
+  Riedl's static ffmpeg/ffprobe 9.0.2. Both pinned + sha256-checked.
+- A Finder launch has a bare PATH: `main.rs::mac_path` prepends the bundle
+  bin, then Homebrew. `mpv.rs::lib_candidates` tries the bundle's
+  Frameworks, then /opt/homebrew/lib, /usr/local/lib.
+- Finder/"Open With"/Dock files arrive as `application:openURLs:`, never
+  argv: `macos.rs` adds that method to winit's `WinitApplicationDelegate`
+  and forwards `UserEvent::OpenFile`. The mixer is the cpal shell (Core
+  Audio), shared with Windows.
+- The bundled ffmpeg has no libplacebo (HDR untone-mapped, test self-skips)
+  and no rubberband (`export::have_rubberband` → atempo). The bundled libmpv
+  has no scripting, so `load-scripts`/`ytdl` NOT_FOUND is tolerated.
+- NEVER `dyson ship`/`dyson build` Reel from a Mac: its "linux" leg is a
+  native `cargo build`, so it would upload a Mac binary as the Linux
+  tarball. Ship from a Linux node; publish the Mac zip with
+  `dyson release mac-arm64:target/mac/Reel-<v>-macos-arm64.zip --version v<v>`
+  (the manifest merges platforms per version).
+- Screenshots on a Mac without Screen Recording permission:
+  `REEL_DEBUG_SHOT=out.png [REEL_DEBUG_SHOT_AFTER=4]` saves the window's
+  own pixels (works under Xvfb too).
+- Ad-hoc signed only (no Developer ID on the M5): first launch needs
+  System Settings → Privacy & Security → Open Anyway.
+
 ## Verifying changes
 
 Unit tests cover both backends and the export engine against

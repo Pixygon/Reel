@@ -1384,7 +1384,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         .show(ui, |ui| {
                         // A live spectrum of what's playing, right where the
                         // EQ decisions get made (low | mid | high thirds).
-                        #[cfg(any(target_os = "linux", target_os = "windows"))]
+                        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
                         if let Some(mixer) = &app.mixer {
                             let bins = 42usize;
                             let spec = mixer.spectrum(bins);
@@ -1576,9 +1576,9 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new("Mixer").color(theme::CYAN));
         {
             // Live levels from the mixer, when it runs (Linux + PipeWire).
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             let levels = app.mixer.as_ref().map(|m| m.levels());
-            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
+            #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
             let levels: Option<crate::audio::Levels> = None;
             if std::env::var("REEL_DEBUG_METER").is_ok() {
                 if let Some(lv) = &levels {

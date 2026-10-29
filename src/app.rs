@@ -98,7 +98,7 @@ pub struct ReelApp {
     /// The live timeline audio mix (editor mode): every sounding clip, the
     /// music bed, gains, fades and ducking — not just the main clip's own
     /// track. The video clock stays master; this chases it.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     pub mixer: Option<crate::audio::Mixer>,
     /// The voice recorder (Linux, PipeWire) — opened on first punch-in.
     #[cfg(target_os = "linux")]
@@ -223,7 +223,7 @@ impl ReelApp {
             thumbs: crate::thumbs::Cache::default(),
             overlay_previews: std::collections::HashMap::new(),
             transition_preview: None,
-            #[cfg(any(target_os = "linux", target_os = "windows"))]
+            #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
             mixer: None,
             mixer_attempted: false,
             samples: crate::audio::SampleCache::default(),
@@ -1096,7 +1096,7 @@ impl ReelApp {
     /// Keep the live audio mix in step with the editor: the plan tracks the
     /// project, playback tracks the main player, position chases the
     /// playhead, and the main player is muted while the mixer speaks.
-    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
     fn sync_mixer(&mut self) {
         if self.mode == Mode::Editor && !self.mixer_attempted {
             self.mixer_attempted = true;
@@ -1307,7 +1307,7 @@ impl ReelApp {
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
         self.sync_overlay_previews(gpu, egui);
         self.sync_lut_previews(gpu);
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
         self.sync_mixer();
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {

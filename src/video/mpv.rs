@@ -22,6 +22,8 @@ const MPV_FORMAT_FLAG: c_int = 3;
 const MPV_FORMAT_INT64: c_int = 4;
 const MPV_FORMAT_DOUBLE: c_int = 5;
 
+const MPV_ERROR_OPTION_NOT_FOUND: c_int = -5;
+
 const MPV_EVENT_NONE: c_int = 0;
 const MPV_EVENT_SHUTDOWN: c_int = 1;
 const MPV_EVENT_END_FILE: c_int = 7;
@@ -107,6 +109,29 @@ const LIB_NAMES: &[&str] = &["libmpv-2.dll", "mpv-2.dll", "mpv-1.dll"];
 #[cfg(target_os = "macos")]
 const LIB_NAMES: &[&str] = &["libmpv.2.dylib", "libmpv.dylib"];
 
+/// Where to look for libmpv, in order. On macOS a bare name only searches
+/// /usr/local/lib and /usr/lib, so the copy bundled in Reel.app's
+/// Frameworks comes first, then Homebrew's (Apple silicon, then Intel).
+fn lib_candidates() -> Vec<String> {
+    #[allow(unused_mut)]
+    let mut out: Vec<String> = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        if let Some(dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf())) {
+            for name in LIB_NAMES {
+                out.push(dir.join("../Frameworks").join(name).to_string_lossy().into_owned());
+            }
+        }
+        for prefix in ["/opt/homebrew/lib", "/usr/local/lib"] {
+            for name in LIB_NAMES {
+                out.push(format!("{prefix}/{name}"));
+            }
+        }
+    }
+    out.extend(LIB_NAMES.iter().map(|s| s.to_string()));
+    out
+}
+
 /// The process-wide libmpv, loaded on first use. `None` means it isn't on this
 /// machine (or REEL_BACKEND=ffmpeg forced it off) — callers fall back.
 pub fn lib() -> Option<Arc<Lib>> {
@@ -116,7 +141,8 @@ pub fn lib() -> Option<Arc<Lib>> {
             log::info!("REEL_BACKEND=ffmpeg — skipping libmpv");
             return None;
         }
-        for name in LIB_NAMES {
+        for name in lib_candidates() {
+            let name = name.as_str();
             match unsafe { libloading::Library::new(name) } {
                 Ok(l) => match unsafe { Lib::from(l) } {
                     Ok(lib) => {
@@ -199,14 +225,19 @@ impl MpvPlayer {
             ("load-scripts", "no"),
             ("ytdl", "no"),
         ] {
-            p.check(unsafe {
+            let rc = unsafe {
                 (p.lib.mpv_set_option_string)(
                     p.handle,
                     cstr(k).as_ptr(),
                     cstr(v).as_ptr(),
                 )
-            })
-            .map_err(|e| anyhow!("mpv option {k}={v}: {e}"))?;
+            };
+            // A libmpv built without scripting (the one bundled in Reel.app)
+            // has no load-scripts/ytdl at all — nothing to switch off.
+            if rc == MPV_ERROR_OPTION_NOT_FOUND && matches!(k, "load-scripts" | "ytdl") {
+                continue;
+            }
+            p.check(rc).map_err(|e| anyhow!("mpv option {k}={v}: {e}"))?;
         }
         crate::timing!("mpv options set");
         p.check(unsafe { (p.lib.mpv_initialize)(p.handle) })
