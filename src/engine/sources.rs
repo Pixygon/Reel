@@ -39,6 +39,7 @@ impl SegmentReader {
         (w, h, fps): (u32, u32, f64),
     ) -> Result<Self> {
         let src_len = duration * speed;
+        let in_point = still_seek(source, in_point);
         let setpts = if (speed - 1.0).abs() > 1e-9 {
             format!("setpts=PTS/{speed:.6},")
         } else {
@@ -92,6 +93,15 @@ impl SegmentReader {
                 }
             }
         }
+    }
+}
+
+/// A still has one frame, at time zero — seeking past it decodes nothing.
+fn still_seek(source: &str, in_point: f64) -> f64 {
+    if crate::media::is_image_path(source) {
+        0.0
+    } else {
+        in_point
     }
 }
 

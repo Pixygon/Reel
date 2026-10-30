@@ -47,6 +47,9 @@ pub struct Title {
     /// How far the slide travels, as a fraction of the frame.
     #[serde(default = "default_slide_dist")]
     pub slide_dist: f32,
+    /// The template slot this title fills — `reel slot set` swaps its text.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -111,6 +114,7 @@ impl Default for Title {
             fade_out: 0.0,
             slide_from: Slide::None,
             slide_dist: default_slide_dist(),
+            slot: None,
         }
     }
 }

@@ -78,6 +78,7 @@ const RENDER_WATCH_FLAGS: &[Flag] = &[
     Flag { name: "no-hardware", value: None, help: "Force the software encoder" },
     Flag { name: "overwrite", value: None, help: "Replace the output file if it exists" },
     Flag { name: "watch", value: None, help: "Keep going: re-render whenever the project file changes (Ctrl+C stops)" },
+    Flag { name: "variant", value: Some("NAME"), help: "Render this aspect variant (see `reel variant`)" },
     Flag { name: "quiet", value: None, help: "Don't print progress" },
     F_JSON,
 ];
@@ -130,11 +131,40 @@ pub static COMMANDS: &[Cmd] = &[
         flags: &[
             Flag { name: "at", value: Some("SECONDS"), help: "Timeline position (default: after the last clip)" },
             Flag { name: "in", value: Some("SECONDS"), help: "Start point inside the source (default 0)" },
-            Flag { name: "duration", value: Some("SECONDS"), help: "How much of the source to use (default: all of it)" },
+            Flag { name: "duration", value: Some("SECONDS"), help: "How much of the source to use (default: all of it; a still or plate gets 5)" },
             Flag { name: "track", value: Some("KIND"), help: "video, overlay (picture-in-picture) or audio" },
+            Flag { name: "slot", value: Some("NAME"), help: "Name this clip as a template slot (see `reel slot`)" },
             F_JSON,
         ],
-        help: "Append a piece of media to the timeline",
+        help: "Append media to the timeline: a video, audio file, still, nested .reel, or a plate (color:RRGGBB, color:transparent)",
+    },
+    Cmd {
+        name: "slot",
+        args: &["ACTION", "PROJECT", "NAME?"],
+        flags: &[
+            Flag { name: "media", value: Some("FILE"), help: "set: the new media (file, .reel or color:RRGGBB)" },
+            Flag { name: "text", value: Some("TEXT"), help: "set: the new text" },
+            Flag { name: "clip", value: Some("ID"), help: "bind: the clip this slot fills" },
+            Flag { name: "title", value: Some("INDEX"), help: "bind: the title this slot fills" },
+            F_JSON,
+        ],
+        help: "Template slots: ACTION is set, list, bind or unbind. Swap media or text by name, never by index",
+    },
+    Cmd {
+        name: "variant",
+        args: &["ACTION", "PROJECT", "NAME?"],
+        flags: &[
+            Flag { name: "size", value: Some("WxH"), help: "add: the frame, e.g. 1080x1920" },
+            Flag { name: "fit", value: Some("MODE"), help: "add/set: letterbox, crop or blur (default blur when the aspect changes)" },
+            Flag { name: "clip", value: Some("ID"), help: "set: an overlay clip to place by hand in this variant" },
+            Flag { name: "title", value: Some("INDEX"), help: "set: a title to place by hand in this variant" },
+            Flag { name: "x", value: Some("0..1"), help: "set: horizontal centre" },
+            Flag { name: "y", value: Some("0..1"), help: "set: vertical centre" },
+            Flag { name: "scale", value: Some("0..1"), help: "set: inset width, as a fraction of the frame" },
+            Flag { name: "text-size", value: Some("0..1"), help: "set: title height, as a fraction of the frame" },
+            F_JSON,
+        ],
+        help: "Aspect variants of one project: ACTION is add, list, set or remove. Layout is scaled from the main one, safe-area aware",
     },
     Cmd {
         name: "split",
@@ -283,6 +313,15 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "rotate", value: Some("DEG"), help: "Quarter turns: 0, 90, 180 or 270 (clockwise)" },
             Flag { name: "flip-h", value: None, help: "Mirror left-right (toggle)" },
             Flag { name: "flip-v", value: None, help: "Mirror top-bottom (toggle; both = 180° rotation)" },
+            Flag { name: "rotate-deg", value: Some("DEG"), help: "Free rotation, clockwise, any angle (0 = off)" },
+            Flag { name: "blur", value: Some("R"), help: "Gaussian blur, in 1/1080ths of the clip's height (0 = off)" },
+            Flag { name: "rgb-split", value: Some("PX"), help: "RGB split: red and blue pulled apart, 1/1080ths of the height (0 = off)" },
+            Flag { name: "glitch", value: Some("SEED"), help: "Glitch: seeded tears and a jittering split (off = off)" },
+            Flag { name: "shake", value: Some("AMP"), help: "Screen shake, 1/1080ths of the frame; on an adjustment clip it moves everything below (0 = off)" },
+            Flag { name: "shake-hz", value: Some("F"), help: "Shake speed (default 8)" },
+            Flag { name: "build", value: Some("tiles N"), help: "Logo build: assemble the picture from N tiles at the clip's start" },
+            Flag { name: "build-seconds", value: Some("S"), help: "How long the build takes (default 1)" },
+            Flag { name: "build-off", value: None, help: "Remove the build" },
             Flag { name: "plugin", value: Some("FILE.wgsl"), help: "An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md" },
             Flag { name: "plugin-params", value: Some("A,B,C,D"), help: "The plugin's parameter values (defaults from its header)" },
             Flag { name: "plugin-off", value: None, help: "Remove the plugin" },
@@ -373,6 +412,7 @@ pub static COMMANDS: &[Cmd] = &[
             Flag { name: "color", value: Some("RRGGBB"), help: "Hex colour, e.g. ffcc00" },
             Flag { name: "no-bold", value: None, help: "Regular weight" },
             Flag { name: "no-outline", value: None, help: "No dark outline" },
+            Flag { name: "slot", value: Some("NAME"), help: "Name this title as a template slot (see `reel slot`)" },
             Flag { name: "preset", value: Some("NAME"), help: "A title preset (style + motion) from ~/.config/reel/titles — name or path" },
             Flag { name: "fade-in", value: Some("SECONDS"), help: "Fade (and slide, if set) up over this long" },
             Flag { name: "fade-out", value: Some("SECONDS"), help: "Fade away over this long" },
@@ -575,6 +615,7 @@ pub static COMMANDS: &[Cmd] = &[
         flags: &[
             Flag { name: "at", value: Some("SECONDS"), help: "Which moment (default 0)" },
             Flag { name: "out", value: Some("FILE.png"), help: "Where to write the PNG (default beside the target)" },
+            Flag { name: "variant", value: Some("NAME"), help: "Show this aspect variant (see `reel variant`)" },
             Flag { name: "overwrite", value: None, help: "Replace the output if it exists" },
             F_JSON,
         ],
@@ -718,7 +759,9 @@ fn parse(cmd: &Cmd, args: &[String]) -> Result<Parsed> {
                     }
                     p.switches.insert(name.to_string());
                 }
-                Some(_) => {
+                Some(shape) => {
+                    // A value shaped `tiles N` takes two tokens.
+                    let two = shape.contains(' ') && inline.is_none();
                     let v = match inline {
                         Some(v) => v,
                         None => {
@@ -727,6 +770,13 @@ fn parse(cmd: &Cmd, args: &[String]) -> Result<Parsed> {
                                 .cloned()
                                 .ok_or_else(|| anyhow!("--{name} needs a value"))?
                         }
+                    };
+                    let v = if two {
+                        i += 1;
+                        let more = args.get(i).ok_or_else(|| anyhow!("--{name} needs {shape}"))?;
+                        format!("{v} {more}")
+                    } else {
+                        v
                     };
                     p.values.insert(name.to_string(), v);
                 }
@@ -817,6 +867,8 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "new" => cmd_new(p),
         "inspect" => cmd_inspect(p),
         "add" => cmd_add(p),
+        "slot" => cmd_slot(p),
+        "variant" => cmd_variant(p),
         "split" => cmd_split(p),
         "trim" => cmd_trim(p),
         "move" => cmd_move(p),
@@ -1086,30 +1138,9 @@ fn cmd_inspect(p: &Parsed) -> Result<Output> {
 
 fn cmd_add(p: &Parsed) -> Result<Output> {
     let path = p.at(0)?;
-    let media = p.at(1)?;
-    if !std::path::Path::new(media).exists() {
-        bail!("no such media file: {media}");
-    }
-    // Store the absolute path: a project written in one directory must still
-    // find its media when opened from anywhere else.
-    let media = std::fs::canonicalize(media)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or_else(|_| media.to_string());
-    // A .reel used as media = a COMPOUND CLIP: the nested edit renders
-    // flat beside itself and the flat file is what the timeline plays.
-    // The clip remembers its origin so a stale nest re-renders.
-    let (media, nested_from) = if media.ends_with(".reel") {
-        if std::path::Path::new(&media) == std::path::Path::new(path) {
-            bail!("a project can't nest itself");
-        }
-        eprintln!("nesting {media} — rendering it flat…");
-        let flat = crate::compound::render_flat(&media)?;
-        (flat.to_string_lossy().into_owned(), Some(media))
-    } else {
-        (media, None)
-    };
-    let media = media.as_str();
     let mut proj = load(path)?;
+    let (source, nested_from, plate) = resolve_media(p.at(1)?, path, &proj)?;
+    let media = source.as_str();
     let kind = match p.str("track").unwrap_or("video") {
         "video" | "v" => TrackKind::Video,
         "audio" | "a" => TrackKind::Audio,
@@ -1118,10 +1149,13 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     };
 
     // Default the length to the whole source, which needs a probe.
-    let src_duration = crate::video::decoder::probe(media).map(|i| i.duration).unwrap_or(0.0);
+    let still = plate.is_some() || crate::media::is_image_path(media);
+    let src_duration = source_duration(media).unwrap_or(0.0);
     let in_point = p.num::<f64>("in")?.unwrap_or(0.0);
     let duration = match p.num::<f64>("duration")? {
         Some(d) => d,
+        // A still has no length of its own.
+        None if still => crate::plates::DEFAULT_STILL_SECONDS,
         None => (src_duration - in_point).max(0.0),
     };
     if duration <= 0.0 {
@@ -1140,6 +1174,13 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
     };
 
     let id = proj.add_clip(media, kind, at, in_point, duration);
+    if let Some(c) = proj.clip_mut(id) {
+        c.slot = p.str("slot").map(String::from);
+        if let Some(spec) = &plate {
+            c.plate = Some(spec.clone());
+            c.name = format!("color:{spec}");
+        }
+    }
     if let Some(reel) = &nested_from {
         if let Some(c) = proj.clip_mut(id) {
             c.nested = Some(reel.clone());
@@ -1154,6 +1195,223 @@ fn cmd_add(p: &Parsed) -> Result<Output> {
         format!("Added clip {id} at {at:.2}s ({duration:.2}s of {media})"),
         serde_json::json!({ "clip": id, "start": at, "duration": duration, "in_point": in_point }),
     ))
+}
+
+/// A file's length. The picture probe wants a video stream, so audio-only
+/// files fall back to the container's own duration.
+fn source_duration(media: &str) -> Option<f64> {
+    let video = crate::video::decoder::probe(media).ok().map(|i| i.duration).filter(|d| *d > 0.0);
+    video.or_else(|| {
+        let out = std::process::Command::new("ffprobe")
+            .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", media])
+            .output()
+            .ok()?;
+        String::from_utf8_lossy(&out.stdout).trim().parse().ok().filter(|d: &f64| *d > 0.0)
+    })
+}
+
+/// Turn what the user typed into a timeline source: a plate spec becomes its
+/// cached PNG, a .reel renders flat (a compound clip), anything else must
+/// exist. Returns (source, nested origin, plate spec).
+fn resolve_media(media: &str, project: &str, proj: &crate::edit::Project) -> Result<(String, Option<String>, Option<String>)> {
+    if let Some(spec) = crate::plates::spec_of(media) {
+        let spec = spec?;
+        return Ok((crate::plates::ensure(&spec, proj.width, proj.height)?, None, Some(spec)));
+    }
+    if !std::path::Path::new(media).exists() {
+        bail!("no such media file: {media}");
+    }
+    // Store the absolute path: a project written in one directory must still
+    // find its media when opened from anywhere else.
+    let media = std::fs::canonicalize(media)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| media.to_string());
+    // A .reel used as media = a COMPOUND CLIP: the nested edit renders
+    // flat beside itself and the flat file is what the timeline plays.
+    // The clip remembers its origin so a stale nest re-renders.
+    if media.ends_with(".reel") {
+        let own = std::fs::canonicalize(project).ok();
+        if own.as_deref() == Some(std::path::Path::new(&media)) {
+            bail!("a project can't nest itself");
+        }
+        eprintln!("nesting {media} — rendering it flat…");
+        let flat = crate::compound::render_flat(&media)?;
+        return Ok((flat.to_string_lossy().into_owned(), Some(media), None));
+    }
+    Ok((media, None, None))
+}
+
+fn cmd_slot(p: &Parsed) -> Result<Output> {
+    let action = p.at(0)?.to_string();
+    let path = p.at(1)?;
+    let mut proj = load(path)?;
+    let name = p.positional.get(2).map(String::as_str);
+    let need = || name.ok_or_else(|| anyhow!("`reel slot {action}` needs a slot NAME"));
+    match action.as_str() {
+        "list" => {
+            let slots = proj.slots();
+            let text = slots
+                .iter()
+                .map(|s| format!("  {} ({}): {}", s.name, s.kind, s.value))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(Output::new(text, serde_json::json!({ "slots": slots })))
+        }
+        "set" => {
+            let name = need()?;
+            let (mut changed, mut shortened) = (0, 0);
+            if let Some(text) = p.str("text") {
+                changed += proj.set_slot_text(name, text)?;
+            }
+            if let Some(media) = p.str("media") {
+                let (source, nested, plate) = resolve_media(media, path, &proj)?;
+                let still = plate.is_some() || crate::media::is_image_path(&source);
+                let len = if still {
+                    None
+                } else {
+                    source_duration(&source)
+                };
+                let (c, s) = proj.set_slot_media(name, &source, nested, plate, len)?;
+                changed += c;
+                shortened = s;
+            }
+            if p.str("text").is_none() && p.str("media").is_none() {
+                bail!("pass --media FILE or --text TEXT");
+            }
+            save(&proj, path)?;
+            let note = if shortened > 0 { format!(" ({shortened} clip(s) shortened: the new media is shorter)") } else { String::new() };
+            Ok(Output::new(
+                format!("Slot {name}: {changed} place(s) updated{note}"),
+                serde_json::json!({ "slot": name, "changed": changed, "shortened": shortened }),
+            ))
+        }
+        "bind" | "unbind" => {
+            let name = need()?;
+            let value = (action == "bind").then(|| name.to_string());
+            let mut bound = 0;
+            if let Some(id) = p.num::<u64>("clip")? {
+                find_clip_mut(&mut proj, id)?.slot = value.clone();
+                bound += 1;
+            }
+            if let Some(i) = p.num::<usize>("title")? {
+                let count = proj.titles.len();
+                proj.titles
+                    .get_mut(i)
+                    .ok_or_else(|| anyhow!("no title at index {i} ({count} titles)"))?
+                    .slot = value.clone();
+                bound += 1;
+            }
+            if bound == 0 {
+                bail!("pass --clip ID or --title INDEX");
+            }
+            save(&proj, path)?;
+            Ok(Output::new(
+                format!("Slot {name}: {action} done"),
+                serde_json::json!({ "slot": name, "bound": value.is_some() }),
+            ))
+        }
+        other => bail!("slot ACTION is set, list, bind or unbind — got {other:?}"),
+    }
+}
+
+fn cmd_variant(p: &Parsed) -> Result<Output> {
+    use crate::edit::{ClipOverride, TitleOverride, Variant};
+    let action = p.at(0)?.to_string();
+    let path = p.at(1)?;
+    let mut proj = load(path)?;
+    let name = p.positional.get(2).map(String::as_str);
+    let need = || name.ok_or_else(|| anyhow!("`reel variant {action}` needs a variant NAME"));
+    if let Some(f) = p.str("fit") {
+        if !["letterbox", "crop", "blur"].contains(&f) {
+            bail!("--fit wants letterbox, crop or blur — got {f:?}");
+        }
+    }
+    match action.as_str() {
+        "list" => {
+            let text = proj
+                .variants
+                .iter()
+                .map(|v| format!("  {} {}x{}", v.name, v.width, v.height))
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(Output::new(text, serde_json::json!({ "variants": proj.variants })))
+        }
+        "add" => {
+            let name = need()?;
+            let (w, h) = p
+                .str("size")
+                .and_then(|s| s.split_once('x'))
+                .and_then(|(w, h)| Some((w.parse::<u32>().ok()?, h.parse::<u32>().ok()?)))
+                .ok_or_else(|| anyhow!("--size wants WxH, e.g. 1080x1920"))?;
+            if proj.variants.iter().any(|v| v.name == name) {
+                bail!("there is already a variant named {name:?}");
+            }
+            proj.variants.push(Variant {
+                name: name.into(),
+                width: w / 2 * 2,
+                height: h / 2 * 2,
+                fit: p.str("fit").map(String::from),
+                ..Default::default()
+            });
+            save(&proj, path)?;
+            Ok(Output::new(
+                format!("Added variant {name} ({w}x{h})"),
+                serde_json::json!({ "variant": name, "width": w, "height": h }),
+            ))
+        }
+        "set" => {
+            let name = need()?;
+            let (x, y) = (p.num::<f32>("x")?, p.num::<f32>("y")?);
+            let v = proj.variant_mut(name)?;
+            if let Some(f) = p.str("fit") {
+                v.fit = Some(f.to_string());
+            }
+            if let Some(id) = p.num::<u64>("clip")? {
+                v.clips.retain(|o| o.clip != id);
+                v.clips.push(ClipOverride { clip: id, x, y, scale: p.num("scale")? });
+            }
+            if let Some(i) = p.num::<usize>("title")? {
+                v.titles.retain(|o| o.title != i);
+                v.titles.push(TitleOverride { title: i, x, y, size: p.num("text-size")? });
+            }
+            save(&proj, path)?;
+            Ok(Output::new(format!("Variant {name} updated"), serde_json::json!({ "variant": name })))
+        }
+        "remove" => {
+            let name = need()?;
+            let before = proj.variants.len();
+            proj.variants.retain(|v| v.name != name);
+            if proj.variants.len() == before {
+                bail!("no variant named {name:?}");
+            }
+            save(&proj, path)?;
+            Ok(Output::new(format!("Removed variant {name}"), serde_json::json!({ "removed": name })))
+        }
+        other => bail!("variant ACTION is add, list, set or remove — got {other:?}"),
+    }
+}
+
+/// Load a project for rendering, as the named variant when one is asked for.
+/// Returns the project and the fit that variant defaults to.
+fn load_variant(path: &str, variant: Option<&str>) -> Result<(crate::edit::Project, Option<Fit>)> {
+    let proj = load(path)?;
+    let Some(name) = variant else { return Ok((proj, None)) };
+    let aspect = |src: &str| {
+        crate::video::decoder::probe(src)
+            .map(|i| i.width as f32 / i.height.max(1) as f32)
+            .unwrap_or(16.0 / 9.0)
+    };
+    let out = proj.resolve_variant(name, aspect)?;
+    let same = (proj.width as f32 / proj.height.max(1) as f32 - out.width as f32 / out.height.max(1) as f32).abs() < 0.01;
+    let chosen = proj.variants.iter().find(|v| v.name == name).and_then(|v| v.fit.as_deref());
+    let fit = match chosen {
+        Some("crop") => Some(Fit::Crop),
+        Some("letterbox") => Some(Fit::Letterbox),
+        Some("blur") => Some(Fit::Blur),
+        _ if same => None,
+        _ => Some(Fit::Blur),
+    };
+    Ok((out, fit))
 }
 
 fn cmd_split(p: &Parsed) -> Result<Output> {
@@ -1400,6 +1658,41 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         }
         if let Some(v) = p.num::<f32>("saturation")? {
             c.effects.saturation = v;
+        }
+        if let Some(v) = p.num::<f32>("rotate-deg")? {
+            c.effects.rotate_deg = v;
+        }
+        if let Some(v) = p.num::<f32>("blur")? {
+            c.effects.blur = v.clamp(0.0, 200.0);
+        }
+        if let Some(v) = p.num::<f32>("rgb-split")? {
+            c.effects.rgb_split = v.clamp(0.0, 200.0);
+        }
+        if let Some(g) = p.str("glitch") {
+            c.effects.glitch = if g == "off" {
+                None
+            } else {
+                Some(g.parse().map_err(|_| anyhow!("--glitch wants a whole-number seed or off, got {g:?}"))?)
+            };
+        }
+        if let Some(v) = p.num::<f32>("shake")? {
+            c.effects.shake = v.clamp(0.0, 200.0);
+        }
+        if let Some(v) = p.num::<f32>("shake-hz")? {
+            c.effects.shake_hz = v.clamp(0.01, 60.0);
+        }
+        if let Some(b) = p.str("build") {
+            c.effects.build_tiles = b
+                .strip_prefix("tiles ")
+                .and_then(|n| n.trim().parse::<u32>().ok())
+                .filter(|n| (1..=4096).contains(n))
+                .ok_or_else(|| anyhow!("--build wants `tiles N`, got {b:?}"))?;
+        }
+        if let Some(v) = p.num::<f32>("build-seconds")? {
+            c.effects.build_seconds = v.max(0.01);
+        }
+        if p.on("build-off") {
+            c.effects.build_tiles = 0;
         }
         if let Some(v) = p.num::<f32>("fade-in")? {
             c.effects.fade_in = v as f64;
@@ -1861,6 +2154,7 @@ fn cmd_title(p: &Parsed) -> Result<Output> {
                 },
                 bold: !p.on("no-bold") && base.bold,
                 outline: !p.on("no-outline") && base.outline,
+                slot: p.str("slot").map(String::from),
                 fade_in: p.num::<f64>("fade-in")?.unwrap_or(base.fade_in),
                 fade_out: p.num::<f64>("fade-out")?.unwrap_or(base.fade_out),
                 slide_from: match p.str("slide") {
@@ -1897,6 +2191,7 @@ fn cmd_title(p: &Parsed) -> Result<Output> {
                 bail!("no title at index {i} ({} titles)", proj.titles.len());
             }
             let gone = proj.titles.remove(i);
+            proj.title_removed(i);
             save(&proj, path)?;
             Ok(Output::new(
                 format!("Removed title {i}: {:?}", gone.text),
@@ -3048,7 +3343,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
     prepare_output(&out, p.on("overwrite"))?;
 
     if target.ends_with(".reel") {
-        let proj = load(target)?;
+        let (proj, variant_fit) = load_variant(target, p.str("variant"))?;
         let segments = proj.export_segments();
         if segments.is_empty() {
             bail!("the timeline is empty");
@@ -3060,7 +3355,7 @@ fn cmd_frame(p: &Parsed) -> Result<Output> {
             audio: AudioMode::Encode { kbps: 160 },
             hardware: false,
             target: None,
-            fit: Fit::Letterbox,
+            fit: variant_fit.unwrap_or(Fit::Letterbox),
             loudness: None,
             hdr_passthrough: false,
         };
@@ -3169,12 +3464,15 @@ fn render_once(p: &Parsed, overwrite: bool) -> Result<Output> {
              pipeline composites in 8-bit SDR and tone-maps HDR sources instead"
         );
     }
-    let proj = load(path)?;
+    let (proj, variant_fit) = load_variant(path, p.str("variant"))?;
     let segments = proj.export_segments();
     if segments.is_empty() {
         bail!("the timeline is empty — add a clip first");
     }
-    let settings = settings_from(p, Codec::H264)?;
+    let mut settings = settings_from(p, Codec::H264)?;
+    if let (Some(fit), None) = (variant_fit, p.str("fit")) {
+        settings.fit = fit;
+    }
     if overwrite {
         let _ = std::fs::remove_file(out);
     }
@@ -3511,6 +3809,189 @@ fn cmd_presets() -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Run a verb as the CLI would.
+    fn verb(name: &str, args: &[&str]) -> Output {
+        let p = parse_for(name, args).unwrap();
+        dispatch(name, &p).unwrap_or_else(|e| panic!("reel {name} {args:?}: {e}"))
+    }
+
+    const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixture.mp4");
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("reel-batchb-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    #[test]
+    fn stills_plates_and_slots_work_through_the_verbs() {
+        let d = scratch("slots");
+        let p = d.join("p.reel").to_string_lossy().into_owned();
+        verb("new", &[&p, "--size", "320x180"]);
+        // A plate needs no file; a still defaults to five seconds.
+        verb("add", &[&p, "color:204060", "--duration", "1", "--slot", "bed"]);
+        let png = d.join("logo.png").to_string_lossy().into_owned();
+        image::save_buffer(&png, &vec![255u8; 4 * 40 * 40], 40, 40, image::ColorType::Rgba8).unwrap();
+        verb("add", &[&p, &png]);
+        let proj = load(&p).unwrap();
+        assert!((proj.tracks[0].clips[1].duration - 5.0).abs() < 1e-6);
+        verb("title", &["add", &p, "--text", "Episode one", "--slot", "card"]);
+        verb("slot", &["set", &p, "card", "--text", "Episode two"]);
+        verb("slot", &["set", &p, "bed", "--media", "color:transparent"]);
+        let list = verb("slot", &["list", &p]);
+        let slots = list.data["slots"].as_array().unwrap();
+        assert_eq!(slots.len(), 2);
+        assert_eq!(slots[1]["value"], "Episode two");
+        let proj = load(&p).unwrap();
+        assert_eq!(proj.titles[0].text, "Episode two");
+        assert_eq!(proj.tracks[0].clips[0].plate.as_deref(), Some("transparent"));
+        assert!(parse_for("slot", &["set", &p, "nope", "--text", "x"]).and_then(|a| dispatch("slot", &a)).is_err());
+        // A plate before speech must not cost the speech its sound.
+        let talk = d.join("talk.mp4").to_string_lossy().into_owned();
+        let ok = std::process::Command::new("ffmpeg")
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=s=320x180:d=1", "-f", "lavfi", "-i", "sine=f=440:d=1"])
+            .args(["-pix_fmt", "yuv420p", "-shortest", &talk])
+            .status()
+            .unwrap();
+        assert!(ok.success());
+        verb("add", &[&p, &talk]);
+        let out = d.join("o.mp4").to_string_lossy().into_owned();
+        verb("render", &[&p, &out, "--quiet", "--no-hardware", "--overwrite"]);
+        // The frame server promises this; the no-GPU graph fallback still needs
+        // every V1 clip to have sound (documented in docs/CLI.md).
+        if crate::engine::compositor::Compositor::headless().is_ok() {
+            assert!(export::has_audio_stream(&out), "the plate dropped the cut's audio");
+        }
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn overlay_alpha_is_kept_tracks_stack_and_a_build_assembles() {
+        if crate::engine::compositor::Compositor::headless().is_err() {
+            return;
+        }
+        let d = scratch("overlay");
+        let p = d.join("p.reel").to_string_lossy().into_owned();
+        verb("new", &[&p, "--size", "320x180"]);
+        verb("add", &[&p, "color:0000ff", "--duration", "3"]);
+        // A dark disc on transparency: exactly what a colour key would eat.
+        let png = d.join("disc.png").to_string_lossy().into_owned();
+        let mut px = Vec::new();
+        for y in 0..64i32 {
+            for x in 0..64i32 {
+                let inside = (x - 32).pow(2) + (y - 32).pow(2) < 900;
+                px.extend([10u8, 10, 10, if inside { 255 } else { 0 }]);
+            }
+        }
+        image::save_buffer(&png, &px, 64, 64, image::ColorType::Rgba8).unwrap();
+        // Overlapping insets all draw: one overlay track holds any number.
+        for x in ["0.2", "0.5", "0.8"] {
+            let added = verb("add", &[&p, &png, "--track", "overlay", "--at", "0"]);
+            let id = added.data["clip"].to_string();
+            verb("pip", &[&p, "--clip", &id, "--x", x, "--y", "0.5", "--scale", "0.25"]);
+        }
+        let at = |frame: &str, time: &str| {
+            let out = d.join(frame).to_string_lossy().into_owned();
+            verb("frame", &[&p, "--at", time, "--out", &out, "--overwrite"]);
+            image::open(&out).unwrap().to_rgb8()
+        };
+        let img = at("a.png", "1");
+        for x in [64, 160, 256] {
+            assert!(img.get_pixel(x, 90).0[2] < 40, "disc centre at {x} should be dark");
+            // The inset box's corner is transparent: the blue plate shows.
+            assert!(img.get_pixel(x - 36, 62).0[2] > 200, "the box corner at {x} must stay transparent");
+        }
+        let id = load(&p).unwrap().tracks.iter().find(|t| t.kind == TrackKind::Overlay).unwrap().clips[0].id.to_string();
+        verb("effects", &[&p, "--clip", &id, "--build", "tiles", "16", "--build-seconds", "2", "--rotate-deg", "0"]);
+        let dark = |i: &image::RgbImage| (20..108).flat_map(|x| (45..135).map(move |y| (x, y))).filter(|(x, y)| i.get_pixel(*x, *y).0[2] < 60).count();
+        let (mid, done) = (dark(&at("b.png", "1")), dark(&at("c.png", "2.5")));
+        assert!(mid > 0 && mid * 10 < done * 9, "mid-build {mid} of {done}");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// Peak level of one frequency band in a window of a file, dBFS.
+    fn band_peak(file: &str, hz: u32, from: f64, len: f64) -> f64 {
+        let out = std::process::Command::new("ffmpeg")
+            .args(["-v", "info", "-ss", &from.to_string(), "-t", &len.to_string(), "-i", file])
+            .args(["-af", &format!("bandpass=f={hz}:w=120,volumedetect"), "-f", "null", "-"])
+            .output()
+            .unwrap();
+        let log = String::from_utf8_lossy(&out.stderr).into_owned();
+        log.lines()
+            .find_map(|l| l.split("max_volume: ").nth(1))
+            .and_then(|v| v.trim_end_matches(" dB").parse().ok())
+            .unwrap_or(-120.0)
+    }
+
+    #[test]
+    fn a_nested_reel_and_overlapping_audio_clips_both_render() {
+        let d = scratch("nest");
+        let inner = d.join("inner.reel").to_string_lossy().into_owned();
+        verb("new", &[&inner, "--size", "320x180"]);
+        verb("add", &[&inner, FIXTURE, "--duration", "1.5"]);
+        // Nested sound: the flat render carries it, whichever renderer runs.
+        let tone = |hz: u32, secs: u32| {
+            let wav = d.join(format!("{hz}.wav")).to_string_lossy().into_owned();
+            let ok = std::process::Command::new("ffmpeg")
+                .args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("sine=f={hz}:d={secs}"), &wav])
+                .status()
+                .unwrap();
+            assert!(ok.success());
+            wav
+        };
+        verb("add", &[&inner, &tone(200, 2), "--track", "audio", "--at", "0"]);
+        let outer = d.join("outer.reel").to_string_lossy().into_owned();
+        verb("new", &[&outer, "--size", "320x180"]);
+        verb("add", &[&outer, &inner]);
+        let proj = load(&outer).unwrap();
+        let nested = &proj.tracks[0].clips[0];
+        assert!(nested.nested.as_deref().is_some_and(|n| n.ends_with("inner.reel")));
+        assert!((nested.duration - 1.5).abs() < 0.2, "nested length {}", nested.duration);
+        // Two tones overlapping on A1, from 0.5 s on: both must be heard there.
+        for (hz, at) in [(440, "0"), (3000, "0.5")] {
+            verb("add", &[&outer, &tone(hz, 1), "--track", "audio", "--at", at]);
+        }
+        let out = d.join("o.mp4").to_string_lossy().into_owned();
+        verb("render", &[&outer, &out, "--quiet", "--no-hardware", "--overwrite"]);
+        // The no-GPU graph fallback leaves A1 out (and warns); the frame server
+        // is the renderer that promises the mix.
+        if crate::engine::compositor::Compositor::headless().is_err() {
+            let _ = std::fs::remove_dir_all(&d);
+            return;
+        }
+        assert!(band_peak(&out, 440, 0.6, 0.3) > -40.0, "the first clip vanished in the overlap");
+        assert!(band_peak(&out, 3000, 0.6, 0.3) > -40.0, "the second clip vanished in the overlap");
+        assert!(band_peak(&out, 3000, 0.1, 0.3) < -40.0, "the second clip started early");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn a_nine_by_sixteen_variant_keeps_a_wide_title_in_frame() {
+        if crate::engine::compositor::Compositor::headless().is_err() {
+            return;
+        }
+        let d = scratch("variant");
+        let p = d.join("p.reel").to_string_lossy().into_owned();
+        verb("new", &[&p, "--size", "1280x720"]);
+        verb("add", &[&p, "color:000000", "--duration", "2"]);
+        verb("title", &["add", &p, "--text", "THE OFFICE OF DYSON AND LANTERNA", "--y", "0.92", "--size", "0.08", "--duration", "2", "--color", "ffffff", "--no-outline"]);
+        verb("variant", &["add", &p, "9x16", "--size", "720x1280"]);
+        let out = d.join("v.png").to_string_lossy().into_owned();
+        verb("frame", &[&p, "--at", "1", "--out", &out, "--overwrite", "--variant", "9x16"]);
+        let img = image::open(&out).unwrap().to_rgb8();
+        assert_eq!((img.width(), img.height()), (720, 1280));
+        let lit: Vec<(u32, u32)> = img.enumerate_pixels().filter(|p| p.2 .0[0] > 128).map(|p| (p.0, p.1)).collect();
+        assert!(lit.len() > 200, "the title should have drawn");
+        let (x0, x1) = (lit.iter().map(|p| p.0).min().unwrap(), lit.iter().map(|p| p.0).max().unwrap());
+        let y1 = lit.iter().map(|p| p.1).max().unwrap();
+        assert!(x0 > 10 && x1 < 709, "title cut off sideways: {x0}..{x1}");
+        assert!((y1 as f32) < 1280.0 * 0.82, "title in the platform UI: y {y1}");
+        // A wrong name fails loudly rather than rendering the wide frame.
+        assert!(parse_for("frame", &[&p, "--out", &out, "--overwrite", "--variant", "nope"]).and_then(|a| dispatch("frame", &a)).is_err());
+        let _ = std::fs::remove_dir_all(&d);
+    }
 
     fn parse_for(name: &str, args: &[&str]) -> Result<Parsed> {
         let cmd = COMMANDS.iter().find(|c| c.name == name).unwrap();

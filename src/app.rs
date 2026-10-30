@@ -2435,7 +2435,7 @@ impl ReelApp {
         for tr in self.project.tracks.iter().filter(|t| t.kind == TrackKind::Overlay && !t.muted) {
             for c in &tr.clips {
                 if c.adjustment && t >= c.start && t < c.end() {
-                    stack.push(c.effects);
+                    stack.push(c.effects.at_time(t - c.start));
                 }
             }
         }

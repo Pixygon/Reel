@@ -2148,6 +2148,8 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     // when in the editor; the plain per-fx one elsewhere.
                     lut: app.preview_lut().or_else(|| app.lut_view(effects)),
                     plugin: app.plugin_for(effects),
+                    aspect: img_rect.width() / img_rect.height().max(1.0),
+                    bounds: [1.0, 1.0],
                 },
             ));
             // The incoming half of a crossfade, blended over the outgoing
@@ -2204,6 +2206,8 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                                     effects: fx,
                                     lut: app.lut_view(fx),
                                     plugin: app.plugin_for(fx),
+                                    aspect: img_rect.width() / img_rect.height().max(1.0),
+                                    bounds: [1.0, 1.0],
                                 },
                             ));
                         }
@@ -2383,8 +2387,11 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
                     let local = (app.editor.playhead - c.start).max(0.0);
                     c.animated(local).0
                 });
+                // A rotated inset draws over its bounds; the shader turns it back.
+                let aspect = box_rect.width() / box_rect.height().max(1.0);
+                let (bx, by) = fx.map(|e| e.rotated_bounds(aspect)).unwrap_or((1.0, 1.0));
                 painter.add(egui_wgpu::Callback::new_paint_callback(
-                    box_rect,
+                    Rect::from_center_size(box_rect.center(), box_rect.size() * Vec2::new(bx, by)),
                     crate::video_pass::VideoDraw {
                         view: tex.texture.create_view(&wgpu::TextureViewDescriptor::default()),
                         tint: [1.0, 1.0, 1.0, 1.0],
@@ -2392,6 +2399,8 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
                         effects: fx,
                         lut: app.lut_view(fx),
                         plugin: app.plugin_for(fx),
+                        aspect,
+                        bounds: [bx, by],
                     },
                 ));
                 drew = true;

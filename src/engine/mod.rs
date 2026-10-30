@@ -14,6 +14,8 @@
 pub mod compositor;
 pub mod render;
 pub mod sources;
+#[cfg(test)]
+mod picture_tests;
 
 /// One layer of a composed frame.
 pub struct Layer {

@@ -37,6 +37,12 @@ struct Uniforms {
     flip: vec4<f32>,
     // Plugin parameters (the //! param: sliders), zeros when none.
     plug: vec4<f32>,
+    // The picture stage (picture.wgsl): see Effects::picture_uniforms.
+    motion: vec4<f32>,
+    rot: vec4<f32>,
+    build: vec4<f32>,
+    // xy = how much of the rotated picture's bounds this viewport spans.
+    view: vec4<f32>,
 };
 
 // REEL_PLUGIN_SLOT — replaced by the active effect plugin's source. The
@@ -135,8 +141,10 @@ fn apply_effects(rgb: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // Reframe first: sample a zoomed, panned window of the picture.
+    let shown = (in.uv - vec2<f32>(0.5)) * u.view.xy + vec2<f32>(0.5);
+    let placed = place_uv(shown, u.rot, fwidth(shown));
     let z = max(u.reframe.x, 1.0);
-    let uv = (in.uv - vec2<f32>(0.5)) / z
+    let uv = (placed.xy - vec2<f32>(0.5)) / z
         + vec2<f32>(0.5)
         + vec2<f32>(u.reframe.y, u.reframe.z) * (1.0 - 1.0 / z) * 0.5;
     // Flips mirror the sampled window — geometry before colour, matching
@@ -144,7 +152,10 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var uv2 = uv;
     if (u.flip.x > 0.5) { uv2.x = 1.0 - uv2.x; }
     if (u.flip.y > 0.5) { uv2.y = 1.0 - uv2.y; }
-    let s = textureSample(frame_tex, frame_sampler, clamp(uv2, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let built = build_uv(uv2, u.build);
+    let cover = placed.z * built.z;
+    // Stills arrive premultiplied, video is opaque: a plain average is right.
+    let s = sample_picture(frame_tex, frame_sampler, built.xy, u.motion, u.rot.z, false);
     // Images arrive premultiplied (see app::sync_frame); video is opaque.
     var a_src = mix(1.0, s.a, u.params.x);
     var rgb = s.rgb;
@@ -184,5 +195,5 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     rgb = mix(graded_from, rgb, mask_factor(in.uv));
     rgb = rgb * u.tint.rgb;
     // Premultiplied output: egui's pipeline blends the UI over this.
-    return vec4<f32>(rgb * u.tint.a, a_src * u.tint.a);
+    return vec4<f32>(rgb * u.tint.a * cover, a_src * u.tint.a * cover);
 }

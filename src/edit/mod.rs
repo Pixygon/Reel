@@ -6,6 +6,9 @@
 use crate::effects::Effects;
 use serde::{Deserialize, Serialize};
 
+mod variants;
+pub use variants::{ClipOverride, TitleOverride, Variant};
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum TrackKind {
     /// The base sequence — the cut itself.
@@ -80,6 +83,13 @@ pub struct Clip {
     /// it — the UI says so. Validated with a trial run when set.
     #[serde(default)]
     pub raw_filter: Option<String>,
+    /// A generated plate's spec (`RRGGBB` or `transparent`): `source` is a
+    /// cached PNG rebuilt from this on load. See plates.rs.
+    #[serde(default)]
+    pub plate: Option<String>,
+    /// The template slot this clip fills — `reel slot set` swaps it by name.
+    #[serde(default)]
+    pub slot: Option<String>,
 }
 
 /// Per-clip audio processing. Defaults are identity; every field is
@@ -635,7 +645,7 @@ impl Clip {
                 Param::Plugin4 => fx.plugin_params[3] = v,
             }
         }
-        (fx, pip, opacity)
+        (fx.at_time(t), pip, opacity)
     }
 
     /// Insert (or replace) a keyframe, keeping the track sorted.
@@ -818,7 +828,7 @@ impl Segment {
                 _ => {}
             }
         }
-        (fx, opacity)
+        (fx.at_time(t), opacity)
     }
 }
 
@@ -920,6 +930,11 @@ impl OverlaySegment {
         }
         (pip, opacity)
     }
+
+    /// This overlay's effects at overlay-local time `t`.
+    pub fn effects_at(&self, t: f64) -> Effects {
+        self.effects.at_time(t)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -995,6 +1010,9 @@ pub struct Project {
     /// source time under playhead t is `t - offset`.
     #[serde(default)]
     pub multicam: Vec<Angle>,
+    /// Other frame shapes of this same edit. See variants.rs.
+    #[serde(default)]
+    pub variants: Vec<Variant>,
     #[serde(skip)]
     next_id: u64,
 }
@@ -1072,6 +1090,7 @@ impl Default for Project {
             pool: Vec::new(),
             session: Session::default(),
             multicam: Vec::new(),
+            variants: Vec::new(),
             next_id: 100,
         }
     }
@@ -1148,6 +1167,8 @@ impl Project {
                 adjustment: false,
                 nested: None,
                 raw_filter: None,
+                plate: None,
+                slot: None,
                 stabilize: false,
             });
             track.clips.sort_by(|a, b| a.start.total_cmp(&b.start));
@@ -2234,6 +2255,13 @@ impl Project {
             .max()
             .unwrap_or(99)
             + 1;
+        // Plates are a cache; the spec in the clip is the document.
+        let (w, h) = (p.width, p.height);
+        for c in p.tracks.iter_mut().flat_map(|t| t.clips.iter_mut()) {
+            if let Some(spec) = &c.plate {
+                c.source = crate::plates::ensure(spec, w, h)?;
+            }
+        }
         Ok(p)
     }
 }

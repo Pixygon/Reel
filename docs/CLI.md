@@ -92,8 +92,84 @@ Append a piece of media to the timeline
 | --- | --- | --- |
 | `--at` | `SECONDS` | Timeline position (default: after the last clip) |
 | `--in` | `SECONDS` | Start point inside the source (default 0) |
-| `--duration` | `SECONDS` | How much of the source to use (default: all of it) |
+| `--duration` | `SECONDS` | How much of the source to use (default: all of it; a still or plate gets 5) |
 | `--track` | `KIND` | video, overlay (picture-in-picture) or audio |
+| `--slot` | `NAME` | Name this clip as a template slot (see `reel slot`) |
+
+**What `MEDIA` can be.** Everything goes through the same verb:
+
+| Media | Default length | Notes |
+|---|---|---|
+| Video or audio file | All of it, from `--in` | |
+| Still image (PNG, JPEG, WebP, SVG…) | 5 seconds | `--duration` sets it. No sound of its own; the clips around it keep theirs |
+| `color:RRGGBB` | 5 seconds | A generated solid plate, sized to the frame. The project stores the colour, not the file, so it survives a move to another machine |
+| `color:transparent` | 5 seconds | A blank canvas: black on V1, nothing at all on the overlay track |
+| A `.reel` project | Its whole length | **Nesting** (a compound clip): rendered flat beside itself, and re-rendered before `render` if the nested edit changed. A project can't nest itself |
+
+**Overlay track.** There is one overlay track (`V2`) and no fixed limit on it:
+clips may overlap freely and draw in the order they were added, later on top.
+PNG **alpha is kept** in the render, so a logo or a dark-disc avatar needs no
+`--key-color`. One honest gap: the live inset preview shows a still opaque
+(the render and `reel frame` are right).
+
+**Audio track.** Clips on `A1` may overlap; each keeps its own gain and they
+are summed without normalising, in the preview and the render alike. One
+exception: the no-GPU fallback renderer leaves `A1` clips out, and warns. It
+also drops the cut's own sound when any V1 clip (a still, a plate) has none.
+
+### `reel slot ACTION PROJECT NAME?`
+
+Named template slots, so an episode swaps its captures and card text by name
+and never needs `title remove`/`add --index`. `ACTION` is `set`, `list`, `bind`
+or `unbind`.
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--media` | `FILE` | set: the new media (file, .reel or color:RRGGBB) |
+| `--text` | `TEXT` | set: the new text |
+| `--clip` | `ID` | bind: the clip this slot fills |
+| `--title` | `INDEX` | bind: the title this slot fills |
+| `--json` | — | Print the result as JSON |
+
+```bash
+reel add ep.reel capture.mp4 --slot capture        # or bind later: reel slot bind ep.reel capture --clip 100
+reel title add ep.reel --text "Episode 1" --slot card
+reel slot set ep.reel capture --media ep2.mp4
+reel slot set ep.reel card --text "Episode 2"
+reel slot list ep.reel --json
+```
+
+A name can fill several places; `set` reaches them all. A swapped clip keeps
+its place, length, effects and pip. It restarts at the new media's beginning,
+and is shortened only if the new media can't fill it (`shortened` in the
+result says so).
+
+### `reel variant ACTION PROJECT NAME?`
+
+Other frame shapes of ONE project. `ACTION` is `add`, `list`, `set` or `remove`.
+
+| Flag | Value | Meaning |
+|---|---|---|
+| `--size` | `WxH` | add: the frame, e.g. 1080x1920 |
+| `--fit` | `MODE` | add/set: letterbox, crop or blur (default blur when the aspect changes) |
+| `--clip` | `ID` | set: an overlay clip to place by hand in this variant |
+| `--title` | `INDEX` | set: a title to place by hand in this variant |
+| `--x` | `0..1` | set: horizontal centre |
+| `--y` | `0..1` | set: vertical centre |
+| `--scale` | `0..1` | set: inset width, as a fraction of the frame |
+| `--text-size` | `0..1` | set: title height, as a fraction of the frame |
+| `--json` | — | Print the result as JSON |
+
+```bash
+reel variant add ep.reel 9x16 --size 1080x1920
+reel render ep.reel ep-9x16.mp4 --variant 9x16
+reel variant set ep.reel 9x16 --title 0 --y 0.2    # this one title, by hand
+```
+
+Nothing is hand-placed by default. Insets and titles are scaled from the main
+layout, then kept inside the frame's safe area (portrait keeps clear of the
+platform's caption block and side buttons). Titles grow when there's room and
+shrink when they wouldn't fit. Overrides win, and keyframed pips follow.
 
 ### `reel split PROJECT`
 
@@ -234,6 +310,15 @@ Colour, fades and reframing for one clip
 | `--rotate` | `DEG` | Quarter turns: 0, 90, 180 or 270 (clockwise) |
 | `--flip-h` | — | Mirror left-right (toggle) |
 | `--flip-v` | — | Mirror top-bottom (toggle; both = 180° rotation) |
+| `--rotate-deg` | `DEG` | Free rotation, clockwise, any angle (0 = off) |
+| `--blur` | `R` | Gaussian blur, in 1/1080ths of the clip's height (0 = off) |
+| `--rgb-split` | `PX` | RGB split: red and blue pulled apart, 1/1080ths of the height (0 = off) |
+| `--glitch` | `SEED` | Glitch: seeded tears and a jittering split (off = off) |
+| `--shake` | `AMP` | Screen shake, 1/1080ths of the frame; on an adjustment clip it moves everything below (0 = off) |
+| `--shake-hz` | `F` | Shake speed (default 8) |
+| `--build` | `tiles N` | Logo build: assemble the picture from N tiles at the clip's start |
+| `--build-seconds` | `S` | How long the build takes (default 1) |
+| `--build-off` | — | Remove the build |
 | `--plugin` | `FILE.wgsl` | An effect plugin (WGSL) — runs in preview AND render; see docs/PLUGINS.md |
 | `--plugin-params` | `A,B,C,D` | The plugin's parameter values (defaults from its header) |
 | `--plugin-off` | — | Remove the plugin |
@@ -319,6 +404,7 @@ ACTION is add, list or remove — text placed on the picture, optionally animate
 | `--color` | `RRGGBB` | Hex colour, e.g. ffcc00 |
 | `--no-bold` | — | Regular weight |
 | `--no-outline` | — | No dark outline |
+| `--slot` | `NAME` | Name this title as a template slot (see `reel slot`) |
 | `--preset` | `NAME` | A title preset (style + motion) from ~/.config/reel/titles — name or path |
 | `--fade-in` | `SECONDS` | Fade (and slide, if set) up over this long |
 | `--fade-out` | `SECONDS` | Fade away over this long |
@@ -516,6 +602,7 @@ Export one frame as PNG. TARGET is a .reel (rendered with effects, overlays, ani
 | --- | --- | --- |
 | `--at` | `SECONDS` | Which moment (default 0) |
 | `--out` | `FILE.png` | Where to write the PNG (default beside the target) |
+| `--variant` | `NAME` | Show this aspect variant (see `reel variant`) |
 | `--overwrite` | — | Replace the output if it exists |
 
 ### `reel render PROJECT OUTPUT`
@@ -535,6 +622,7 @@ Render the edit — captions, titles and music included
 | `--no-hardware` | — | Force the software encoder |
 | `--overwrite` | — | Replace the output file if it exists |
 | `--watch` | — | Keep going: re-render whenever the project file changes (Ctrl+C stops) |
+| `--variant` | `NAME` | Render this aspect variant (see `reel variant`) |
 | `--quiet` | — | Don't print progress |
 | `--json` | — | Print the result as JSON |
 

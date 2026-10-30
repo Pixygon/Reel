@@ -113,6 +113,39 @@ pub struct Effects {
     /// Mirror the picture top-bottom.
     #[serde(default)]
     pub flip_v: bool,
+    /// Gaussian blur sigma, in 1/1080ths of the picture height (so the same
+    /// number looks the same at any size). 0 = off.
+    #[serde(default)]
+    pub blur: f32,
+    /// RGB split: red and blue pulled apart sideways, same unit as `blur`.
+    #[serde(default)]
+    pub rgb_split: f32,
+    /// Glitch: horizontal tears and a jittering split, seeded and repeatable.
+    #[serde(default)]
+    pub glitch: Option<u32>,
+    /// Screen shake amplitude, 1/1080ths of the frame. The picture moves as a
+    /// whole (through zoom + pan), so it never exposes an edge.
+    #[serde(default)]
+    pub shake: f32,
+    /// Shake speed, Hz.
+    #[serde(default = "default_shake_hz")]
+    pub shake_hz: f32,
+    /// Free rotation, degrees clockwise, on top of the `rotate` quarter turns.
+    #[serde(default)]
+    pub rotate_deg: f32,
+    /// Logo build: assemble the picture from about this many tiles. 0 = off.
+    #[serde(default)]
+    pub build_tiles: u32,
+    /// How long the build takes from the clip's start.
+    #[serde(default = "one")]
+    pub build_seconds: f32,
+    /// Per-frame state, resolved by `at_time` — never saved.
+    #[serde(skip)]
+    pub shake_now: [f32; 2],
+    #[serde(skip)]
+    pub glitch_phase: f32,
+    #[serde(skip, default = "one")]
+    pub build_prog: f32,
 }
 
 /// An HSL secondary: the selection window and the push applied inside it.
@@ -343,6 +376,19 @@ fn one() -> f32 {
     1.0
 }
 
+fn default_shake_hz() -> f32 {
+    8.0
+}
+
+/// The shake path at time `t`: two detuned sines per axis, in -1..1. Pure and
+/// repeatable, so preview and render land on the same offset.
+pub fn shake_path(t: f64, hz: f32) -> [f32; 2] {
+    let w = std::f64::consts::TAU * hz.max(0.01) as f64 * t;
+    let x = (w.sin() + 0.5 * (w * 1.73 + 1.1).sin()) / 1.5;
+    let y = ((w * 1.31 + 0.7).sin() + 0.5 * (w * 2.11 + 2.3).sin()) / 1.5;
+    [x as f32, y as f32]
+}
+
 impl Default for Effects {
     fn default() -> Self {
         Self {
@@ -371,6 +417,17 @@ impl Default for Effects {
             rotate: 0,
             flip_h: false,
             flip_v: false,
+            blur: 0.0,
+            rgb_split: 0.0,
+            glitch: None,
+            shake: 0.0,
+            shake_hz: default_shake_hz(),
+            rotate_deg: 0.0,
+            build_tiles: 0,
+            build_seconds: 1.0,
+            shake_now: [0.0; 2],
+            glitch_phase: 0.0,
+            build_prog: 1.0,
         }
     }
 }
@@ -467,6 +524,85 @@ impl Effects {
             && !self.flip_v
             && self.rotate % 4 == 0
             && self.plugin.is_none()
+            && !self.has_picture_fx()
+    }
+
+    /// Any of the frame-server-only picture effects? The graph fallback
+    /// warns when one is set.
+    pub fn has_picture_fx(&self) -> bool {
+        self.blur > 0.0
+            || self.rgb_split > 0.0
+            || self.glitch.is_some()
+            || self.shake > 0.0
+            || self.rotate_deg % 360.0 != 0.0
+            || self.build_tiles > 0
+    }
+
+    /// These effects at clip-local time `t`: the shake folded into zoom + pan
+    /// and the glitch and build phases resolved. Every animated path goes
+    /// through this, which is what keeps preview and render on one clock.
+    pub fn at_time(mut self, t: f64) -> Self {
+        if self.shake > 0.0 {
+            let a = (self.shake / 1080.0).min(0.2);
+            let p = shake_path(t, self.shake_hz);
+            self.shake_now = [p[0] * a, p[1] * a];
+            self.apply_shake(self.shake_now, a);
+        }
+        if let Some(seed) = self.glitch {
+            let step = (t * 12.0).floor() as u32 % 4096;
+            self.glitch_phase = (seed % 997) as f32 + step as f32 * 0.37;
+        }
+        if self.build_tiles > 0 {
+            self.build_prog = (t as f32 / self.build_seconds.max(0.01)).clamp(0.0, 1.0);
+        }
+        self
+    }
+
+    /// Move the zoom window by `d` (frame fractions), first zooming in just
+    /// enough that amplitude `a` can never expose an edge.
+    fn apply_shake(&mut self, d: [f32; 2], a: f32) {
+        let z0 = self.zoom.max(1.0);
+        let z1 = z0 / (1.0 - 2.0 * a);
+        let room = (1.0 - 1.0 / z1) * 0.5;
+        let held = (1.0 - 1.0 / z0) * 0.5;
+        self.pan_x = ((self.pan_x * held + d[0] / z0) / room).clamp(-1.0, 1.0);
+        self.pan_y = ((self.pan_y * held + d[1] / z0) / room).clamp(-1.0, 1.0);
+        self.zoom = z1;
+    }
+
+    /// The picture-stage uniforms (motion, rot, build) for a picture of this
+    /// aspect — the one place both passes get them from. See picture.wgsl.
+    pub fn picture_uniforms(&self, aspect: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
+        let unit = 1.0 / 1080.0;
+        let tear = if self.glitch.is_some() { (self.rgb_split * 3.0 * unit).max(0.02) } else { 0.0 };
+        let motion = [self.blur * unit, self.rgb_split * unit, self.glitch_phase, tear];
+        let (s, c) = self.rotate_deg.to_radians().sin_cos();
+        let turned = self.rotate_deg % 360.0 != 0.0;
+        let rot = [c, s, aspect, if turned { 1.0 } else { 0.0 }];
+        let build = if self.build_tiles > 0 && self.build_prog < 1.0 {
+            let (cols, rows) = self.build_grid(aspect);
+            [cols as f32, rows as f32, self.build_prog, 0.0]
+        } else {
+            [0.0; 4]
+        };
+        (motion, rot, build)
+    }
+
+    /// The build's grid: close to square cells, at least `build_tiles` of them.
+    pub fn build_grid(&self, aspect: f32) -> (u32, u32) {
+        let n = self.build_tiles.max(1) as f32;
+        let rows = (n / aspect.max(0.01)).sqrt().round().max(1.0);
+        ((n / rows).ceil() as u32, rows as u32)
+    }
+
+    /// How much bigger than the picture its rotated bounds are, per axis.
+    pub fn rotated_bounds(&self, aspect: f32) -> (f32, f32) {
+        if self.rotate_deg % 360.0 == 0.0 {
+            return (1.0, 1.0);
+        }
+        let (s, c) = self.rotate_deg.to_radians().sin_cos();
+        let (s, c, a) = (s.abs(), c.abs(), aspect.max(0.01));
+        (c + s / a, c + s * a)
     }
 
     /// Take another clip's GRADE — the colour work only. Fades, reframe,
@@ -496,6 +632,17 @@ impl Effects {
             out.exposure *= fx.exposure;
             out.contrast *= fx.contrast;
             out.saturation *= fx.saturation;
+            // Picture effects carry through an adjustment layer: that is how
+            // one shake moves the whole frame, not one clip.
+            out.blur = out.blur.max(fx.blur);
+            out.rgb_split = out.rgb_split.max(fx.rgb_split);
+            if out.glitch.is_none() && fx.glitch.is_some() {
+                out.glitch = fx.glitch;
+                out.glitch_phase = fx.glitch_phase;
+            }
+            if fx.shake > 0.0 {
+                out.apply_shake(fx.shake_now, (fx.shake / 1080.0).min(0.2));
+            }
         }
         // The lattice half is baked from the stack and bound separately;
         // the enable flag follows the binding, not this struct.

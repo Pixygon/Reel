@@ -44,7 +44,16 @@ struct Uniforms {
     /// Effect-plugin parameters. Appended LAST — field order is
     /// load-bearing on both sides of the FFI.
     plug: [f32; 4],
+    /// The picture stage — see `Effects::picture_uniforms`.
+    motion: [f32; 4],
+    rot: [f32; 4],
+    build: [f32; 4],
+    /// xy = the rotated bounds this viewport spans (1,1 = the picture).
+    view: [f32; 4],
 }
+
+/// picture.wgsl + video.wgsl — the shared stage is spliced, never copied.
+pub const VIDEO_WGSL: &str = concat!(include_str!("picture.wgsl"), include_str!("video.wgsl"));
 
 pub struct VideoPass {
     pipeline: wgpu::RenderPipeline,
@@ -62,7 +71,7 @@ impl VideoPass {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, target: wgpu::TextureFormat) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reel-video-shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("video.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(VIDEO_WGSL.into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reel-video-bgl"),
@@ -170,6 +179,11 @@ pub struct VideoDraw {
     pub lut: Option<wgpu::TextureView>,
     /// The clip's effect plugin (WGSL), when one is bound and loads.
     pub plugin: Option<std::sync::Arc<crate::plugins::Plugin>>,
+    /// The picture's aspect (what blur, split and rotation measure against).
+    pub aspect: f32,
+    /// How far the viewport reaches past the picture: a rotated inset is
+    /// drawn over its bounds. 1,1 for an unrotated or full-frame draw.
+    pub bounds: [f32; 2],
 }
 
 /// Bind groups built during `prepare`, consumed in `paint` — a QUEUE, not a
@@ -193,6 +207,10 @@ impl CallbackTrait for VideoDraw {
         resources: &mut egui_wgpu::CallbackResources,
     ) -> Vec<wgpu::CommandBuffer> {
         let Some(pass) = resources.get::<VideoPass>() else { return Vec::new() };
+        let stage = self
+            .effects
+            .unwrap_or_default()
+            .picture_uniforms(self.aspect.max(0.01));
         let ubo = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("reel-video-ubo"),
             contents: bytemuck::bytes_of(&Uniforms {
@@ -242,6 +260,10 @@ impl CallbackTrait for VideoDraw {
                 ])
                 .unwrap_or([0.0; 4]),
             plug: self.effects.map(|e| e.plugin_params).unwrap_or([0.0; 4]),
+            motion: stage.0,
+            rot: stage.1,
+            build: stage.2,
+            view: [self.bounds[0], self.bounds[1], 0.0, 0.0],
             }),
             usage: wgpu::BufferUsages::UNIFORM,
         });
@@ -267,7 +289,7 @@ impl CallbackTrait for VideoDraw {
             variants.entry(p.key).or_insert_with(|| {
                 crate::plugins::build_variant(
                     device,
-                    include_str!("video.wgsl"),
+                    VIDEO_WGSL,
                     p,
                     "reel-video-plugin",
                     &pass.pipeline_layout,

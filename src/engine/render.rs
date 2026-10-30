@@ -125,7 +125,7 @@ pub fn start_timeline(
 
     let target = export::render_target(project, settings);
     let total = crate::edit::render_duration(segments);
-    let with_audio = segments.iter().all(|seg| export::has_audio_stream(&seg.source));
+    let with_audio = segments.iter().any(|seg| export::has_audio_stream(&seg.source));
     let burnin = export::burnin_filters(output, overlays, target)?;
 
     // Overlay boxes need the source's aspect to size their decode; probe now,
@@ -328,14 +328,14 @@ pub fn render_still(
             fade_only.fade_in = 0.0;
             opacity *= base_opacity(&fade_only, seg, t);
             // Adjustment layers compose in stills exactly as in motion.
-            let active_adj: Vec<&crate::effects::Effects> = overlays
+            let active_adj: Vec<crate::effects::Effects> = overlays
                 .overlays
                 .iter()
                 .filter(|a| a.adjustment && t >= a.at && t < a.at + a.duration)
-                .map(|a| &a.effects)
+                .map(|a| a.effects_at(t - a.at))
                 .collect();
             let mut stack: Vec<&crate::effects::Effects> = vec![&fx];
-            stack.extend(active_adj);
+            stack.extend(active_adj.iter());
             let eff_fx = crate::effects::Effects::compose_stack(&stack);
             let mut cache = std::collections::HashMap::new();
             let lut = lut_for_stack(&stack, &mut cache, overlays.luts, &comp);
@@ -372,6 +372,7 @@ pub fn render_still(
         let fit = super::sources::overlay_fit_chain(bw, bh);
         if let Some(buf) = grab(&o.source, o.in_point + (t - o.at), tone.as_deref(), &fit, (bw, bh))? {
             let (wf, hf) = (bw as f32 / tw as f32, bh as f32 / th as f32);
+            let shift = adjustment_shake(overlays.overlays, t);
             layers_data.push((
                 buf,
                 bw,
@@ -379,15 +380,15 @@ pub fn render_still(
                 super::Layer {
                     view: comp.upload(&[0, 0, 0, 0], 1, 1),
                     rect: [
-                        pip.x - wf / 2.0,
-                        pip.y - hf / 2.0,
-                        pip.x + wf / 2.0,
-                        pip.y + hf / 2.0,
+                        pip.x + shift[0] - wf / 2.0,
+                        pip.y + shift[1] - hf / 2.0,
+                        pip.x + shift[0] + wf / 2.0,
+                        pip.y + shift[1] + hf / 2.0,
                     ],
                     uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: op,
-                    effects: o.effects,
-                    use_src_alpha: false,
+                    effects: o.effects_at(t - o.at),
+                    use_src_alpha: true,
                     lut: o.effects.has_lattice().then(|| {
                         let base = o
                             .effects
@@ -458,6 +459,17 @@ pub fn still_png(
         anyhow::bail!("burning captions into the still failed");
     }
     Ok((w, h))
+}
+
+/// Where active adjustment layers have shaken the frame to at `t` — overlays
+/// ride it as a position, the base picture through its zoom window.
+fn adjustment_shake(adjustments: &[OverlaySegment], t: f64) -> [f32; 2] {
+    let mut d = [0.0, 0.0];
+    for a in adjustments.iter().filter(|a| a.adjustment && t >= a.at && t < a.at + a.duration) {
+        let now = a.effects_at(t - a.at).shake_now;
+        d = [d[0] - now[0], d[1] - now[1]];
+    }
+    d
 }
 
 /// The device lattice for a grade STACK (clip grade + any adjustment
@@ -788,11 +800,12 @@ fn run(
                 // Adjustment layers: every active one stacks its grade on
                 // top of the clip's own and multiplies the trims — same
                 // composition the preview shows.
-                let active_adj: Vec<&crate::effects::Effects> = adjustments
+                let active_adj: Vec<crate::effects::Effects> = adjustments
                     .iter()
                     .filter(|adj| t >= adj.at && t < adj.at + adj.duration)
-                    .map(|adj| &adj.effects)
+                    .map(|adj| adj.effects_at(t - adj.at))
                     .collect();
+                let active_adj: Vec<&crate::effects::Effects> = active_adj.iter().collect();
                 let (eff_fx, lut) = if active_adj.is_empty() {
                     (fx, lut_for_stack(&[&fx], &mut grade_views, &lut_table, &comp))
                 } else {
@@ -860,20 +873,24 @@ fn run(
                     *bw as f32 / tw as f32 * scale_ratio,
                     *bh as f32 / th as f32 * scale_ratio,
                 );
+                let shift = adjustment_shake(&adjustments, t);
+                let fx = o.effects_at(t - o.at);
                 layers.push(super::Layer {
                     view: a.view.clone(),
                     rect: [
-                        pip.x - wf / 2.0,
-                        pip.y - hf / 2.0,
-                        pip.x + wf / 2.0,
-                        pip.y + hf / 2.0,
+                        pip.x + shift[0] - wf / 2.0,
+                        pip.y + shift[1] - hf / 2.0,
+                        pip.x + shift[0] + wf / 2.0,
+                        pip.y + shift[1] + hf / 2.0,
                     ],
                     uv: [0.0, 0.0, 1.0, 1.0],
                     opacity: op,
                     // The overlay's own effects — chroma key included, which
                     // is what makes a green-screen inset composite.
-                    effects: o.effects,
-                    use_src_alpha: false,
+                    effects: fx,
+                    // Alpha is real here: PNG transparency survives the fit,
+                    // and opaque video decodes to 255 through format=rgba.
+                    use_src_alpha: true,
                     lut: lut_for_stack(&[&o.effects], &mut grade_views, &lut_table, &comp),
                     plugin: plugin_of(&o.effects, &plugin_table),
                 });

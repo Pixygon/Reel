@@ -4,9 +4,45 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
-## [2.0.1] — 2026-10-30
+## [Unreleased]
 
-_Internal release, no user-visible changes._
+### Added
+- Picture effects, one shader stage shared by preview and render: `--blur`, `--rgb-split`, `--glitch`, `--shake`/`--shake-hz` and free `--rotate-deg`. A shake on an adjustment clip moves the whole frame.
+- Logo build: `reel effects --build tiles N --build-seconds S` assembles a picture from tiles.
+- Plates: `reel add P color:RRGGBB --duration N`, and `color:transparent` for a blank canvas.
+- Template slots: `reel slot set|list|bind|unbind`, plus `--slot` on `add` and `title add`.
+- Aspect variants: `reel variant add|list|set|remove` and `render`/`frame --variant`, laid out from the main edit inside the safe area, with per-variant overrides.
+
+### Changed
+- `reel add` gives a still 5 seconds by default instead of refusing it.
+- A still or plate in the cut no longer drops the audio of the clips around it.
+
+### Fixed
+- PNG alpha on the overlay track now survives the render.
+- `reel frame` no longer loses a still that isn't at the very start of the timeline.
+
+## [2.1.0] — 2026-10-30
+
+_Reel adds live picture effects (blur, glitch, shake, logo build), reusable template slots, and multi-aspect-ratio variants._
+
+### Added
+- New picture effects for clips: free-angle rotation, Gaussian blur, RGB split, glitch (seeded tears and jittering split), screen shake, and a logo 'build' animation that assembles the picture from tiles. All run live in preview and in the final render.
+- Template slots: name a clip or title as a slot (with --slot when adding) and later swap its media or text everywhere it's used with `reel slot set`, without hunting down clip IDs or title indexes. `reel slot list/bind/unbind` round out management.
+- Aspect ratio variants: define alternate frame sizes for a project with `reel variant add` (e.g. a 9:16 cut alongside the main 16:9 one), then render or preview them with `--variant`. Overlays and titles are automatically scaled and kept clear of safe areas, with manual placement overrides when needed via `reel variant set`.
+- `reel add` now accepts still images (PNG, JPEG, WebP, SVG, etc.) and generated solid-colour plates (`color:RRGGBB` or `color:transparent`) as timeline media, each defaulting to a 5-second duration.
+
+### Changed
+- `reel frame` and `reel render` gained a `--variant` flag to target a specific aspect variant when exporting.
+
+### Improved
+- Overlay (picture-in-picture) clips now preserve PNG transparency in renders, so logos or shaped avatars no longer need a colour-key workaround.
+
+### Fixed
+- Screen shake effects applied to an adjustment clip now animate correctly over time instead of being frozen at a single state.
+
+Codex impact: none
+
+## [2.0.1] — 2026-10-30
 
 ### Internal
 - Internal maintenance, no user-visible changes.

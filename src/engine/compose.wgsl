@@ -28,6 +28,10 @@ struct Uniforms {
     flip: vec4<f32>,
     // Plugin parameters (the //! param: sliders), zeros when none.
     plug: vec4<f32>,
+    // The picture stage (picture.wgsl): see Effects::picture_uniforms.
+    motion: vec4<f32>,
+    rot: vec4<f32>,
+    build: vec4<f32>,
 };
 
 // REEL_PLUGIN_SLOT — replaced by the active effect plugin's source; same
@@ -122,8 +126,9 @@ fn apply_effects(rgb: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs(in: VsOut) -> @location(0) vec4<f32> {
     // Reframe: sample a zoomed, panned window of the layer.
+    let placed = place_uv(in.uv, u.rot, fwidth(in.uv));
     let z = max(u.reframe.x, 1.0);
-    let uv = (in.uv - vec2<f32>(0.5)) / z
+    let uv = (placed.xy - vec2<f32>(0.5)) / z
         + vec2<f32>(0.5)
         + vec2<f32>(u.reframe.y, u.reframe.z) * (1.0 - 1.0 / z) * 0.5;
     // Flips mirror the sampled window — geometry before colour, matching
@@ -131,8 +136,9 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
     var uv2 = uv;
     if (u.flip.x > 0.5) { uv2.x = 1.0 - uv2.x; }
     if (u.flip.y > 0.5) { uv2.y = 1.0 - uv2.y; }
-    let s = textureSample(layer_tex, layer_sampler, clamp(uv2, vec2<f32>(0.0), vec2<f32>(1.0)));
-    var a_src = mix(1.0, s.a, u.params.x);
+    let built = build_uv(uv2, u.build);
+    let s = sample_picture(layer_tex, layer_sampler, built.xy, u.motion, u.rot.z, u.params.x > 0.5);
+    var a_src = mix(1.0, s.a, u.params.x) * placed.z * built.z;
     var rgb = s.rgb;
     if (u.fx.w > 0.5) {
         let enc = linear_to_srgb(rgb);

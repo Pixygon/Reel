@@ -34,7 +34,15 @@ struct Uniforms {
     flip: [f32; 4],
     /// Effect-plugin parameters. Appended last; order is load-bearing.
     plug: [f32; 4],
+    /// The picture stage — see `Effects::picture_uniforms`.
+    motion: [f32; 4],
+    rot: [f32; 4],
+    build: [f32; 4],
 }
+
+/// picture.wgsl + compose.wgsl — the shared stage is spliced, never copied.
+pub const COMPOSE_WGSL: &str =
+    concat!(include_str!("../picture.wgsl"), include_str!("compose.wgsl"));
 
 pub struct Compositor {
     pub device: wgpu::Device,
@@ -88,7 +96,7 @@ impl Compositor {
     pub fn with_device(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("reel-compose-shader"),
-            source: wgpu::ShaderSource::Wgsl(include_str!("compose.wgsl").into()),
+            source: wgpu::ShaderSource::Wgsl(COMPOSE_WGSL.into()),
         });
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("reel-compose-bgl"),
@@ -224,6 +232,8 @@ impl Compositor {
 
     /// Render `scene` into `target`: layers back-to-front over opaque black.
     pub fn render(&self, scene: &Scene, target: &wgpu::Texture) {
+        let size = target.size();
+        let frame_aspect = size.width as f32 / size.height.max(1) as f32;
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
         // Compile any new plugin pipelines first (outside the pass borrow).
         {
@@ -233,7 +243,7 @@ impl Compositor {
                     variants.entry(p.key).or_insert_with(|| {
                         crate::plugins::build_variant(
                             &self.device,
-                            include_str!("compose.wgsl"),
+                            COMPOSE_WGSL,
                             p,
                             "reel-compose-plugin",
                             &self.pipeline_layout,
@@ -253,7 +263,7 @@ impl Compositor {
             .map(|l| {
                 let ubo = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("reel-compose-ubo"),
-                    contents: bytemuck::bytes_of(&Self::uniforms(l)),
+                    contents: bytemuck::bytes_of(&Self::uniforms(l, frame_aspect)),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -316,9 +326,22 @@ impl Compositor {
         self.queue.submit(Some(encoder.finish()));
     }
 
-    fn uniforms(l: &Layer) -> Uniforms {
+    fn uniforms(l: &Layer, frame_aspect: f32) -> Uniforms {
+        // The whole picture's shape: a wipe crops rect and uv together.
+        let (rw, rh) = (l.rect[2] - l.rect[0], l.rect[3] - l.rect[1]);
+        let (uw, uh) = (l.uv[2] - l.uv[0], l.uv[3] - l.uv[1]);
+        let aspect = (rw / uw.max(1e-3)) / (rh / uh.max(1e-3)).max(1e-3) * frame_aspect;
+        let (motion, rot, build) = l.effects.picture_uniforms(aspect);
+        // A rotated layer draws over its bounds; rect and uv grow together so
+        // the picture keeps its size and only the corners gain room.
+        let (sx, sy) = l.effects.rotated_bounds(aspect);
+        let grow = |r: [f32; 4]| {
+            let (cx, cy) = ((r[0] + r[2]) / 2.0, (r[1] + r[3]) / 2.0);
+            let (hw, hh) = ((r[2] - r[0]) / 2.0 * sx, (r[3] - r[1]) / 2.0 * sy);
+            [cx - hw, cy - hh, cx + hw, cy + hh]
+        };
         Uniforms {
-            rect: l.rect,
+            rect: grow(l.rect),
             params: [
                 if l.use_src_alpha { 1.0 } else { 0.0 },
                 if l.effects.has_colour() { 1.0 } else { 0.0 },
@@ -342,7 +365,7 @@ impl Compositor {
                 .key_color
                 .map(|c| [c[0], c[1], c[2], l.effects.key_similarity])
                 .unwrap_or([0.0; 4]),
-            uvr: l.uv,
+            uvr: grow(l.uv),
             mask: Some(l.effects)
                 .and_then(|e| e.mask)
                 .map(|m| [m.cx, m.cy, m.w, m.h])
@@ -363,6 +386,9 @@ impl Compositor {
                 0.0,
             ],
             plug: l.effects.plugin_params,
+            motion,
+            rot,
+            build,
         }
     }
 

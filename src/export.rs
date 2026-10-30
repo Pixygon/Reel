@@ -1058,6 +1058,11 @@ pub(crate) fn start_timeline_graph(
     if overlays.overlays.iter().any(|o| o.adjustment) {
         dropped.push("adjustment layers");
     }
+    if segments.iter().any(|s| s.effects.has_picture_fx())
+        || overlays.overlays.iter().any(|o| o.effects.has_picture_fx())
+    {
+        dropped.push("blur, glitch, shake, free rotation and logo builds");
+    }
     if segments.iter().any(|s| s.effects.plugin.is_some())
         || overlays.overlays.iter().any(|o| o.effects.plugin.is_some())
     {
@@ -1065,6 +1070,9 @@ pub(crate) fn start_timeline_graph(
     }
     if !overlays.markers.is_empty() {
         dropped.push("chapters");
+    }
+    if !overlays.audio_clips.is_empty() {
+        dropped.push("audio-track clips");
     }
     if !dropped.is_empty() {
         log::warn!(
@@ -1312,7 +1320,13 @@ pub(crate) fn build_timeline_audio_wav_args(
             }
         }
         for src in &sources {
-            a.extend(["-i".into(), (*src).into()]);
+            // A still or plate in the cut stays silent; it must not cost the
+            // clips around it their sound.
+            if has_audio_stream(src) {
+                a.extend(["-i".into(), (*src).into()]);
+            } else {
+                a.extend(["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"].map(String::from));
+            }
         }
     }
     let music_input = music.map(|m| {
