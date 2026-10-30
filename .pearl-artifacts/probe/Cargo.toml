@@ -1,0 +1,7 @@
+[package]
+name="probe"
+version="0.0.0"
+edition="2021"
+[workspace]
+[dependencies]
+pixygon-updater = { git = "https://github.com/Pixygon/Dyson.git", branch = "cursor/iterate-cli-8b83", optional = true }
