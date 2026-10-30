@@ -28,6 +28,14 @@ pub struct Clip {
     pub start: f64,     // timeline position
     pub in_point: f64,  // offset into the source
     pub duration: f64,
+    /// Named selections with a local adjustment each, stored at picture
+    /// resolution inside the project (see masks.rs). V1 clips only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masks: Vec<crate::masks::LocalMask>,
+    /// Which mask the Adjust panel is editing; `None` = the whole clip.
+    /// Interface state, never saved.
+    #[serde(skip)]
+    pub active_mask: Option<usize>,
     /// Colour adjustments and fades for this clip. Defaults to identity, and
     /// is `serde(default)` so `.reel` files written before effects still load.
     #[serde(default)]
@@ -580,6 +588,22 @@ impl Default for Pip {
 }
 
 impl Clip {
+    /// The settings the Adjust panel is pointed at: the active mask's, or
+    /// the clip's own.
+    pub fn adjust_fx(&self) -> Effects {
+        match self.active_mask.and_then(|i| self.masks.get(i)) {
+            Some(m) => m.adjust,
+            None => self.effects,
+        }
+    }
+
+    pub fn adjust_fx_mut(&mut self) -> &mut Effects {
+        match self.active_mask.filter(|&i| i < self.masks.len()) {
+            Some(i) => &mut self.masks[i].adjust,
+            None => &mut self.effects,
+        }
+    }
+
     /// The keyframe track for one parameter, if any.
     pub fn key_track(&self, p: Param) -> Option<&[Keyframe]> {
         self.keys.iter().find(|(q, _)| *q == p).map(|(_, k)| k.as_slice())
@@ -739,6 +763,8 @@ pub struct Segment {
     pub in_point: f64,
     pub duration: f64,
     pub effects: Effects,
+    /// Local adjustments, each behind its own matte (see masks.rs).
+    pub locals: Vec<crate::masks::LocalMask>,
     /// Crossfade from the previous segment, in seconds (0 = hard cut).
     pub transition_in: f64,
     pub transition_kind: TransitionKind,
@@ -1132,6 +1158,8 @@ impl Project {
         if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
             track.clips.push(Clip {
                 id,
+                masks: Vec::new(),
+                active_mask: None,
                 name,
                 source: source.into(),
                 start: at.max(0.0),
@@ -2204,6 +2232,7 @@ impl Project {
                     in_point: c.in_point + head * c.speed.max(0.01) as f64,
                     duration: end - start,
                     effects: c.effects,
+                    locals: c.masks.clone(),
                     // A clip cut into by the range marker loses its
                     // transition — there's no longer a clip to fade from.
                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },

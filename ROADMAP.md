@@ -309,7 +309,7 @@ Ordered by leverage; each lands with measured tests like everything above.
 
 A still is a one-frame composition; the compositor, grade stack, masks,
 titles and adjustment layers already work on one. The plan (unchanged from
-the original Phase 5): layer stack for stills, selections & brush masks,
+the original Phase 5): layer stack for stills, selections & brush masks (shipped: `masks.rs`, Masks panel, `reel mask`),
 crop/rotate/straighten/perspective, retouch (clone/heal), local-model
 background removal + upscale (the captions pattern: fetched once, local,
 never uploaded), text-on-image via titles, the thumbnail workflow, batch

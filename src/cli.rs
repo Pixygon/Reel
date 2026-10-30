@@ -327,6 +327,26 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Place a picture-in-picture overlay in the frame",
     },
     Cmd {
+        name: "mask",
+        args: &["PROJECT"],
+        flags: &[
+            Flag { name: "clip", value: Some("ID"), help: "Clip id (a clip on the main video track)" },
+            Flag { name: "import", value: Some("PNG"), help: "Add a mask from a matte image: white = selected, black or transparent = not" },
+            Flag { name: "name", value: Some("TEXT"), help: "Name for the imported mask, or the mask to change" },
+            Flag { name: "feather", value: Some("PX"), help: "Soften the imported matte's edge, in source pixels" },
+            Flag { name: "grow", value: Some("PX"), help: "Expand (positive) or contract (negative) the imported matte" },
+            Flag { name: "invert", value: None, help: "Invert the imported matte" },
+            Flag { name: "exposure", value: Some("N"), help: "Exposure inside the mask" },
+            Flag { name: "contrast", value: Some("N"), help: "Contrast inside the mask" },
+            Flag { name: "saturation", value: Some("N"), help: "Saturation inside the mask" },
+            Flag { name: "hide", value: None, help: "Keep the mask but stop applying it" },
+            Flag { name: "show", value: None, help: "Apply a hidden mask again" },
+            Flag { name: "remove", value: None, help: "Delete the mask named by --name" },
+            F_JSON,
+        ],
+        help: "Add, adjust, hide or list a clip's local masks (a PNG matte imports as a mask; with neither --import nor --name, lists them)",
+    },
+    Cmd {
         name: "speed",
         args: &["PROJECT"],
         flags: &[
@@ -830,6 +850,7 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "effects" => cmd_effects(p),
         "keyframe" => cmd_keyframe(p),
         "pip" => cmd_pip(p),
+        "mask" => cmd_mask(p),
         "speed" => cmd_speed(p),
         "curves" => cmd_curves(p),
         "transition" => cmd_transition(p),
@@ -1606,6 +1627,117 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
         format!("Updated the look of clip {id}"),
         serde_json::json!({ "clip": id, "effects": fx }),
     ))
+}
+
+fn cmd_mask(p: &Parsed) -> Result<Output> {
+    let path = p.at(0)?;
+    let id: u64 = p.need_num("clip")?;
+    let mut proj = load(path)?;
+    let on_v1 = proj
+        .tracks
+        .iter()
+        .any(|t| t.kind == TrackKind::Video && t.clips.iter().any(|c| c.id == id));
+    if !on_v1 {
+        bail!("clip {id} is not on the main video track — masks apply to those clips");
+    }
+    let import = p.str("import");
+    let name = p.str("name").map(str::to_string);
+    let mut verb = "listed";
+    let list = {
+        let c = find_clip_mut(&mut proj, id)?;
+        if let Some(file) = import {
+            let bytes = std::fs::read(file).with_context(|| format!("reading {file}"))?;
+            let mut plane = crate::masks::Plane::from_image_bytes(&bytes)
+                .with_context(|| format!("{file} is not an image"))?;
+            // Stored at the picture's own resolution, whatever was imported.
+            let info = crate::video::decoder::probe(&c.source)?;
+            if (plane.w, plane.h) != (info.width, info.height) {
+                plane = plane.resized(info.width, info.height);
+            }
+            if let Some(px) = p.num::<f32>("grow")? {
+                plane.expand(px);
+            }
+            if p.on("invert") {
+                plane.invert();
+            }
+            if let Some(px) = p.num::<f32>("feather")? {
+                plane.feather(px);
+            }
+            let label = name.clone().unwrap_or_else(|| format!("Mask {}", c.masks.len() + 1));
+            if c.masks.iter().any(|m| m.name == label) {
+                bail!("clip {id} already has a mask named \"{label}\"");
+            }
+            c.masks.push(crate::masks::LocalMask::new(&label, plane)?);
+            verb = "imported";
+        }
+        let target = match (import, &name) {
+            (Some(_), _) => c.masks.len().checked_sub(1),
+            (None, Some(n)) => Some(
+                c.masks
+                    .iter()
+                    .position(|m| &m.name == n)
+                    .ok_or_else(|| anyhow!("clip {id} has no mask named \"{n}\""))?,
+            ),
+            (None, None) => None,
+        };
+        if let Some(i) = target {
+            if p.on("remove") {
+                c.masks.remove(i);
+                verb = "removed";
+            } else {
+                let m = &mut c.masks[i];
+                if import.is_none() {
+                    verb = "updated";
+                }
+                if let Some(v) = p.num::<f32>("exposure")? {
+                    m.adjust.exposure = v;
+                }
+                if let Some(v) = p.num::<f32>("contrast")? {
+                    m.adjust.contrast = v;
+                }
+                if let Some(v) = p.num::<f32>("saturation")? {
+                    m.adjust.saturation = v;
+                }
+                if p.on("hide") {
+                    m.visible = false;
+                }
+                if p.on("show") {
+                    m.visible = true;
+                }
+            }
+        }
+        c.masks
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "name": m.name,
+                    "visible": m.visible,
+                    "width": m.matte.plane.w,
+                    "height": m.matte.plane.h,
+                    "exposure": m.adjust.exposure,
+                    "contrast": m.adjust.contrast,
+                    "saturation": m.adjust.saturation,
+                })
+            })
+            .collect::<Vec<_>>()
+    };
+    if verb != "listed" {
+        save(&proj, path)?;
+    }
+    let lines: Vec<String> = list
+        .iter()
+        .map(|m| {
+            format!(
+                "{} — {}×{}{}",
+                m["name"].as_str().unwrap_or(""),
+                m["width"],
+                m["height"],
+                if m["visible"] == true { "" } else { " (hidden)" },
+            )
+        })
+        .collect();
+    let text = if lines.is_empty() { format!("Clip {id} has no masks") } else { lines.join("\n") };
+    Ok(Output::new(text, serde_json::json!({ "clip": id, "action": verb, "masks": list })))
 }
 
 fn cmd_speed(p: &Parsed) -> Result<Output> {
@@ -3516,6 +3648,41 @@ mod tests {
         let cmd = COMMANDS.iter().find(|c| c.name == name).unwrap();
         let owned: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         parse(cmd, &owned)
+    }
+
+    #[test]
+    fn a_png_matte_imports_at_picture_size_and_survives_reopening() {
+        let dir = std::env::temp_dir().join(format!("reel-cli-mask-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("p.reel");
+        let path = path.to_str().unwrap();
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixture.mp4");
+        dispatch("new", &parse_for("new", &[path]).unwrap()).unwrap();
+        dispatch("add", &parse_for("add", &[path, fixture]).unwrap()).unwrap();
+        let id = load(path).unwrap().tracks[0].clips[0].id.to_string();
+        // A small matte: it must conform to the 320×240 source on import.
+        let png = dir.join("m.png");
+        image::GrayImage::from_fn(32, 24, |x, _| image::Luma([if x < 16 { 255 } else { 0 }]))
+            .save(&png)
+            .unwrap();
+        let png = png.to_str().unwrap();
+        let args = ["--clip", &id, "--import", png, "--name", "Left", "--exposure", "1.3"];
+        let mut all = vec![path];
+        all.extend(args);
+        dispatch("mask", &parse_for("mask", &all).unwrap()).unwrap();
+        dispatch("mask", &parse_for("mask", &[path, "--clip", &id, "--name", "Left", "--hide"]).unwrap())
+            .unwrap();
+        let proj = load(path).unwrap();
+        let m = &proj.tracks[0].clips[0].masks[0];
+        assert_eq!((m.name.as_str(), m.visible), ("Left", false));
+        assert_eq!((m.matte.plane.w, m.matte.plane.h), (320, 240));
+        assert_eq!(m.adjust.exposure, 1.3);
+        assert_eq!(m.matte.plane.data[10 * 320 + 40], 255);
+        assert_eq!(m.matte.plane.data[10 * 320 + 280], 0);
+        dispatch("mask", &parse_for("mask", &[path, "--clip", &id, "--name", "Left", "--remove"]).unwrap())
+            .unwrap();
+        assert!(load(path).unwrap().tracks[0].clips[0].masks.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

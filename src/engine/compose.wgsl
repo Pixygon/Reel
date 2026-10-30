@@ -28,6 +28,11 @@ struct Uniforms {
     flip: vec4<f32>,
     // Plugin parameters (the //! param: sliders), zeros when none.
     plug: vec4<f32>,
+    // Local-mask pass: where the picture sits in this frame (min x, min y,
+    // max x, max y); see matte_factor.
+    matte: vec4<f32>,
+    // x = 1 enables the matte (and straight-alpha output), y = quarter turns.
+    matte2: vec4<f32>,
 };
 
 // REEL_PLUGIN_SLOT — replaced by the active effect plugin's source; same
@@ -74,6 +79,32 @@ fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
 @group(0) @binding(2) var<uniform> u: Uniforms;
 // The clip's 3D LUT (identity when none). reframe.w = 1 enables it.
 @group(0) @binding(3) var lut_tex: texture_3d<f32>;
+// The local mask (R8, picture resolution); 1×1 white when none.
+@group(0) @binding(4) var matte_tex: texture_2d<f32>;
+
+// How much of this pass's grade applies at frame uv `q`: the picture window
+// is undone, then the clip's quarter turns (see masks::unrotate_uv), so a
+// matte stored at source resolution lands on the same pixels whatever the
+// render frame. Bars and overflow are outside the picture: nothing selected.
+fn matte_factor(q: vec2<f32>) -> f32 {
+    if (u.matte2.x < 0.5) {
+        return 1.0;
+    }
+    let p = (q - u.matte.xy) / max(u.matte.zw - u.matte.xy, vec2<f32>(1e-6));
+    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {
+        return 0.0;
+    }
+    var s = p;
+    let turns = i32(u.matte2.y + 0.5);
+    if (turns == 1) {
+        s = vec2<f32>(p.y, 1.0 - p.x);
+    } else if (turns == 2) {
+        s = vec2<f32>(1.0 - p.x, 1.0 - p.y);
+    } else if (turns == 3) {
+        s = vec2<f32>(1.0 - p.y, p.x);
+    }
+    return textureSampleLevel(matte_tex, layer_sampler, s, 0.0).r;
+}
 
 struct VsOut {
     @builtin(position) pos: vec4<f32>,
@@ -166,8 +197,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
     }
     // The power window: grade only where the mask says.
-    rgb = mix(graded_from, rgb, mask_factor(in.uv));
+    rgb = mix(graded_from, rgb, mask_factor(in.uv) * matte_factor(in.uv));
     let a = a_src * u.params.z;
+    // A local-mask pass rewrites a SOURCE frame, so it keeps that frame's
+    // straight alpha — the main pass premultiplies it later, once.
+    if (u.matte2.x > 0.5) {
+        return vec4<f32>(rgb, a);
+    }
     // Premultiplied out; a fade therefore fades to whatever is beneath —
     // black for the base layer, the base picture for overlays.
     return vec4<f32>(rgb * a, a);

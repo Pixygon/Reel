@@ -25,6 +25,7 @@ mod integration;
 #[cfg(target_os = "macos")]
 mod macos;
 mod lut;
+mod masks;
 mod media;
 mod perf;
 #[cfg(target_os = "linux")]
@@ -154,6 +155,7 @@ impl ApplicationHandler<UserEvent> for Reel {
                 // 1) advance playback and push any new frame to the GPU + egui.
                 perf::note_redraw();
                 self.app.sync_frame(gpu, egui);
+                self.app.sync_local_preview(gpu);
 
                 // 2) build the UI.
                 egui.begin_frame(&window);

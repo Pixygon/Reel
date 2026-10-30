@@ -1,0 +1,1914 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0a835bd..b87a14f 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,12 @@ All notable changes to **Reel**. Format follows
+ [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
+ materialized from the Pixygon Changelog API — edit there, not here.
+ 
++## Unreleased
++
++- **Selections and local edits.** In the editor, a clip's new Masks section has lasso (freehand and polygon), rectangle, ellipse, a brush that adds or removes, and a colour pick with a tolerance slider and contiguous on/off. Shift adds, Alt subtracts, both intersect; feather, grow/contract, invert, clear; the selection shows as a tint you can toggle. Save it as a named, hideable mask, stored at picture resolution inside the project, and every Adjust setting then edits only that mask. Several masks stack, and overlaps accumulate. Exporting an edited photo now carries its edits.
++- **The same mask works on video** as a static matte, on every frame. Preview and render run one shared GPU pass, so they match, and tests compare the pixels.
++- **`reel mask`** imports a PNG matte, adjusts, hides, lists and removes masks. See docs/CLI.md.
++
+ ## [2.0.0] — 2026-10-22
+ 
+ ### Added
+diff --git a/CLAUDE.md b/CLAUDE.md
+index d50a095..74224c5 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -390,6 +390,9 @@ pearl ship                     # ship ritual: test → draft → ship → commit
+   watching the preview move without a keyboard.
+ - CLI media paths are canonicalized at `add`/`music set` — a project must
+   find its media when opened from any directory.
++- LOCAL MASKS (`masks.rs`): a selection is a `Plane` (one byte per picture pixel); `Clip.masks` holds named `LocalMask`s (matte + `Effects`), V1 clips only, embedded in the .reel as base64 PNG encoded at creation (`Matte`). `LocalChain` (compositor) is the ONE path: it rewrites the SOURCE frame before the clip's grade, each mask reading the previous result, and preview (`app.sync_local_preview`) and both export paths run it. compose.wgsl only: binding 4 + `matte`/`matte2` uniforms, straight alpha out; video.wgsl has no matte on purpose. Stored mattes are unrotated source coordinates; `Fit::picture_rect` + quarter turns map them into a frame. The Adjust panel reads and writes through `Clip::adjust_fx`/`adjust_fx_mut`. The graph fallback warns and drops masks; a crossfade's incoming clip and PiP previews are unmasked.
++- A GPU-less box can run the compositor tests on Mesa: `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless`. Without it those tests print "no GPU" and pass without proving anything.
++
+ 
+ ## macOS (Apple silicon)
+ 
+diff --git a/ROADMAP.md b/ROADMAP.md
+index 212f914..099c1e2 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -309,7 +309,7 @@ Ordered by leverage; each lands with measured tests like everything above.
+ 
+ A still is a one-frame composition; the compositor, grade stack, masks,
+ titles and adjustment layers already work on one. The plan (unchanged from
+-the original Phase 5): layer stack for stills, selections & brush masks,
++the original Phase 5): layer stack for stills, selections & brush masks (shipped: `masks.rs`, Masks panel, `reel mask`),
+ crop/rotate/straighten/perspective, retouch (clone/heal), local-model
+ background removal + upscale (the captions pattern: fetched once, local,
+ never uploaded), text-on-image via titles, the thumbnail workflow, batch
+diff --git a/docs/CLI.md b/docs/CLI.md
+index cf5662d..5417d66 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -273,6 +273,44 @@ Place a picture-in-picture overlay in the frame
+ | `--y` | `0..1` | Centre of the inset down the frame |
+ | `--scale` | `0..1` | Inset width as a fraction of the frame |
+ 
++### `reel mask PROJECT`
++
++Add, adjust, hide or list a clip's local masks (a PNG matte imports as a mask; with neither --import nor --name, lists them)
++
++| Flag | Value | Meaning |
++| --- | --- | --- |
++| `--clip` | `ID` | Clip id (a clip on the main video track) |
++| `--import` | `PNG` | Add a mask from a matte image: white = selected, black or transparent = not |
++| `--name` | `TEXT` | Name for the imported mask, or the mask to change |
++| `--feather` | `PX` | Soften the imported matte's edge, in source pixels |
++| `--grow` | `PX` | Expand (positive) or contract (negative) the imported matte |
++| `--invert` | — | Invert the imported matte |
++| `--exposure` | `N` | Exposure inside the mask |
++| `--contrast` | `N` | Contrast inside the mask |
++| `--saturation` | `N` | Saturation inside the mask |
++| `--hide` | — | Keep the mask but stop applying it |
++| `--show` | — | Apply a hidden mask again |
++| `--remove` | — | Delete the mask named by --name |
++
++A mask limits an edit to part of the picture, on a photo or a video clip; on
++video the same matte applies to every frame. Any greyscale image works as a
++matte. One of a different size is resampled to the source, so a matte with a
++different aspect stretches to fit. The matte is stored inside the `.reel` file,
++so the PNG can go away afterwards. Soft greys in the matte blend the edit.
++
++```bash
++reel mask photo.reel --clip 100 --import sky.png --name Sky --feather 12 --exposure 0.8
++reel mask photo.reel --clip 100 --name Sky --saturation 1.3   # change it later
++reel mask photo.reel --clip 100 --name Sky --hide             # keep it, stop applying it
++reel mask photo.reel --clip 100 --json                        # list them
++reel frame photo.reel --out photo-edited.png                # the result
++```
++
++Masks are drawn by the render engine, so the `REEL_RENDER=graph` fallback warns
++and leaves them out. `--feather`, `--grow` and `--invert` act only together with
++`--import`. The other Adjust settings inside a mask are set in the app's Masks
++panel.
++
+ ### `reel speed PROJECT`
+ 
+ Change how fast a clip plays
+diff --git a/src/app.rs b/src/app.rs
+index 2b8278e..ed7ab95 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -41,11 +41,33 @@ pub struct OverlayPreview {
+     pub tex_id: Option<egui::TextureId>,
+ }
+ 
++/// Local masks in the preview: the SAME `LocalChain` the frame server runs,
++/// on the window's device. `key` holds everything that forces a rebuild.
++pub struct LocalPreview {
++    comp: crate::engine::compositor::Compositor,
++    built: Option<LocalBuilt>,
++}
++
++type LocalKey = (Vec<(u64, bool, crate::effects::Effects)>, u32, u32, u8);
++
++struct LocalBuilt {
++    key: LocalKey,
++    chain: crate::engine::compositor::LocalChain,
++    /// A still's straight-alpha pixels and its premultiplied output.
++    still: Option<(wgpu::TextureView, wgpu::Texture)>,
++    view: Option<wgpu::TextureView>,
++}
++
+ pub struct ReelApp {
+     pub mode: Mode,
+     pub player: Option<Player>,
+     /// A still image being viewed (mutually exclusive with `player`).
+     pub image: Option<ImageDoc>,
++    /// The selection tools' state (see masks.rs).
++    pub selection: crate::masks::Selection,
++    /// The preview's run of the local-mask chain; the frame the viewport
++    /// draws instead of the raw one while a mask is showing.
++    pub local: Option<LocalPreview>,
+     image_uploaded: bool,
+     pub project: Project,
+     pub editor: EditorState,
+@@ -217,6 +239,8 @@ impl ReelApp {
+             export_out: String::new(),
+             export: None,
+             export_timeline: false,
++            selection: Default::default(),
++            local: None,
+             queue: export::Queue::default(),
+             captions_job: None,
+             waveforms: crate::waveform::Cache::default(),
+@@ -485,7 +509,7 @@ impl ReelApp {
+                                 self.editor.push_undo(&self.project);
+                                 let idx = self.project.add_lut(&abs);
+                                 if let Some(c) = self.project.clip_mut(clip) {
+-                                    c.effects.lut = Some(idx);
++                                    c.adjust_fx_mut().lut = Some(idx);
+                                 }
+                                 self.editor.mark_changed();
+                                 self.status = "LUT applied — previewed and rendered alike.".into();
+@@ -1304,6 +1328,150 @@ impl ReelApp {
+         }
+     }
+ 
++    /// The clip whose picture is on the viewport, when its masks apply: only
++    /// the editor previews edits, exactly as for `preview_effects`.
++    pub fn masked_clip(&self) -> Option<&crate::edit::Clip> {
++        if self.mode != Mode::Editor {
++            return None;
++        }
++        self.project.clip_at(TrackKind::Video, self.editor.playhead)
++    }
++
++    /// The picture's own size: the resolution a selection is made at.
++    pub fn picture_size(&self) -> Option<(u32, u32)> {
++        if let Some(img) = &self.image {
++            return Some((img.width, img.height));
++        }
++        let info = self.player.as_ref().map(|p| (p.info.width, p.info.height));
++        info.filter(|&(w, h)| w > 0 && h > 0).or_else(|| self.tex_dims())
++    }
++
++    /// Quarter turns between stored picture and on-screen frame: mpv rotates
++    /// video for the preview; stills are shown as stored.
++    pub fn preview_turns(&self, fx: &crate::effects::Effects) -> u8 {
++        if self.image.is_some() { 0 } else { fx.rotate }
++    }
++
++    /// Run the local-mask chain over the frame just synced.
++    pub fn sync_local_preview(&mut self, gpu: &Gpu) {
++        let Some(clip) = self.masked_clip().filter(|c| c.masks.iter().any(|m| m.visible)) else {
++            if let Some(l) = &mut self.local {
++                l.built = None;
++            }
++            return;
++        };
++        let Some(tex) = &self.tex else { return };
++        let turns = if self.image.is_some() { 0 } else { clip.effects.rotate };
++        let key: LocalKey = (
++            clip.masks.iter().map(|m| (m.matte.uid, m.visible, m.adjust)).collect(),
++            tex.width,
++            tex.height,
++            turns,
++        );
++        let masks = clip.masks.clone();
++        let local = self.local.get_or_insert_with(|| LocalPreview {
++            comp: crate::engine::compositor::Compositor::with_device(
++                gpu.device.clone(),
++                gpu.queue.clone(),
++            ),
++            built: None,
++        });
++        if local.built.as_ref().is_none_or(|b| b.key != key) {
++            let Some(chain) = crate::engine::render::local_chain(
++                &local.comp,
++                &masks,
++                (tex.width, tex.height),
++                |_| [0.0, 0.0, 1.0, 1.0], // the preview frame IS the picture
++                turns,
++                self.image.is_some(),
++                &self.project.luts,
++                &self.project.plugins,
++            ) else {
++                return;
++            };
++            let still = self.image.as_ref().map(|img| {
++                (local.comp.upload(&img.data, img.width, img.height), local.comp.target(tex.width, tex.height))
++            });
++            local.built = Some(LocalBuilt { key, chain, still, view: None });
++        }
++        let Some(b) = &mut local.built else { return };
++        // A still only changes with the key; video changes every frame.
++        if b.still.is_some() && b.view.is_some() {
++            return;
++        }
++        b.view = Some(match &b.still {
++            Some((src, out)) => {
++                local.comp.premultiply(&b.chain.run(&local.comp, src), out);
++                out.create_view(&wgpu::TextureViewDescriptor::default())
++            }
++            None => b.chain.run(&local.comp, &tex.view),
++        });
++    }
++
++    /// The frame to draw instead of the raw one, while a mask is showing.
++    pub fn local_view(&self) -> Option<wgpu::TextureView> {
++        self.local.as_ref()?.built.as_ref()?.view.clone()
++    }
++
++    /// Export a photo with its edits: one still through the same engine as
++    /// the frame grab, at the photo's own size. Source export would copy the
++    /// untouched file. Returns false when this photo has no edits to carry.
++    pub fn export_edited_photo(&mut self) -> bool {
++        let (Some(img), Some(path)) = (&self.image, self.media_path()) else { return false };
++        let (w, h) = (img.width, img.height);
++        let Some(mut seg) = self.project.export_segments().into_iter().find(|s| s.source == path)
++        else {
++            return false;
++        };
++        if seg.locals.is_empty() && seg.effects == Default::default() {
++            return false;
++        }
++        seg.transition_in = 0.0;
++        let out = self.export_out.clone();
++        let result = (|| -> anyhow::Result<()> {
++            if std::path::Path::new(&out).exists() {
++                anyhow::bail!("{out} already exists");
++            }
++            let png = format!("{out}.reel-still.png");
++            let settings = export::ExportSettings {
++                resolution: export::Resolution::Source,
++                fit: export::Fit::Letterbox,
++                ..self.export_settings.clone()
++            };
++            let ov = export::Overlays {
++                captions: &[],
++                caption_size: self.project.caption_size,
++                titles: &[],
++                music: None,
++                roomtone: None,
++                overlays: &[],
++                markers: &[],
++                marker_labels: &[],
++                luts: &self.project.luts,
++                plugins: &self.project.plugins,
++                audio_clips: &[],
++            };
++            crate::engine::render::still_png(&[seg], &ov, (w, h, 25.0), &settings, 0.0, &png)?;
++            let done = image::open(&png)
++                .map_err(anyhow::Error::from)
++                .and_then(|i| {
++                    if self.export_settings.codec == export::Codec::Jpeg {
++                        i.into_rgb8().save(&out)?;
++                    } else {
++                        i.save(&out)?;
++                    }
++                    Ok(())
++                });
++            let _ = std::fs::remove_file(&png);
++            done
++        })();
++        self.status = match result {
++            Ok(()) => format!("Saved {out}"),
++            Err(e) => format!("Photo export failed: {e}"),
++        };
++        true
++    }
++
+     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {
+         self.sync_overlay_previews(gpu, egui);
+         self.sync_lut_previews(gpu);
+diff --git a/src/cli.rs b/src/cli.rs
+index ccf4dac..499c475 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -326,6 +326,26 @@ pub static COMMANDS: &[Cmd] = &[
+         ],
+         help: "Place a picture-in-picture overlay in the frame",
+     },
++    Cmd {
++        name: "mask",
++        args: &["PROJECT"],
++        flags: &[
++            Flag { name: "clip", value: Some("ID"), help: "Clip id (a clip on the main video track)" },
++            Flag { name: "import", value: Some("PNG"), help: "Add a mask from a matte image: white = selected, black or transparent = not" },
++            Flag { name: "name", value: Some("TEXT"), help: "Name for the imported mask, or the mask to change" },
++            Flag { name: "feather", value: Some("PX"), help: "Soften the imported matte's edge, in source pixels" },
++            Flag { name: "grow", value: Some("PX"), help: "Expand (positive) or contract (negative) the imported matte" },
++            Flag { name: "invert", value: None, help: "Invert the imported matte" },
++            Flag { name: "exposure", value: Some("N"), help: "Exposure inside the mask" },
++            Flag { name: "contrast", value: Some("N"), help: "Contrast inside the mask" },
++            Flag { name: "saturation", value: Some("N"), help: "Saturation inside the mask" },
++            Flag { name: "hide", value: None, help: "Keep the mask but stop applying it" },
++            Flag { name: "show", value: None, help: "Apply a hidden mask again" },
++            Flag { name: "remove", value: None, help: "Delete the mask named by --name" },
++            F_JSON,
++        ],
++        help: "Add, adjust, hide or list a clip's local masks (a PNG matte imports as a mask; with neither --import nor --name, lists them)",
++    },
+     Cmd {
+         name: "speed",
+         args: &["PROJECT"],
+@@ -830,6 +850,7 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
+         "effects" => cmd_effects(p),
+         "keyframe" => cmd_keyframe(p),
+         "pip" => cmd_pip(p),
++        "mask" => cmd_mask(p),
+         "speed" => cmd_speed(p),
+         "curves" => cmd_curves(p),
+         "transition" => cmd_transition(p),
+@@ -1608,6 +1629,117 @@ fn cmd_effects(p: &Parsed) -> Result<Output> {
+     ))
+ }
+ 
++fn cmd_mask(p: &Parsed) -> Result<Output> {
++    let path = p.at(0)?;
++    let id: u64 = p.need_num("clip")?;
++    let mut proj = load(path)?;
++    let on_v1 = proj
++        .tracks
++        .iter()
++        .any(|t| t.kind == TrackKind::Video && t.clips.iter().any(|c| c.id == id));
++    if !on_v1 {
++        bail!("clip {id} is not on the main video track — masks apply to those clips");
++    }
++    let import = p.str("import");
++    let name = p.str("name").map(str::to_string);
++    let mut verb = "listed";
++    let list = {
++        let c = find_clip_mut(&mut proj, id)?;
++        if let Some(file) = import {
++            let bytes = std::fs::read(file).with_context(|| format!("reading {file}"))?;
++            let mut plane = crate::masks::Plane::from_image_bytes(&bytes)
++                .with_context(|| format!("{file} is not an image"))?;
++            // Stored at the picture's own resolution, whatever was imported.
++            let info = crate::video::decoder::probe(&c.source)?;
++            if (plane.w, plane.h) != (info.width, info.height) {
++                plane = plane.resized(info.width, info.height);
++            }
++            if let Some(px) = p.num::<f32>("grow")? {
++                plane.expand(px);
++            }
++            if p.on("invert") {
++                plane.invert();
++            }
++            if let Some(px) = p.num::<f32>("feather")? {
++                plane.feather(px);
++            }
++            let label = name.clone().unwrap_or_else(|| format!("Mask {}", c.masks.len() + 1));
++            if c.masks.iter().any(|m| m.name == label) {
++                bail!("clip {id} already has a mask named \"{label}\"");
++            }
++            c.masks.push(crate::masks::LocalMask::new(&label, plane)?);
++            verb = "imported";
++        }
++        let target = match (import, &name) {
++            (Some(_), _) => c.masks.len().checked_sub(1),
++            (None, Some(n)) => Some(
++                c.masks
++                    .iter()
++                    .position(|m| &m.name == n)
++                    .ok_or_else(|| anyhow!("clip {id} has no mask named \"{n}\""))?,
++            ),
++            (None, None) => None,
++        };
++        if let Some(i) = target {
++            if p.on("remove") {
++                c.masks.remove(i);
++                verb = "removed";
++            } else {
++                let m = &mut c.masks[i];
++                if import.is_none() {
++                    verb = "updated";
++                }
++                if let Some(v) = p.num::<f32>("exposure")? {
++                    m.adjust.exposure = v;
++                }
++                if let Some(v) = p.num::<f32>("contrast")? {
++                    m.adjust.contrast = v;
++                }
++                if let Some(v) = p.num::<f32>("saturation")? {
++                    m.adjust.saturation = v;
++                }
++                if p.on("hide") {
++                    m.visible = false;
++                }
++                if p.on("show") {
++                    m.visible = true;
++                }
++            }
++        }
++        c.masks
++            .iter()
++            .map(|m| {
++                serde_json::json!({
++                    "name": m.name,
++                    "visible": m.visible,
++                    "width": m.matte.plane.w,
++                    "height": m.matte.plane.h,
++                    "exposure": m.adjust.exposure,
++                    "contrast": m.adjust.contrast,
++                    "saturation": m.adjust.saturation,
++                })
++            })
++            .collect::<Vec<_>>()
++    };
++    if verb != "listed" {
++        save(&proj, path)?;
++    }
++    let lines: Vec<String> = list
++        .iter()
++        .map(|m| {
++            format!(
++                "{} — {}×{}{}",
++                m["name"].as_str().unwrap_or(""),
++                m["width"],
++                m["height"],
++                if m["visible"] == true { "" } else { " (hidden)" },
++            )
++        })
++        .collect();
++    let text = if lines.is_empty() { format!("Clip {id} has no masks") } else { lines.join("\n") };
++    Ok(Output::new(text, serde_json::json!({ "clip": id, "action": verb, "masks": list })))
++}
++
+ fn cmd_speed(p: &Parsed) -> Result<Output> {
+     let path = p.at(0)?;
+     let id: u64 = p.need_num("clip")?;
+@@ -3518,6 +3650,41 @@ mod tests {
+         parse(cmd, &owned)
+     }
+ 
++    #[test]
++    fn a_png_matte_imports_at_picture_size_and_survives_reopening() {
++        let dir = std::env::temp_dir().join(format!("reel-cli-mask-{}", std::process::id()));
++        std::fs::create_dir_all(&dir).unwrap();
++        let path = dir.join("p.reel");
++        let path = path.to_str().unwrap();
++        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixture.mp4");
++        dispatch("new", &parse_for("new", &[path]).unwrap()).unwrap();
++        dispatch("add", &parse_for("add", &[path, fixture]).unwrap()).unwrap();
++        let id = load(path).unwrap().tracks[0].clips[0].id.to_string();
++        // A small matte: it must conform to the 320×240 source on import.
++        let png = dir.join("m.png");
++        image::GrayImage::from_fn(32, 24, |x, _| image::Luma([if x < 16 { 255 } else { 0 }]))
++            .save(&png)
++            .unwrap();
++        let png = png.to_str().unwrap();
++        let args = ["--clip", &id, "--import", png, "--name", "Left", "--exposure", "1.3"];
++        let mut all = vec![path];
++        all.extend(args);
++        dispatch("mask", &parse_for("mask", &all).unwrap()).unwrap();
++        dispatch("mask", &parse_for("mask", &[path, "--clip", &id, "--name", "Left", "--hide"]).unwrap())
++            .unwrap();
++        let proj = load(path).unwrap();
++        let m = &proj.tracks[0].clips[0].masks[0];
++        assert_eq!((m.name.as_str(), m.visible), ("Left", false));
++        assert_eq!((m.matte.plane.w, m.matte.plane.h), (320, 240));
++        assert_eq!(m.adjust.exposure, 1.3);
++        assert_eq!(m.matte.plane.data[10 * 320 + 40], 255);
++        assert_eq!(m.matte.plane.data[10 * 320 + 280], 0);
++        dispatch("mask", &parse_for("mask", &[path, "--clip", &id, "--name", "Left", "--remove"]).unwrap())
++            .unwrap();
++        assert!(load(path).unwrap().tracks[0].clips[0].masks.is_empty());
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
+     #[test]
+     fn flags_parse_in_both_spellings() {
+         let p = parse_for("add", &["p.reel", "a.mp4", "--at", "3", "--duration=2.5"]).unwrap();
+diff --git a/src/edit/mod.rs b/src/edit/mod.rs
+index a6de759..550d5b6 100644
+--- a/src/edit/mod.rs
++++ b/src/edit/mod.rs
+@@ -28,6 +28,14 @@ pub struct Clip {
+     pub start: f64,     // timeline position
+     pub in_point: f64,  // offset into the source
+     pub duration: f64,
++    /// Named selections with a local adjustment each, stored at picture
++    /// resolution inside the project (see masks.rs). V1 clips only.
++    #[serde(default, skip_serializing_if = "Vec::is_empty")]
++    pub masks: Vec<crate::masks::LocalMask>,
++    /// Which mask the Adjust panel is editing; `None` = the whole clip.
++    /// Interface state, never saved.
++    #[serde(skip)]
++    pub active_mask: Option<usize>,
+     /// Colour adjustments and fades for this clip. Defaults to identity, and
+     /// is `serde(default)` so `.reel` files written before effects still load.
+     #[serde(default)]
+@@ -580,6 +588,22 @@ impl Default for Pip {
+ }
+ 
+ impl Clip {
++    /// The settings the Adjust panel is pointed at: the active mask's, or
++    /// the clip's own.
++    pub fn adjust_fx(&self) -> Effects {
++        match self.active_mask.and_then(|i| self.masks.get(i)) {
++            Some(m) => m.adjust,
++            None => self.effects,
++        }
++    }
++
++    pub fn adjust_fx_mut(&mut self) -> &mut Effects {
++        match self.active_mask.filter(|&i| i < self.masks.len()) {
++            Some(i) => &mut self.masks[i].adjust,
++            None => &mut self.effects,
++        }
++    }
++
+     /// The keyframe track for one parameter, if any.
+     pub fn key_track(&self, p: Param) -> Option<&[Keyframe]> {
+         self.keys.iter().find(|(q, _)| *q == p).map(|(_, k)| k.as_slice())
+@@ -739,6 +763,8 @@ pub struct Segment {
+     pub in_point: f64,
+     pub duration: f64,
+     pub effects: Effects,
++    /// Local adjustments, each behind its own matte (see masks.rs).
++    pub locals: Vec<crate::masks::LocalMask>,
+     /// Crossfade from the previous segment, in seconds (0 = hard cut).
+     pub transition_in: f64,
+     pub transition_kind: TransitionKind,
+@@ -1132,6 +1158,8 @@ impl Project {
+         if let Some(track) = self.tracks.iter_mut().find(|t| t.kind == kind) {
+             track.clips.push(Clip {
+                 id,
++                masks: Vec::new(),
++                active_mask: None,
+                 name,
+                 source: source.into(),
+                 start: at.max(0.0),
+@@ -2204,6 +2232,7 @@ impl Project {
+                     in_point: c.in_point + head * c.speed.max(0.01) as f64,
+                     duration: end - start,
+                     effects: c.effects,
++                    locals: c.masks.clone(),
+                     // A clip cut into by the range marker loses its
+                     // transition — there's no longer a clip to fade from.
+                     transition_in: if head > 0.01 { 0.0 } else { c.transition_in },
+diff --git a/src/engine/compose.wgsl b/src/engine/compose.wgsl
+index c02e77a..1690b27 100644
+--- a/src/engine/compose.wgsl
++++ b/src/engine/compose.wgsl
+@@ -28,6 +28,11 @@ struct Uniforms {
+     flip: vec4<f32>,
+     // Plugin parameters (the //! param: sliders), zeros when none.
+     plug: vec4<f32>,
++    // Local-mask pass: where the picture sits in this frame (min x, min y,
++    // max x, max y); see matte_factor.
++    matte: vec4<f32>,
++    // x = 1 enables the matte (and straight-alpha output), y = quarter turns.
++    matte2: vec4<f32>,
+ };
+ 
+ // REEL_PLUGIN_SLOT — replaced by the active effect plugin's source; same
+@@ -74,6 +79,32 @@ fn key_distance(a: vec3<f32>, b: vec3<f32>) -> f32 {
+ @group(0) @binding(2) var<uniform> u: Uniforms;
+ // The clip's 3D LUT (identity when none). reframe.w = 1 enables it.
+ @group(0) @binding(3) var lut_tex: texture_3d<f32>;
++// The local mask (R8, picture resolution); 1×1 white when none.
++@group(0) @binding(4) var matte_tex: texture_2d<f32>;
++
++// How much of this pass's grade applies at frame uv `q`: the picture window
++// is undone, then the clip's quarter turns (see masks::unrotate_uv), so a
++// matte stored at source resolution lands on the same pixels whatever the
++// render frame. Bars and overflow are outside the picture: nothing selected.
++fn matte_factor(q: vec2<f32>) -> f32 {
++    if (u.matte2.x < 0.5) {
++        return 1.0;
++    }
++    let p = (q - u.matte.xy) / max(u.matte.zw - u.matte.xy, vec2<f32>(1e-6));
++    if (p.x < 0.0 || p.y < 0.0 || p.x > 1.0 || p.y > 1.0) {
++        return 0.0;
++    }
++    var s = p;
++    let turns = i32(u.matte2.y + 0.5);
++    if (turns == 1) {
++        s = vec2<f32>(p.y, 1.0 - p.x);
++    } else if (turns == 2) {
++        s = vec2<f32>(1.0 - p.x, 1.0 - p.y);
++    } else if (turns == 3) {
++        s = vec2<f32>(1.0 - p.y, p.x);
++    }
++    return textureSampleLevel(matte_tex, layer_sampler, s, 0.0).r;
++}
+ 
+ struct VsOut {
+     @builtin(position) pos: vec4<f32>,
+@@ -166,8 +197,13 @@ fn fs(in: VsOut) -> @location(0) vec4<f32> {
+         rgb = srgb_to_linear(apply_effects(linear_to_srgb(rgb)));
+     }
+     // The power window: grade only where the mask says.
+-    rgb = mix(graded_from, rgb, mask_factor(in.uv));
++    rgb = mix(graded_from, rgb, mask_factor(in.uv) * matte_factor(in.uv));
+     let a = a_src * u.params.z;
++    // A local-mask pass rewrites a SOURCE frame, so it keeps that frame's
++    // straight alpha — the main pass premultiplies it later, once.
++    if (u.matte2.x > 0.5) {
++        return vec4<f32>(rgb, a);
++    }
+     // Premultiplied out; a fade therefore fades to whatever is beneath —
+     // black for the base layer, the base picture for overlays.
+     return vec4<f32>(rgb * a, a);
+diff --git a/src/engine/compositor.rs b/src/engine/compositor.rs
+index 0943a42..cce8ff9 100644
+--- a/src/engine/compositor.rs
++++ b/src/engine/compositor.rs
+@@ -34,6 +34,10 @@ struct Uniforms {
+     flip: [f32; 4],
+     /// Effect-plugin parameters. Appended last; order is load-bearing.
+     plug: [f32; 4],
++    /// Local-mask pass: the picture's window in the frame.
++    matte: [f32; 4],
++    /// x = enable, y = quarter turns; zw reserved.
++    matte2: [f32; 4],
+ }
+ 
+ pub struct Compositor {
+@@ -44,6 +48,8 @@ pub struct Compositor {
+     sampler: wgpu::Sampler,
+     /// Bound for every layer without a LUT, so the shader samples freely.
+     identity_lut: wgpu::TextureView,
++    /// Bound for every layer that is not a local-mask pass.
++    white: wgpu::TextureView,
+     /// Plugin pipeline variants, keyed by the plugin's path+mtime hash.
+     pipeline_layout: wgpu::PipelineLayout,
+     variants: std::sync::Mutex<std::collections::HashMap<u64, Option<wgpu::RenderPipeline>>>,
+@@ -59,7 +65,8 @@ impl Compositor {
+     /// the ffmpeg-graph renderer.
+     pub fn headless() -> Result<Self> {
+         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+-            backends: wgpu::Backends::PRIMARY,
++            // WGPU_BACKEND=gl lets a GPU-less box (Mesa llvmpipe) run this path.
++            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
+             ..Default::default()
+         });
+         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+@@ -124,6 +131,16 @@ impl Compositor {
+                     },
+                     count: None,
+                 },
++                wgpu::BindGroupLayoutEntry {
++                    binding: 4,
++                    visibility: wgpu::ShaderStages::FRAGMENT,
++                    ty: wgpu::BindingType::Texture {
++                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
++                        view_dimension: wgpu::TextureViewDimension::D2,
++                        multisampled: false,
++                    },
++                    count: None,
++                },
+             ],
+         });
+         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+@@ -163,6 +180,7 @@ impl Compositor {
+             ..Default::default()
+         });
+         let identity_lut = crate::lut::to_texture(&crate::lut::identity(), &device, &queue);
++        let white = Self::r8_texture(&device, &queue, &[255], 1, 1);
+         Self {
+             device,
+             queue,
+@@ -170,6 +188,7 @@ impl Compositor {
+             layout,
+             sampler,
+             identity_lut,
++            white,
+             pipeline_layout: pl,
+             variants: Default::default(),
+         }
+@@ -180,6 +199,45 @@ impl Compositor {
+         crate::lut::to_texture(lut, &self.device, &self.queue)
+     }
+ 
++    fn r8_texture(
++        device: &wgpu::Device,
++        queue: &wgpu::Queue,
++        data: &[u8],
++        w: u32,
++        h: u32,
++    ) -> wgpu::TextureView {
++        let tex = device.create_texture_with_data(
++            queue,
++            &wgpu::TextureDescriptor {
++                label: Some("reel-compose-matte"),
++                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
++                mip_level_count: 1,
++                sample_count: 1,
++                dimension: wgpu::TextureDimension::D2,
++                format: wgpu::TextureFormat::R8Unorm,
++                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
++                view_formats: &[],
++            },
++            wgpu::util::TextureDataOrder::LayerMajor,
++            data,
++        );
++        tex.create_view(&wgpu::TextureViewDescriptor::default())
++    }
++
++    /// Upload a matte; one bigger than the device allows is scaled to fit
++    /// (coordinates are fractions, so it still lands on the same pixels).
++    pub fn matte_texture(&self, plane: &crate::masks::Plane) -> wgpu::TextureView {
++        let max = self.device.limits().max_texture_dimension_2d;
++        if plane.w.max(plane.h) > max {
++            let s = max as f32 / plane.w.max(plane.h) as f32;
++            let w = ((plane.w as f32 * s) as u32).max(1);
++            let h = ((plane.h as f32 * s) as u32).max(1);
++            let small = plane.resized(w, h);
++            return Self::r8_texture(&self.device, &self.queue, &small.data, w, h);
++        }
++        Self::r8_texture(&self.device, &self.queue, &plane.data, plane.w, plane.h)
++    }
++
+     /// Upload straight-alpha RGBA pixels as a compositor input texture.
+     #[cfg_attr(not(test), allow(dead_code))]
+     pub fn upload(&self, rgba: &[u8], w: u32, h: u32) -> wgpu::TextureView {
+@@ -219,6 +277,34 @@ impl Compositor {
+ 
+     /// Render `scene` into `target`: layers back-to-front over opaque black.
+     pub fn render(&self, scene: &Scene, target: &wgpu::Texture) {
++        self.render_with(scene, target, wgpu::Color::BLACK, None);
++    }
++
++    /// Straight alpha to premultiplied, in linear light — what the preview's
++    /// pipeline expects of a still.
++    pub fn premultiply(&self, view: &wgpu::TextureView, target: &wgpu::Texture) {
++        let scene = Scene {
++            layers: vec![super::Layer {
++                view: view.clone(),
++                rect: [0.0, 0.0, 1.0, 1.0],
++                uv: [0.0, 0.0, 1.0, 1.0],
++                opacity: 1.0,
++                effects: Default::default(),
++                use_src_alpha: true,
++                lut: None,
++                plugin: None,
++            }],
++        };
++        self.render_with(&scene, target, wgpu::Color::TRANSPARENT, None);
++    }
++
++    fn render_with(
++        &self,
++        scene: &Scene,
++        target: &wgpu::Texture,
++        clear: wgpu::Color,
++        matte: Option<&MatteBind>,
++    ) {
+         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
+         // Compile any new plugin pipelines first (outside the pass borrow).
+         {
+@@ -248,7 +334,7 @@ impl Compositor {
+             .map(|l| {
+                 let ubo = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                     label: Some("reel-compose-ubo"),
+-                    contents: bytemuck::bytes_of(&Self::uniforms(l)),
++                    contents: bytemuck::bytes_of(&Self::uniforms(l, matte)),
+                     usage: wgpu::BufferUsages::UNIFORM,
+                 });
+                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+@@ -270,6 +356,12 @@ impl Compositor {
+                                 l.lut.as_ref().unwrap_or(&self.identity_lut),
+                             ),
+                         },
++                        wgpu::BindGroupEntry {
++                            binding: 4,
++                            resource: wgpu::BindingResource::TextureView(
++                                matte.map(|m| &m.view).unwrap_or(&self.white),
++                            ),
++                        },
+                     ],
+                 })
+             })
+@@ -285,7 +377,7 @@ impl Compositor {
+                     view: &view,
+                     resolve_target: None,
+                     ops: wgpu::Operations {
+-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
++                        load: wgpu::LoadOp::Clear(clear),
+                         store: wgpu::StoreOp::Store,
+                     },
+                 })],
+@@ -311,7 +403,7 @@ impl Compositor {
+         self.queue.submit(Some(encoder.finish()));
+     }
+ 
+-    fn uniforms(l: &Layer) -> Uniforms {
++    fn uniforms(l: &Layer, matte: Option<&MatteBind>) -> Uniforms {
+         Uniforms {
+             rect: l.rect,
+             params: [
+@@ -358,6 +450,8 @@ impl Compositor {
+                 0.0,
+             ],
+             plug: l.effects.plugin_params,
++            matte: matte.map(|m| m.rect).unwrap_or([0.0; 4]),
++            matte2: matte.map(|m| [1.0, m.turns as f32, 0.0, 0.0]).unwrap_or([0.0; 4]),
+         }
+     }
+ 
+@@ -429,6 +523,60 @@ impl Compositor {
+     }
+ }
+ 
++/// A matte ready to draw: its texture and where the picture sits in the frame.
++pub struct MatteBind {
++    pub view: wgpu::TextureView,
++    pub rect: [f32; 4],
++    pub turns: u8,
++}
++
++/// One local adjustment, resolved on this device.
++pub struct LocalPass {
++    pub matte: MatteBind,
++    pub effects: crate::effects::Effects,
++    pub lut: Option<wgpu::TextureView>,
++    pub plugin: Option<std::sync::Arc<crate::plugins::Plugin>>,
++}
++
++/// The local-mask stage: every visible mask in order, each grading the result
++/// of the one before (overlaps accumulate). Its output is simply a better
++/// source frame, so everything after it — the clip's grade, geometry, fades —
++/// is untouched. Preview and frame server both run THIS, which is what holds
++/// them identical. Targets are owned so a video reuses them frame to frame.
++pub struct LocalChain {
++    passes: Vec<(LocalPass, wgpu::Texture)>,
++    use_src_alpha: bool,
++}
++
++impl LocalChain {
++    pub fn new(comp: &Compositor, passes: Vec<LocalPass>, w: u32, h: u32, use_src_alpha: bool) -> Self {
++        let passes = passes.into_iter().map(|p| (p, comp.target(w, h))).collect();
++        Self { passes, use_src_alpha }
++    }
++
++    /// Run the chain over `src`; returns the frame to use instead of it.
++    pub fn run(&self, comp: &Compositor, src: &wgpu::TextureView) -> wgpu::TextureView {
++        let mut view = src.clone();
++        for (p, target) in &self.passes {
++            let scene = Scene {
++                layers: vec![super::Layer {
++                    view,
++                    rect: [0.0, 0.0, 1.0, 1.0],
++                    uv: [0.0, 0.0, 1.0, 1.0],
++                    opacity: 1.0,
++                    effects: p.effects,
++                    use_src_alpha: self.use_src_alpha,
++                    lut: p.lut.clone(),
++                    plugin: p.plugin.clone(),
++                }],
++            };
++            comp.render_with(&scene, target, wgpu::Color::TRANSPARENT, Some(&p.matte));
++            view = target.create_view(&wgpu::TextureViewDescriptor::default());
++        }
++        view
++    }
++}
++
+ pub struct ReadbackRing {
+     bufs: [wgpu::Buffer; 2],
+     w: u32,
+diff --git a/src/engine/render.rs b/src/engine/render.rs
+index 63b5ca9..dfb9d9f 100644
+--- a/src/engine/render.rs
++++ b/src/engine/render.rs
+@@ -265,7 +265,8 @@ pub fn render_still(
+     let comp = Compositor::headless()?;
+     let (tw, th, tfps) = export::render_target(project, settings);
+     let plan = plan(segments);
+-    let mut layers_data: Vec<(Vec<u8>, u32, u32, super::Layer)> = Vec::new();
++    let mut layers_data: Vec<(Vec<u8>, u32, u32, super::Layer, Option<super::compositor::LocalChain>)> =
++        Vec::new();
+ 
+     let grab = |source: &str,
+                     in_point: f64,
+@@ -353,6 +354,16 @@ pub fn render_still(
+                     lut,
+                     plugin: plugin_of(&fx, overlays.plugins),
+                 },
++                local_chain(
++                    &comp,
++                    &seg.locals,
++                    (tw, th),
++                    fitted(settings.fit, tw, th, seg.effects.rotate),
++                    seg.effects.rotate,
++                    true,
++                    overlays.luts,
++                    overlays.plugins,
++                ),
+             ));
+         }
+     }
+@@ -398,13 +409,17 @@ pub fn render_still(
+                     }),
+                     plugin: plugin_of(&o.effects, overlays.plugins),
+                 },
++                None,
+             ));
+         }
+     }
+     let layers: Vec<super::Layer> = layers_data
+         .into_iter()
+-        .map(|(buf, w, h, mut l)| {
++        .map(|(buf, w, h, mut l, chain)| {
+             l.view = comp.upload(&buf, w, h);
++            if let Some(c) = chain {
++                l.view = c.run(&comp, &l.view);
++            }
+             l
+         })
+         .collect();
+@@ -462,7 +477,7 @@ pub fn still_png(
+ 
+ /// The device lattice for a grade STACK (clip grade + any adjustment
+ /// layers), cached by the stack's combined key.
+-fn lut_for_stack(
++pub(crate) fn lut_for_stack(
+     stack: &[&crate::effects::Effects],
+     cache: &mut std::collections::HashMap<u64, Option<wgpu::TextureView>>,
+     lut_table: &[String],
+@@ -493,9 +508,54 @@ fn lut_for_stack(
+         .clone()
+ }
+ 
++/// The local-mask stage for one clip at frame size `(w, h)`, resolved on
++/// `comp`'s device. `rect` says where the picture sits in that frame and
++/// `turns` how it was rotated on the way there. `None` when no mask is showing.
++pub(crate) fn local_chain(
++    comp: &Compositor,
++    masks: &[crate::masks::LocalMask],
++    (w, h): (u32, u32),
++    rect: impl Fn(&crate::masks::Plane) -> [f32; 4],
++    turns: u8,
++    use_src_alpha: bool,
++    luts: &[String],
++    plugins: &[String],
++) -> Option<super::compositor::LocalChain> {
++    let mut cache = std::collections::HashMap::new();
++    let passes: Vec<_> = masks
++        .iter()
++        .filter(|m| m.visible)
++        .map(|m| {
++            let fx = m.colour_adjust();
++            super::compositor::LocalPass {
++                matte: super::compositor::MatteBind {
++                    view: comp.matte_texture(&m.matte.plane),
++                    rect: rect(&m.matte.plane),
++                    turns,
++                },
++                effects: fx,
++                lut: lut_for_stack(&[&fx], &mut cache, luts, comp),
++                plugin: plugin_of(&fx, plugins),
++            }
++        })
++        .collect();
++    (!passes.is_empty())
++        .then(|| super::compositor::LocalChain::new(comp, passes, w, h, use_src_alpha))
++}
++
++/// The export-side `rect` for `local_chain`: the source picture's window once
++/// the fit has placed it in a `tw`×`th` frame. A matte has its source's aspect
++/// by construction, so its own size is the source size.
++fn fitted(fit: export::Fit, tw: u32, th: u32, turns: u8) -> impl Fn(&crate::masks::Plane) -> [f32; 4] {
++    move |m| {
++        let (sw, sh) = if turns % 2 == 1 { (m.h, m.w) } else { (m.w, m.h) };
++        fit.picture_rect(sw, sh, tw, th)
++    }
++}
++
+ /// Resolve a clip's effect plugin from the project table; a load failure
+ /// logs once per file (the loader caches) and renders the built-in look.
+-fn plugin_of(
++pub(crate) fn plugin_of(
+     fx: &crate::effects::Effects,
+     table: &[String],
+ ) -> Option<std::sync::Arc<crate::plugins::Plugin>> {
+@@ -661,6 +721,8 @@ fn run(
+     // Baked grade lattices (LUT ∘ curves) on this device, one per distinct
+     // grade (or grade STACK, when adjustment layers sit on top) — clips
+     // sharing a look share one texture.
++    let mut local_chains: std::collections::HashMap<usize, Option<super::compositor::LocalChain>> =
++        Default::default();
+     let mut grade_views: std::collections::HashMap<u64, Option<wgpu::TextureView>> =
+         Default::default();
+     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
+@@ -801,8 +863,26 @@ fn run(
+                     let eff = crate::effects::Effects::compose_stack(&stack);
+                     (eff, lut_for_stack(&stack, &mut grade_views, &lut_table, &comp))
+                 };
++                // Local masks rewrite the source frame first, through the same
++                // chain the preview runs.
++                let chain = local_chains.entry(p.seg).or_insert_with(|| {
++                    local_chain(
++                        &comp,
++                        &seg.locals,
++                        (tw, th),
++                        fitted(settings.fit, tw, th, seg.effects.rotate),
++                        seg.effects.rotate,
++                        true,
++                        &lut_table,
++                        &plugin_table,
++                    )
++                });
++                let frame = match chain {
++                    Some(c) => c.run(&comp, &a.view),
++                    None => a.view.clone(),
++                };
+                 layers.push(super::Layer {
+-                    view: a.view.clone(),
++                    view: frame,
+                     rect,
+                     uv,
+                     opacity,
+@@ -933,6 +1013,7 @@ mod tests {
+ 
+     fn seg(dur: f64, fade: f64) -> Segment {
+         Segment {
++            locals: Vec::new(),
+             source: "s".into(),
+             in_point: 0.0,
+             duration: dur,
+@@ -1027,3 +1108,255 @@ mod tests {
+         assert!(base_opacity(&p[0], &segs[0], 3.99) < 0.02);
+     }
+ }
++
++#[cfg(test)]
++mod local_mask_tests {
++    use super::*;
++    use crate::masks::{LocalMask, Plane};
++
++    const SRC_W: u32 = 320;
++    const SRC_H: u32 = 240;
++
++    /// A soft gradient photo, so a mask error can't hide in a flat field.
++    fn photo(name: &str) -> (std::path::PathBuf, Vec<u8>) {
++        let img = image::RgbaImage::from_fn(SRC_W, SRC_H, |x, y| {
++            image::Rgba([60 + (x / 4) as u8, 90, 70 + (y / 4) as u8, 255])
++        });
++        let path = std::env::temp_dir().join(format!("reel-mask-{}-{name}.png", std::process::id()));
++        img.save(&path).unwrap();
++        (path, img.into_raw())
++    }
++
++    fn seg_for(source: &str, locals: Vec<LocalMask>) -> Segment {
++        Segment {
++            source: source.to_string(),
++            in_point: 0.0,
++            duration: 1.0,
++            effects: Default::default(),
++            locals,
++            transition_in: 0.0,
++            transition_kind: Default::default(),
++            gain_db: 0.0,
++            speed: 1.0,
++            keys: Vec::new(),
++            stabilize: false,
++            audio: Default::default(),
++            raw_filter: None,
++        }
++    }
++
++    fn ov() -> Overlays<'static> {
++        Overlays::default()
++    }
++
++    /// What the app's `sync_local_preview` does with a still.
++    fn preview_still(comp: &Compositor, rgba: &[u8], masks: &[LocalMask]) -> Vec<u8> {
++        let chain = local_chain(comp, masks, (SRC_W, SRC_H), |_| [0.0, 0.0, 1.0, 1.0], 0, true, &[], &[])
++            .expect("a visible mask");
++        let src = comp.upload(rgba, SRC_W, SRC_H);
++        let out = comp.target(SRC_W, SRC_H);
++        comp.premultiply(&chain.run(comp, &src), &out);
++        comp.read_back(&out)
++    }
++
++    fn feathered_left_half() -> Plane {
++        let mut p = Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [160.0, 240.0]);
++        p.feather(12.0);
++        p
++    }
++
++    fn assert_close(a: &[u8], b: &[u8], tol: i32, what: &str) {
++        assert_eq!(a.len(), b.len());
++        let worst = a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap();
++        assert!(worst <= tol, "{what}: worst channel difference {worst}");
++    }
++
++    #[test]
++    fn a_masked_edit_stays_inside_its_matte_and_preview_matches_export() {
++        let Ok(comp) = Compositor::headless() else {
++            eprintln!("no GPU — skipping");
++            return;
++        };
++        let (path, rgba) = photo("still");
++        let mut sky = LocalMask::new("Sky", feathered_left_half()).unwrap();
++        sky.adjust.exposure = 1.5;
++        sky.adjust.saturation = 0.4;
++        sky.adjust.wb_temp = 0.3; // a lattice setting, not only the trims
++        let masks = vec![sky];
++
++        let seg = seg_for(path.to_str().unwrap(), masks.clone());
++        let settings = ExportSettings::default();
++        let (exported, w, h) =
++            render_still(&[seg], &ov(), (SRC_W, SRC_H, 25.0), &settings, 0.0).unwrap();
++        assert_eq!((w, h), (SRC_W, SRC_H));
++        let preview = preview_still(&comp, &rgba, &masks);
++        assert_close(&preview, &exported, 2, "preview vs export");
++
++        let at = |b: &[u8], x: u32, y: u32| b[((y * SRC_W + x) * 4) as usize] as i32;
++        // Right of the feather: not one pixel touched.
++        for x in [200u32, 260, 319] {
++            assert!((at(&exported, x, 120) - at(&rgba, x, 120)).abs() <= 1, "outside changed at {x}");
++        }
++        // Well inside: the full adjustment, against the CPU formula's trims.
++        let want = masks[0].colour_adjust();
++        assert!(at(&exported, 40, 120) > at(&rgba, 40, 120) + 20, "inside must brighten");
++        assert!(want.exposure > 1.0);
++        // On the feather: partway, and monotonic falling across it.
++        let ramp: Vec<i32> = (140..182).map(|x| at(&exported, x, 120) - at(&rgba, x, 120)).collect();
++        assert!(ramp.windows(2).all(|d| d[0] + 1 >= d[1]), "edge blends: {ramp:?}");
++        assert!(ramp[0] > ramp[41] + 10);
++        let _ = std::fs::remove_file(&path);
++    }
++
++    #[test]
++    fn overlapping_masks_accumulate_and_a_hidden_one_changes_nothing() {
++        let Ok(comp) = Compositor::headless() else { return };
++        let (_path, rgba) = photo("stack");
++        let mut a = LocalMask::new("A", Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [200.0, 240.0])).unwrap();
++        a.adjust.exposure = 1.3;
++        let mut b = LocalMask::new("B", Plane::rect(SRC_W, SRC_H, [100.0, 0.0], [320.0, 240.0])).unwrap();
++        b.adjust.exposure = 1.3;
++        let out = preview_still(&comp, &rgba, &[a.clone(), b.clone()]);
++        let at = |b: &[u8], x: u32| b[((120 * SRC_W + x) * 4) as usize] as f32;
++        let gain = |x: u32| at(&out, x) / at(&rgba, x);
++        assert!((gain(50) - 1.3).abs() < 0.03, "A alone: {}", gain(50));
++        assert!((gain(150) - 1.69).abs() < 0.05, "both stack: {}", gain(150));
++        assert!((gain(300) - 1.3).abs() < 0.03, "B alone: {}", gain(300));
++
++        b.visible = false;
++        let hidden = preview_still(&comp, &rgba, &[a.clone(), b]);
++        let only_a = preview_still(&comp, &rgba, &[a]);
++        assert_close(&hidden, &only_a, 0, "a hidden mask");
++        let _ = std::fs::remove_file(&_path);
++    }
++
++    #[test]
++    fn the_matte_finds_the_picture_inside_a_letterboxed_or_turned_frame() {
++        if Compositor::headless().is_err() {
++            return;
++        }
++        let (path, rgba) = photo("fit");
++        // Left half of the PICTURE.
++        let mut m = LocalMask::new("L", Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [160.0, 240.0])).unwrap();
++        m.adjust.exposure = 1.6;
++        let settings = ExportSettings::default();
++        // 640×240 pillarboxes the 320×240 picture into x = 160..480.
++        let seg = seg_for(path.to_str().unwrap(), vec![m.clone()]);
++        let (out, w, _) = render_still(&[seg], &ov(), (640, 240, 25.0), &settings, 0.0).unwrap();
++        let at = |b: &[u8], x: u32, y: u32, w: u32| b[((y * w + x) * 4) as usize] as i32;
++        let src = |x: u32| at(&rgba, x, 120, SRC_W);
++        assert!(at(&out, 200, 120, w) > src(40) + 15, "inside the picture's left half");
++        assert!((at(&out, 400, 120, w) - src(240)).abs() <= 2, "right half untouched");
++        assert!(at(&out, 40, 120, w) <= 2, "the bars stay black");
++
++        // Turned 90° clockwise the source's left half becomes the TOP half.
++        let mut seg = seg_for(path.to_str().unwrap(), vec![m]);
++        seg.effects.rotate = 1;
++        let (out, w, _) = render_still(&[seg], &ov(), (SRC_H, SRC_W, 25.0), &settings, 0.0).unwrap();
++        let plain = {
++            let mut s = seg_for(path.to_str().unwrap(), Vec::new());
++            s.effects.rotate = 1;
++            render_still(&[s], &ov(), (SRC_H, SRC_W, 25.0), &settings, 0.0).unwrap().0
++        };
++        assert!(at(&out, 120, 40, w) > at(&plain, 120, 40, w) + 15, "top half brightened");
++        assert!((at(&out, 120, 280, w) - at(&plain, 120, 280, w)).abs() <= 2, "bottom untouched");
++        let _ = std::fs::remove_file(&path);
++    }
++
++    #[test]
++    fn a_static_matte_on_video_renders_the_same_in_preview_and_export() {
++        let Ok(comp) = Compositor::headless() else { return };
++        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixture.mp4");
++        let mut m = LocalMask::new("Matte", feathered_left_half()).unwrap();
++        m.adjust.exposure = 3.0;
++        let masks = vec![m];
++        let settings = ExportSettings::default();
++
++        // Two moments of the clip: the same matte holds on each.
++        for (i, t) in [0.2f64, 1.2].into_iter().enumerate() {
++            let mut r = SegmentReader::open(
++                fixture,
++                t,
++                0.5,
++                1.0,
++                None,
++                &settings.fit.chain(SRC_W, SRC_H, "s"),
++                (SRC_W, SRC_H, 25.0),
++            )
++            .unwrap();
++            let mut frame = Vec::new();
++            assert!(r.next_into(&mut frame));
++            // The preview's route: the opaque video frame through the chain.
++            let chain = local_chain(&comp, &masks, (SRC_W, SRC_H), |_| [0.0, 0.0, 1.0, 1.0], 0, false, &[], &[])
++                .unwrap();
++            let src = comp.upload(&frame, SRC_W, SRC_H);
++            let target = comp.target(SRC_W, SRC_H);
++            comp.premultiply(&chain.run(&comp, &src), &target);
++            let preview = comp.read_back(&target);
++
++            let seg = Segment { in_point: t, ..seg_for(fixture, masks.clone()) };
++            let (export, _, _) = render_still(&[seg], &ov(), (SRC_W, SRC_H, 25.0), &settings, 0.0).unwrap();
++            assert_close(&preview, &export, 2, "video preview vs export");
++
++            // The matte really is on this frame too: left brighter than raw.
++            let band = |from: u32, to: u32| {
++                let mut sum = 0i64;
++                for y in 0..SRC_H {
++                    for x in from..to {
++                        let o = ((y * SRC_W + x) * 4) as usize;
++                        sum += (0..3).map(|c| export[o + c] as i64 - frame[o + c] as i64).sum::<i64>();
++                    }
++                }
++                sum / ((to - from) * SRC_H * 3) as i64
++            };
++            assert!(band(10, 110) >= 3, "frame {i}: inside untouched ({})", band(10, 110));
++            assert!(band(220, 310).abs() <= 1, "frame {i}: outside changed ({})", band(220, 310));
++        }
++
++        // And the full frame-server render agrees with those stills: the
++        // same chain, on every frame of a real export.
++        let out = std::env::temp_dir().join(format!("reel-mask-{}.mp4", std::process::id()));
++        let _ = std::fs::remove_file(&out);
++        let segs = vec![Segment { duration: 1.0, ..seg_for(fixture, masks) }];
++        let job = export::start_timeline_with_captions(
++            &segs,
++            &out.to_string_lossy(),
++            &settings,
++            (SRC_W, SRC_H, 25.0),
++            ov(),
++        )
++        .unwrap();
++        loop {
++            let st = job.state();
++            if st.finished {
++                assert!(st.error.is_none(), "{:?}", st.error);
++                break;
++            }
++            std::thread::sleep(std::time::Duration::from_millis(30));
++        }
++        let grab = |src: &str, vf: &str| {
++            let o = std::process::Command::new("ffmpeg")
++                .args(["-v", "error", "-i", src, "-vframes", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"])
++                .output()
++                .unwrap();
++            o.stdout
++        };
++        let rendered = grab(&out.to_string_lossy(), "null");
++        let raw = grab(fixture, "null");
++        assert_eq!(rendered.len(), raw.len());
++        let mean = |b: &[u8], a: usize, z: usize| {
++            let mut s = 0u64;
++            let mut n = 0u64;
++            for row in b.chunks(SRC_W as usize) {
++                for v in &row[a..z] {
++                    s += *v as u64;
++                    n += 1;
++                }
++            }
++            s as f64 / n as f64
++        };
++        assert!(mean(&rendered, 0, 100) > mean(&raw, 0, 100) + 3.0, "export: inside brightened");
++        assert!((mean(&rendered, 220, 320) - mean(&raw, 220, 320)).abs() < 3.0, "export: outside held");
++        let _ = std::fs::remove_file(&out);
++    }
++}
+diff --git a/src/export.rs b/src/export.rs
+index 83435b7..80d76a2 100644
+--- a/src/export.rs
++++ b/src/export.rs
+@@ -210,6 +210,17 @@ impl Fit {
+ 
+     /// The filter chain that maps any input to exactly `w`×`h`.
+     /// `tag` keeps labels unique when several of these appear in one graph.
++    /// Where a `sw`×`sh` picture lands in a `w`×`h` frame, as frame fractions
++    /// (min x, min y, max x, max y) — outside 0..1 when cropped. Mirrors
++    /// `chain`; local masks use it to find the picture inside the frame.
++    pub(crate) fn picture_rect(self, sw: u32, sh: u32, w: u32, h: u32) -> [f32; 4] {
++        let (sw, sh, w, h) = (sw.max(1) as f32, sh.max(1) as f32, w.max(1) as f32, h.max(1) as f32);
++        let (rw, rh) = (w / sw, h / sh);
++        let s = if self == Fit::Crop { rw.max(rh) } else { rw.min(rh) };
++        let (fw, fh) = (sw * s / w, sh * s / h);
++        [0.5 - fw / 2.0, 0.5 - fh / 2.0, 0.5 + fw / 2.0, 0.5 + fh / 2.0]
++    }
++
+     pub(crate) fn chain(self, w: u32, h: u32, tag: &str) -> String {
+         match self {
+             Fit::Letterbox => format!(
+@@ -1047,6 +1058,9 @@ pub(crate) fn start_timeline_graph(
+     if segments.iter().any(|s| s.effects.mask.is_some()) {
+         dropped.push("power windows");
+     }
++    if segments.iter().any(|s| s.locals.iter().any(|m| m.visible)) {
++        dropped.push("local masks");
++    }
+     if segments.iter().any(|s| s.effects.key_color.is_some())
+         || overlays.overlays.iter().any(|o| o.effects.key_color.is_some())
+     {
+@@ -1807,6 +1821,7 @@ mod tests {
+ 
+     fn seg(source: &str, in_point: f64, duration: f64) -> Segment {
+         Segment {
++            locals: Vec::new(),
+             source: source.to_string(),
+             in_point,
+             duration,
+@@ -2754,6 +2769,7 @@ mod tests {
+             .unwrap_or(false));
+ 
+         let segs = vec![Segment {
++            locals: Vec::new(),
+             source: src.to_string_lossy().into(),
+             in_point: 0.0,
+             duration: 4.0,
+@@ -4089,6 +4105,7 @@ mod tests {
+ 
+         // 3 s on the timeline at 2x = 6 s of source.
+         let segs = vec![Segment {
++            locals: Vec::new(),
+             source: src.to_string_lossy().into(),
+             in_point: 0.0,
+             duration: 3.0,
+diff --git a/src/gpu.rs b/src/gpu.rs
+index 9dc56e2..a93f7eb 100644
+--- a/src/gpu.rs
++++ b/src/gpu.rs
+@@ -22,7 +22,7 @@ impl Gpu {
+         // PRIMARY = Vulkan/Metal/DX12. Enumerating the GL backends too costs
+         // real startup time (EGL config probing) and we never pick GL anyway.
+         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+-            backends: wgpu::Backends::PRIMARY,
++            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
+             ..Default::default()
+         });
+ 
+diff --git a/src/main.rs b/src/main.rs
+index bf5273d..2d17635 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -25,6 +25,7 @@ mod integration;
+ #[cfg(target_os = "macos")]
+ mod macos;
+ mod lut;
++mod masks;
+ mod media;
+ mod perf;
+ #[cfg(target_os = "linux")]
+@@ -154,6 +155,7 @@ impl ApplicationHandler<UserEvent> for Reel {
+                 // 1) advance playback and push any new frame to the GPU + egui.
+                 perf::note_redraw();
+                 self.app.sync_frame(gpu, egui);
++                self.app.sync_local_preview(gpu);
+ 
+                 // 2) build the UI.
+                 egui.begin_frame(&window);
+diff --git a/src/ui.rs b/src/ui.rs
+index 1e89bde..4dcbf43 100644
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -829,7 +829,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+             );
+         }
+         if let Some(id) = app.editor.selected {
+-            let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.effects));
++            let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.adjust_fx()));
+             if let Some((name, start, duration, in_point, before)) = info {
+                 ui.separator();
+                 ui.label(RichText::new("Selected clip").color(theme::CYAN));
+@@ -842,6 +842,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+                 // ── Effects ─────────────────────────────────────────────
+                 // What you set here is what the export renders — the preview
+                 // and the ffmpeg filters share one formula (effects.rs).
++                mask_panel(ui, app, id);
+                 ui.add_space(6.0);
+                 ui.label(RichText::new("Look").color(theme::CYAN));
+                 let mut fx = before;
+@@ -1065,7 +1066,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+ 
+                 // ── LUT ─────────────────────────────────────────────────
+                 ui.horizontal(|ui| {
+-                    let lut_idx = app.project.clip(id).and_then(|c| c.effects.lut);
++                    let lut_idx = app.project.clip(id).and_then(|c| c.adjust_fx().lut);
+                     match lut_idx.and_then(|i| app.project.lut_path(i)).map(String::from) {
+                         Some(path) => {
+                             let name = std::path::Path::new(&path)
+@@ -1076,7 +1077,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+                             if ui.small_button("−").on_hover_text("Remove the LUT").clicked() {
+                                 app.editor.push_undo(&app.project);
+                                 if let Some(c) = app.project.clip_mut(id) {
+-                                    c.effects.lut = None;
++                                    c.adjust_fx_mut().lut = None;
+                                 }
+                                 app.editor.mark_changed();
+                             }
+@@ -1109,13 +1110,13 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+                         let has = app
+                             .project
+                             .clip(id)
+-                            .and_then(|c| c.effects.curves)
++                            .and_then(|c| c.adjust_fx().curves)
+                             .map(|c| !c.is_identity())
+                             .unwrap_or(false);
+                         if has && ui.small_button("Reset").clicked() {
+                             app.editor.push_undo(&app.project);
+                             if let Some(c) = app.project.clip_mut(id) {
+-                                c.effects.curves = None;
++                                c.adjust_fx_mut().curves = None;
+                             }
+                             app.editor.mark_changed();
+                         }
+@@ -1125,7 +1126,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+ 
+                 // ── Power window ────────────────────────────────────────
+                 {
+-                    let mut fxm = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
++                    let mut fxm = app.project.clip(id).map(|c| c.adjust_fx()).unwrap_or_default();
+                     let before_m = fxm;
+                     let mut kind = match fxm.mask {
+                         None => 0,
+@@ -1184,7 +1185,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+                     }
+                     if fxm != before_m {
+                         if let Some(c) = app.project.clip_mut(id) {
+-                            c.effects = fxm;
++                            *c.adjust_fx_mut() = fxm;
+                         }
+                         app.editor.mark_changed();
+                     }
+@@ -1562,7 +1563,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+                         app.editor.fx_gesture = Some(id);
+                     }
+                     if let Some(c) = app.project.clip_mut(id) {
+-                        c.effects = fx;
++                        *c.adjust_fx_mut() = fx;
+                     }
+                     app.editor.mark_changed();
+                 }
+@@ -2105,6 +2106,321 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
+ 
+ /// The media viewport — aspect-fit the current frame / image / cover art,
+ /// a ♪ card for pure audio, or the drop hint.
++/// Selections and masks for clip `id`: list, tools, then what a selection can
++/// become. The Adjust panel below edits whichever entry is active here.
++pub(crate) fn mask_panel(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
++    use crate::masks::{Combine, LocalMask, Tool};
++    let on_v1 = app.project.tracks.iter().any(|t| {
++        t.kind == crate::edit::TrackKind::Video && t.clips.iter().any(|c| c.id == id)
++    });
++    if !on_v1 {
++        return;
++    }
++    ui.add_space(6.0);
++    ui.label(RichText::new("Masks").color(theme::CYAN));
++    let Some(clip) = app.project.clip(id) else { return };
++    let rows: Vec<(String, bool)> = clip.masks.iter().map(|m| (m.name.clone(), m.visible)).collect();
++    let mut active = clip.active_mask.filter(|&i| i < rows.len());
++    let was_active = active;
++    let mut toggle: Option<usize> = None;
++    let mut delete: Option<usize> = None;
++    ui.selectable_value(&mut active, None, "Whole clip");
++    for (i, (name, visible)) in rows.iter().enumerate() {
++        ui.horizontal(|ui| {
++            let mut v = *visible;
++            if ui.checkbox(&mut v, "").on_hover_text("Show or hide this mask's edit").changed() {
++                toggle = Some(i);
++            }
++            ui.selectable_value(&mut active, Some(i), name);
++            if ui.small_button("🗑").on_hover_text("Delete this mask").clicked() {
++                delete = Some(i);
++            }
++        });
++    }
++    if active != was_active {
++        if let Some(c) = app.project.clip_mut(id) {
++            c.active_mask = active;
++        }
++    }
++    if let Some(i) = toggle {
++        app.editor.push_undo(&app.project);
++        if let Some(c) = app.project.clip_mut(id) {
++            c.masks[i].visible = !c.masks[i].visible;
++        }
++        app.editor.mark_changed();
++    }
++    if let Some(i) = delete {
++        app.editor.push_undo(&app.project);
++        if let Some(c) = app.project.clip_mut(id) {
++            c.masks.remove(i);
++            c.active_mask = None;
++        }
++        app.editor.mark_changed();
++        active = None;
++    }
++    if let Some(i) = active {
++        let mut name = rows[i].0.clone();
++        if ui.text_edit_singleline(&mut name).changed() {
++            if let Some(c) = app.project.clip_mut(id) {
++                c.masks[i].name = name;
++            }
++            app.editor.mark_changed();
++        }
++        ui.label(
++            RichText::new("The sliders below now edit this mask: colour only, inside the selection.")
++                .small()
++                .color(Color32::from_gray(150)),
++        );
++    }
++
++    if app.masked_clip().map(|c| c.id) != Some(id) {
++        ui.label(
++            RichText::new("Move the playhead onto this clip to select on its picture.")
++                .small()
++                .color(Color32::from_gray(150)),
++        );
++        return;
++    }
++    let Some(size) = app.picture_size() else { return };
++    app.selection.target(id, size);
++    let sel = &mut app.selection;
++    ui.horizontal_wrapped(|ui| {
++        for t in Tool::ALL {
++            let on = sel.tool == Some(t);
++            if ui.selectable_label(on, t.label()).clicked() {
++                sel.tool = if on { None } else { Some(t) };
++                sel.path.clear();
++            }
++        }
++    });
++    let slider_w = (ui.available_width() - 90.0).max(40.0);
++    ui.spacing_mut().slider_width = slider_w;
++    match sel.tool {
++        Some(Tool::Brush) => {
++            ui.add(egui::Slider::new(&mut sel.brush_radius, 1.0..=400.0).logarithmic(true).text("Size"));
++        }
++        Some(Tool::Colour) => {
++            ui.add(egui::Slider::new(&mut sel.tolerance, 0.0..=1.0).text("Tolerance"));
++            ui.checkbox(&mut sel.contiguous, "Contiguous");
++        }
++        Some(Tool::Polygon) => {
++            ui.label(RichText::new("Click the corners, double-click to close.").small());
++        }
++        _ => {}
++    }
++    if sel.tool.is_some() {
++        ui.label(
++            RichText::new("Shift adds, Alt subtracts, both intersect.")
++                .small()
++                .color(Color32::from_gray(150)),
++        );
++    }
++    if sel.plane.is_some() {
++        ui.horizontal(|ui| {
++            ui.add(egui::DragValue::new(&mut sel.feather).range(0.0..=500.0).suffix(" px"));
++            if ui.small_button("Feather").clicked() {
++                let r = sel.feather;
++                sel.edit(|p| p.feather(r));
++            }
++            ui.add(egui::DragValue::new(&mut sel.grow).range(-500.0..=500.0).suffix(" px"));
++            if ui.small_button("Grow").on_hover_text("Negative contracts").clicked() {
++                let r = sel.grow;
++                sel.edit(|p| p.expand(r));
++            }
++        });
++        ui.horizontal(|ui| {
++            if ui.small_button("Invert").clicked() {
++                sel.edit(|p| p.invert());
++            }
++            if ui.small_button("Clear").clicked() {
++                sel.clear();
++            }
++            ui.checkbox(&mut sel.show_overlay, "Show");
++        });
++    }
++    let plane = sel.plane.clone();
++    ui.horizontal(|ui| {
++        if let Some(plane) = plane {
++            if ui.button("Save as mask").clicked() {
++                let n = rows.len() + 1;
++                match LocalMask::new(&format!("Mask {n}"), plane.clone()) {
++                    Ok(m) => {
++                        app.editor.push_undo(&app.project);
++                        if let Some(c) = app.project.clip_mut(id) {
++                            c.masks.push(m);
++                            c.active_mask = Some(c.masks.len() - 1);
++                        }
++                        app.selection.clear();
++                        app.editor.mark_changed();
++                    }
++                    Err(e) => app.status = format!("Could not store the mask: {e}"),
++                }
++            }
++            if let Some(i) = active {
++                if ui.button("Replace mask").clicked() {
++                    match crate::masks::Matte::new(plane) {
++                        Ok(m) => {
++                            app.editor.push_undo(&app.project);
++                            if let Some(c) = app.project.clip_mut(id) {
++                                c.masks[i].matte = m;
++                            }
++                            app.selection.clear();
++                            app.editor.mark_changed();
++                        }
++                        Err(e) => app.status = format!("Could not store the mask: {e}"),
++                    }
++                }
++            }
++        } else if let Some(i) = active {
++            if ui.button("Load selection").on_hover_text("Refine this mask with the tools").clicked() {
++                let matte = app.project.clip(id).map(|c| (*c.masks[i].matte.plane).clone());
++                if let Some(p) = matte {
++                    let p = if (p.w, p.h) == size { p } else { p.resized(size.0, size.1) };
++                    app.selection.apply(p, Combine::Replace);
++                }
++            }
++        }
++    });
++}
++
++/// The selection on the picture: the tint, the gesture in progress, and the
++/// pointer while a tool is armed. Drawn after the video pass, in its branch.
++pub(crate) fn selection_canvas(ui: &mut egui::Ui, app: &mut ReelApp, img_rect: Rect, response: &egui::Response) {
++    use crate::masks::{combine_for, view_to_source, Plane, Tool};
++    let Some(clip) = app.masked_clip().map(|c| (c.id, c.effects)) else { return };
++    if app.selection.clip != Some(clip.0) {
++        return;
++    }
++    let fx = clip.1;
++    let turns = app.preview_turns(&fx);
++    let (w, h) = app.selection.size;
++    let source_uv = |pos: egui::Pos2| {
++        let uv = (pos - img_rect.min) / img_rect.size();
++        view_to_source([uv.x, uv.y], Some(&fx), turns)
++    };
++    let to_px = |pos: egui::Pos2| {
++        let s = source_uv(pos);
++        [s[0] * w as f32, s[1] * h as f32]
++    };
++
++    if let Some(tool) = app.selection.tool {
++        let (shift, alt, enter, esc) = ui.input(|i| {
++            (
++                i.modifiers.shift,
++                i.modifiers.alt,
++                i.key_pressed(egui::Key::Enter),
++                i.key_pressed(egui::Key::Escape),
++            )
++        });
++        let op = combine_for(shift, alt, tool);
++        let sel = &mut app.selection;
++        let hover = response.interact_pointer_pos();
++        match tool {
++            Tool::Lasso | Tool::Brush => {
++                if response.dragged() || response.drag_started() {
++                    if let Some(p) = hover {
++                        sel.path.push(to_px(p));
++                    }
++                }
++                if response.drag_stopped() {
++                    sel.commit(op);
++                } else if tool == Tool::Brush && response.clicked() {
++                    if let Some(p) = hover {
++                        sel.path.push(to_px(p));
++                        sel.commit(op);
++                    }
++                }
++            }
++            Tool::Rectangle | Tool::Ellipse => {
++                if let Some(p) = hover.filter(|_| response.dragged() || response.drag_started()) {
++                    if sel.path.is_empty() {
++                        sel.path.push(to_px(p));
++                    }
++                    sel.path.truncate(1);
++                    sel.path.push(to_px(p));
++                }
++                if response.drag_stopped() {
++                    sel.commit(op);
++                }
++            }
++            Tool::Polygon => {
++                if response.double_clicked() || enter {
++                    sel.commit(op);
++                } else if response.clicked() {
++                    if let Some(p) = hover {
++                        sel.path.push(to_px(p));
++                    }
++                }
++                if esc {
++                    sel.path.clear();
++                }
++            }
++            Tool::Colour => {
++                if let Some(p) = hover.filter(|_| response.clicked()) {
++                    let s = source_uv(p);
++                    let (tolerance, contiguous) = (sel.tolerance, sel.contiguous);
++                    let picked = match (&app.image, app.player.as_ref().and_then(|pl| pl.current.as_ref())) {
++                        (Some(img), _) => Some((&img.data, img.width, img.height)),
++                        (None, Some(f)) => Some((&f.data, f.width, f.height)),
++                        _ => None,
++                    };
++                    if let Some((px, pw, ph)) = picked {
++                        let seed = ((s[0] * pw as f32) as u32, (s[1] * ph as f32) as u32);
++                        let mut shape = Plane::colour_range(px, pw, ph, seed, tolerance, contiguous);
++                        if (pw, ph) != (w, h) {
++                            shape = shape.resized(w, h);
++                        }
++                        app.selection.apply(shape, op);
++                    }
++                }
++            }
++        }
++    }
++
++    let painter = ui.painter_at(img_rect);
++    if app.selection.show_overlay {
++        let rev = app.selection.revision;
++        if app.selection.overlay.as_ref().is_none_or(|(r, _)| *r != rev) {
++            app.selection.overlay = app.selection.plane.as_ref().map(|p| {
++                // A tint needs no more than screen-ish detail.
++                let step = (p.w.max(p.h) / 1024).max(1) as usize;
++                let (tw, th) = (p.w as usize / step, p.h as usize / step);
++                let px: Vec<Color32> = (0..tw * th)
++                    .map(|i| {
++                        let (x, y) = (i % tw * step, i / tw * step);
++                        let v = p.data[y * p.w as usize + x] as u32;
++                        Color32::from_rgba_premultiplied((v * 150 / 255) as u8, 0, (v * 60 / 255) as u8, (v * 110 / 255) as u8)
++                    })
++                    .collect();
++                let img = egui::ColorImage { size: [tw, th], pixels: px };
++                (rev, ui.ctx().load_texture("reel-selection", img, egui::TextureOptions::LINEAR))
++            });
++        }
++        if let Some((_, tex)) = &app.selection.overlay {
++            // Corners through the view mapping, so zoom/flip/turns all hold.
++            let mut mesh = egui::Mesh::with_texture(tex.id());
++            for pos in [img_rect.left_top(), img_rect.right_top(), img_rect.right_bottom(), img_rect.left_bottom()] {
++                let s = source_uv(pos);
++                mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::pos2(s[0], s[1]), color: Color32::WHITE });
++            }
++            mesh.indices = vec![0, 1, 2, 0, 2, 3];
++            painter.add(egui::Shape::mesh(mesh));
++        }
++    }
++    // The gesture in progress, on screen. Stored in picture pixels, so it is
++    // shown through the inverse of the view only for the plain case; a zoomed
++    // or turned clip still selects correctly and shows the result on release.
++    if !app.selection.path.is_empty() && fx.zoom <= 1.0 && turns == 0 && !fx.flip_h && !fx.flip_v {
++        let pts: Vec<egui::Pos2> = app
++            .selection
++            .path
++            .iter()
++            .map(|p| img_rect.min + Vec2::new(p[0] / w as f32 * img_rect.width(), p[1] / h as f32 * img_rect.height()))
++            .collect();
++        painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::CYAN)));
++    }
++}
++
+ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
+     let avail = ui.available_size();
+     let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
+@@ -2140,7 +2456,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
+             painter.add(egui_wgpu::Callback::new_paint_callback(
+                 img_rect,
+                 crate::video_pass::VideoDraw {
+-                    view,
++                    view: app.local_view().unwrap_or(view),
+                     tint: [1.0, 1.0, 1.0, fade],
+                     use_src_alpha: app.image.is_some(),
+                     effects,
+@@ -2150,6 +2466,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
+                     plugin: app.plugin_for(effects),
+                 },
+             ));
++            selection_canvas(ui, app, img_rect, &response);
+             // The incoming half of a crossfade, blended over the outgoing
+             // picture at the ramp's opacity — drawn through the same video
+             // pass so its colour effects apply. This is what makes a fade
+@@ -2420,7 +2737,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
+ /// Drag the selected overlay around the frame. Same contract as titles:
+ /// position is a fraction, so what you place is what renders at any size.
+ fn drag_pip(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
+-    if app.mode != Mode::Editor || pic.width() <= 0.0 || !response.dragged() {
++    if app.mode != Mode::Editor || app.selection.tool.is_some() || pic.width() <= 0.0 || !response.dragged() {
+         return;
+     }
+     let Some(id) = app.editor.selected else { return };
+@@ -2531,7 +2848,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+     let curves = app
+         .project
+         .clip(id)
+-        .and_then(|c| c.effects.curves)
++        .and_then(|c| c.adjust_fx().curves)
+         .unwrap_or_default();
+     let ch = app.curve_channel;
+     let pts = match ch {
+@@ -2576,7 +2893,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+                 app.editor.push_undo(&app.project);
+             }
+             if let Some(c) = app.project.clip_mut(id) {
+-                let mut cv = c.effects.curves.unwrap_or_default();
++                let mut cv = c.adjust_fx().curves.unwrap_or_default();
+                 let arr = match ch {
+                     0 => &mut cv.master,
+                     1 => &mut cv.r,
+@@ -2584,7 +2901,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+                     _ => &mut cv.b,
+                 };
+                 arr[xi] = y;
+-                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
++                c.adjust_fx_mut().curves = if cv.is_identity() { None } else { Some(cv) };
+             }
+             app.editor.mark_changed();
+         }
+@@ -3750,6 +4067,8 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
+                     Ok(job) => app.export = Some(job),
+                     Err(e) => app.status = format!("Export: {e}"),
+                 }
++            } else if start.clicked() && app.export_edited_photo() {
++                app.export_open = false;
+             } else if start.clicked() {
+                 // ffmpeg can't read SVG — hand it the rasterized copy instead.
+                 let input = if crate::media::is_svg_path(&source) {
+diff --git a/src/ui_tests.rs b/src/ui_tests.rs
+index 32354aa..109a66b 100644
+--- a/src/ui_tests.rs
++++ b/src/ui_tests.rs
+@@ -88,3 +88,49 @@ fn side_panel_resize_sticks() {
+         "panel snapped back after release: {while_dragging} → {after}"
+     );
+ }
++
++/// One frame of the editor's mask UI, on a 400×300 picture at (100, 100).
++fn mask_frame(ctx: &Context, app: &mut crate::app::ReelApp, id: u64, input: RawInput) {
++    let _ = ctx.run(input, |ctx| {
++        crate::ui::media_panel_frame(ctx, true, |ui| crate::ui::mask_panel(ui, app, id));
++        egui::CentralPanel::default().show(ctx, |ui| {
++            let (_, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
++            let pic = egui::Rect::from_min_size(Pos2::new(600.0, 100.0), Vec2::new(400.0, 300.0));
++            crate::ui::selection_canvas(ui, app, pic, &resp);
++        });
++    });
++}
++
++#[test]
++fn dragging_a_rectangle_on_the_picture_selects_those_pixels_and_the_panel_keeps_its_width() {
++    let dir = std::env::temp_dir().join(format!("reel-ui-mask-{}.png", std::process::id()));
++    image::RgbaImage::from_pixel(800, 600, image::Rgba([90, 120, 150, 255])).save(&dir).unwrap();
++    let path = dir.to_str().unwrap();
++    let mut app = crate::app::ReelApp::new();
++    app.mode = crate::app::Mode::Editor;
++    app.image = Some(crate::media::ImageDoc::open(path).unwrap());
++    app.project.append_video("photo", path, 5.0);
++    let id = app.project.tracks[0].clips[0].id;
++    app.editor.playhead = 1.0;
++
++    let ctx = Context::default();
++    mask_frame(&ctx, &mut app, id, pointer_input(Pos2::new(10.0, 10.0), None));
++    assert_eq!(app.selection.size, (800, 600));
++    app.selection.tool = Some(crate::masks::Tool::Rectangle);
++    // The tool's panel row and the selection tools all lay out with no picture size surprises.
++    let (a, b) = (Pos2::new(700.0, 150.0), Pos2::new(800.0, 250.0));
++    mask_frame(&ctx, &mut app, id, pointer_input(a, None));
++    mask_frame(&ctx, &mut app, id, pointer_input(a, Some(true)));
++    for p in [Pos2::new(740.0, 190.0), b] {
++        mask_frame(&ctx, &mut app, id, pointer_input(p, None));
++    }
++    mask_frame(&ctx, &mut app, id, pointer_input(b, Some(false)));
++    mask_frame(&ctx, &mut app, id, pointer_input(b, None));
++    let plane = app.selection.plane.as_ref().expect("the drag made a selection");
++    // Screen (700,150)..(800,250) is picture (200,100)..(400,300).
++    let at = |x: u32, y: u32| plane.data[(y * plane.w + x) as usize];
++    assert_eq!(at(300, 200), 255);
++    assert_eq!(at(450, 200), 0);
++    assert_eq!(at(100, 200), 0);
++    let _ = std::fs::remove_file(&dir);
++}

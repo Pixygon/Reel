@@ -22,7 +22,7 @@ impl Gpu {
         // PRIMARY = Vulkan/Metal/DX12. Enumerating the GL backends too costs
         // real startup time (EGL config probing) and we never pick GL anyway.
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
             ..Default::default()
         });
 

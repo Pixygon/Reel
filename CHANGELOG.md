@@ -4,6 +4,12 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## Unreleased
+
+- **Selections and local edits.** In the editor, a clip's new Masks section has lasso (freehand and polygon), rectangle, ellipse, a brush that adds or removes, and a colour pick with a tolerance slider and contiguous on/off. Shift adds, Alt subtracts, both intersect; feather, grow/contract, invert, clear; the selection shows as a tint you can toggle. Save it as a named, hideable mask, stored at picture resolution inside the project, and every Adjust setting then edits only that mask. Several masks stack, and overlaps accumulate. Exporting an edited photo now carries its edits.
+- **The same mask works on video** as a static matte, on every frame. Preview and render run one shared GPU pass, so they match, and tests compare the pixels.
+- **`reel mask`** imports a PNG matte, adjusts, hides, lists and removes masks. See docs/CLI.md.
+
 ## [2.0.0] — 2026-10-22
 
 ### Added

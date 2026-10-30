@@ -210,6 +210,17 @@ impl Fit {
 
     /// The filter chain that maps any input to exactly `w`×`h`.
     /// `tag` keeps labels unique when several of these appear in one graph.
+    /// Where a `sw`×`sh` picture lands in a `w`×`h` frame, as frame fractions
+    /// (min x, min y, max x, max y) — outside 0..1 when cropped. Mirrors
+    /// `chain`; local masks use it to find the picture inside the frame.
+    pub(crate) fn picture_rect(self, sw: u32, sh: u32, w: u32, h: u32) -> [f32; 4] {
+        let (sw, sh, w, h) = (sw.max(1) as f32, sh.max(1) as f32, w.max(1) as f32, h.max(1) as f32);
+        let (rw, rh) = (w / sw, h / sh);
+        let s = if self == Fit::Crop { rw.max(rh) } else { rw.min(rh) };
+        let (fw, fh) = (sw * s / w, sh * s / h);
+        [0.5 - fw / 2.0, 0.5 - fh / 2.0, 0.5 + fw / 2.0, 0.5 + fh / 2.0]
+    }
+
     pub(crate) fn chain(self, w: u32, h: u32, tag: &str) -> String {
         match self {
             Fit::Letterbox => format!(
@@ -1047,6 +1058,9 @@ pub(crate) fn start_timeline_graph(
     if segments.iter().any(|s| s.effects.mask.is_some()) {
         dropped.push("power windows");
     }
+    if segments.iter().any(|s| s.locals.iter().any(|m| m.visible)) {
+        dropped.push("local masks");
+    }
     if segments.iter().any(|s| s.effects.key_color.is_some())
         || overlays.overlays.iter().any(|o| o.effects.key_color.is_some())
     {
@@ -1807,6 +1821,7 @@ mod tests {
 
     fn seg(source: &str, in_point: f64, duration: f64) -> Segment {
         Segment {
+            locals: Vec::new(),
             source: source.to_string(),
             in_point,
             duration,
@@ -2754,6 +2769,7 @@ mod tests {
             .unwrap_or(false));
 
         let segs = vec![Segment {
+            locals: Vec::new(),
             source: src.to_string_lossy().into(),
             in_point: 0.0,
             duration: 4.0,
@@ -4089,6 +4105,7 @@ mod tests {
 
         // 3 s on the timeline at 2x = 6 s of source.
         let segs = vec![Segment {
+            locals: Vec::new(),
             source: src.to_string_lossy().into(),
             in_point: 0.0,
             duration: 3.0,
