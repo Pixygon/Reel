@@ -4,6 +4,15 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [2.0.1] — 2026-10-30
+
+_Internal release, no user-visible changes._
+
+### Internal
+- Internal maintenance, no user-visible changes.
+
+Codex impact: none
+
 ## [2.0.0] — 2026-10-22
 
 ### Added

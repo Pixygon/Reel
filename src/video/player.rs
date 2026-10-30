@@ -570,12 +570,26 @@ mod tests {
         assert!(!p.playing, "K stops");
     }
 
+    #[cfg(target_os = "linux")]
+    fn audio_server_running() -> bool {
+        let Ok(dir) = std::env::var("XDG_RUNTIME_DIR") else { return false };
+        ["pipewire-0", "pulse/native"]
+            .iter()
+            .any(|s| std::os::unix::net::UnixStream::connect(format!("{dir}/{s}")).is_ok())
+    }
+
     /// Audio files are first-class: open one through the same Player and it
     /// plays (position advances on mpv's clock, no video frames required).
     #[test]
     fn audio_file_opens_and_plays() {
         if mpv::lib().is_none() {
             eprintln!("libmpv not installed — skipping audio playback test");
+            return;
+        }
+        // With no audio server mpv opens fine but its audio clock never starts.
+        #[cfg(target_os = "linux")]
+        if !audio_server_running() {
+            eprintln!("no audio server — skipping audio playback test");
             return;
         }
         // Generate a 2 s tone on the fly; keeps binary fixtures out of git.

@@ -49,7 +49,7 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   routing (incl. SVG → resvg raster); export codec lists are kind-filtered
   via `Codec::for_kind`.
 - Capture: `portal.rs` (Linux-only, cfg-gated) is the built-in recorder —
-  ashpd portal session + PipeWire stream (git pipewire-rs, `*Rc` API) →
+  ashpd portal session + PipeWire stream (crates.io pipewire, `*Rc` API) →
   latest-frame slot → 30 fps CFR ticker → ffmpeg stdin. `capture.rs`
   dispatches: portal first, external tools as fallback; screenshots via
   spectacle/grim/maim tiers with the portal's interactive dialog as the

@@ -58,6 +58,11 @@ impl Compositor {
     /// Fails cleanly on machines with no GPU adapter; callers fall back to
     /// the ffmpeg-graph renderer.
     pub fn headless() -> Result<Self> {
+        // The Vulkan loader's first-use enumeration is not thread-safe: two
+        // renders (or tests) initialising at once crash inside libvulkan on a
+        // machine with an ICD but no device.
+        static VK_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _init = VK_INIT.lock().unwrap_or_else(|e| e.into_inner());
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
             backends: wgpu::Backends::PRIMARY,
             ..Default::default()

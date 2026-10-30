@@ -2991,6 +2991,12 @@ mod tests {
     /// sound at 2 s in the export, and nowhere before.
     #[test]
     fn audio_track_clips_sound_in_the_export() {
+        // Audio clips and loudness live in the frame server's wav pass; the
+        // no-GPU graph fallback has neither.
+        if crate::engine::compositor::Compositor::headless().is_err() {
+            eprintln!("no GPU adapter — skipping the frame-server audio test");
+            return;
+        }
         let dir = std::env::temp_dir();
         let vid = dir.join(format!("reel-atr-vid-{}.mp4", std::process::id()));
         let beep = dir.join(format!("reel-atr-beep-{}.wav", std::process::id()));
@@ -3060,6 +3066,12 @@ mod tests {
     /// referee here.
     #[test]
     fn delivered_loudness_hits_the_target() {
+        // Audio clips and loudness live in the frame server's wav pass; the
+        // no-GPU graph fallback has neither.
+        if crate::engine::compositor::Compositor::headless().is_err() {
+            eprintln!("no GPU adapter — skipping the frame-server audio test");
+            return;
+        }
         let dir = std::env::temp_dir();
         let src = dir.join(format!("reel-loud-src-{}.mp4", std::process::id()));
         let out = dir.join(format!("reel-loud-{}.mp4", std::process::id()));
