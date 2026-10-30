@@ -829,7 +829,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             );
         }
         if let Some(id) = app.editor.selected {
-            let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.effects));
+            let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.adjust_fx()));
             if let Some((name, start, duration, in_point, before)) = info {
                 ui.separator();
                 ui.label(RichText::new("Selected clip").color(theme::CYAN));
@@ -842,6 +842,9 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 // ── Effects ─────────────────────────────────────────────
                 // What you set here is what the export renders — the preview
                 // and the ffmpeg filters share one formula (effects.rs).
+                mask_panel(ui, app, id);
+                // A mask carries colour only: what it would ignore isn't shown.
+                let in_mask = app.project.clip(id).is_some_and(|c| c.active_mask.is_some());
                 ui.add_space(6.0);
                 ui.label(RichText::new("Look").color(theme::CYAN));
                 let mut fx = before;
@@ -886,6 +889,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         ui.add(egui::Slider::new(&mut q.push_lum, 0.0..=2.0).text("Push light"));
                     }
                 });
+                if !in_mask {
                 ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).text("Fade in (s)"));
                 ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
                 // Reframe — how you put a landscape shot into a vertical
@@ -912,6 +916,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 if fx.zoom > 1.0001 {
                     ui.add(egui::Slider::new(&mut fx.pan_x, -1.0..=1.0).text("Pan ↔"));
                     ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).text("Pan ↕"));
+                }
                 }
 
                 // Picture-in-picture placement, for overlay clips only.
@@ -951,6 +956,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     );
                 }
 
+                if !in_mask {
                 // ── Keyframes ───────────────────────────────────────────
                 // Animate any parameter: set a value at the playhead, and the
                 // render evaluates the curve per frame. The preview shows the
@@ -1063,9 +1069,11 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 }
 
+                }
+
                 // ── LUT ─────────────────────────────────────────────────
                 ui.horizontal(|ui| {
-                    let lut_idx = app.project.clip(id).and_then(|c| c.effects.lut);
+                    let lut_idx = app.project.clip(id).and_then(|c| c.adjust_fx().lut);
                     match lut_idx.and_then(|i| app.project.lut_path(i)).map(String::from) {
                         Some(path) => {
                             let name = std::path::Path::new(&path)
@@ -1076,7 +1084,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             if ui.small_button("−").on_hover_text("Remove the LUT").clicked() {
                                 app.editor.push_undo(&app.project);
                                 if let Some(c) = app.project.clip_mut(id) {
-                                    c.effects.lut = None;
+                                    c.adjust_fx_mut().lut = None;
                                 }
                                 app.editor.mark_changed();
                             }
@@ -1109,13 +1117,13 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let has = app
                             .project
                             .clip(id)
-                            .and_then(|c| c.effects.curves)
+                            .and_then(|c| c.adjust_fx().curves)
                             .map(|c| !c.is_identity())
                             .unwrap_or(false);
                         if has && ui.small_button("Reset").clicked() {
                             app.editor.push_undo(&app.project);
                             if let Some(c) = app.project.clip_mut(id) {
-                                c.effects.curves = None;
+                                c.adjust_fx_mut().curves = None;
                             }
                             app.editor.mark_changed();
                         }
@@ -1125,7 +1133,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 
                 // ── Power window ────────────────────────────────────────
                 {
-                    let mut fxm = app.project.clip(id).map(|c| c.effects).unwrap_or_default();
+                    let mut fxm = app.project.clip(id).map(|c| c.adjust_fx()).unwrap_or_default();
                     let before_m = fxm;
                     let mut kind = match fxm.mask {
                         None => 0,
@@ -1184,7 +1192,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                     if fxm != before_m {
                         if let Some(c) = app.project.clip_mut(id) {
-                            c.effects = fxm;
+                            *c.adjust_fx_mut() = fxm;
                         }
                         app.editor.mark_changed();
                     }
@@ -1562,7 +1570,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         app.editor.fx_gesture = Some(id);
                     }
                     if let Some(c) = app.project.clip_mut(id) {
-                        c.effects = fx;
+                        *c.adjust_fx_mut() = fx;
                     }
                     app.editor.mark_changed();
                 }
@@ -2105,6 +2113,325 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 
 /// The media viewport — aspect-fit the current frame / image / cover art,
 /// a ♪ card for pure audio, or the drop hint.
+/// Selections and masks for clip `id`: list, tools, then what a selection can
+/// become. The Adjust panel below edits whichever entry is active here.
+pub(crate) fn mask_panel(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+    use crate::masks::{Combine, LocalMask, Tool};
+    let on_v1 = app.project.tracks.iter().any(|t| {
+        t.kind == crate::edit::TrackKind::Video && t.clips.iter().any(|c| c.id == id)
+    });
+    if !on_v1 {
+        return;
+    }
+    ui.add_space(6.0);
+    ui.label(RichText::new("Masks").color(theme::CYAN));
+    let Some(clip) = app.project.clip(id) else { return };
+    let rows: Vec<(String, bool)> = clip.masks.iter().map(|m| (m.name.clone(), m.visible)).collect();
+    let mut active = clip.active_mask.filter(|&i| i < rows.len());
+    let was_active = active;
+    let mut toggle: Option<usize> = None;
+    let mut delete: Option<usize> = None;
+    ui.selectable_value(&mut active, None, "Whole clip");
+    for (i, (name, visible)) in rows.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let mut v = *visible;
+            if ui.checkbox(&mut v, "").on_hover_text("Show or hide this mask's edit").changed() {
+                toggle = Some(i);
+            }
+            ui.selectable_value(&mut active, Some(i), name);
+            if ui.small_button("🗑").on_hover_text("Delete this mask").clicked() {
+                delete = Some(i);
+            }
+        });
+    }
+    if active != was_active {
+        if let Some(c) = app.project.clip_mut(id) {
+            c.active_mask = active;
+        }
+    }
+    if let Some(i) = toggle {
+        app.editor.push_undo(&app.project);
+        if let Some(c) = app.project.clip_mut(id) {
+            c.masks[i].visible = !c.masks[i].visible;
+        }
+        app.editor.mark_changed();
+    }
+    if let Some(i) = delete {
+        app.editor.push_undo(&app.project);
+        if let Some(c) = app.project.clip_mut(id) {
+            c.masks.remove(i);
+            c.active_mask = None;
+        }
+        app.editor.mark_changed();
+        active = None;
+    }
+    if let Some(i) = active {
+        let mut name = rows[i].0.clone();
+        if ui.text_edit_singleline(&mut name).changed() {
+            if let Some(c) = app.project.clip_mut(id) {
+                c.masks[i].name = name;
+            }
+            app.editor.mark_changed();
+        }
+        ui.label(
+            RichText::new("Look, curves, LUT, power window and plugin now edit this mask, inside the selection. Everything else stays the clip's.")
+                .small()
+                .color(Color32::from_gray(150)),
+        );
+    }
+
+    if app.masked_clip().map(|c| c.id) != Some(id) {
+        ui.label(
+            RichText::new("Move the playhead onto this clip to select on its picture.")
+                .small()
+                .color(Color32::from_gray(150)),
+        );
+        return;
+    }
+    let Some(size) = app.picture_size() else { return };
+    app.selection.target(id, size);
+    let sel = &mut app.selection;
+    ui.horizontal_wrapped(|ui| {
+        for t in Tool::ALL {
+            let on = sel.tool == Some(t);
+            if ui.selectable_label(on, t.label()).clicked() {
+                sel.tool = if on { None } else { Some(t) };
+                sel.path.clear();
+            }
+        }
+    });
+    let slider_w = (ui.available_width() - 90.0).max(40.0);
+    ui.spacing_mut().slider_width = slider_w;
+    match sel.tool {
+        Some(Tool::Brush) => {
+            ui.add(egui::Slider::new(&mut sel.brush_radius, 1.0..=400.0).logarithmic(true).text("Size"));
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut sel.brush_remove, false, "Add");
+                ui.selectable_value(&mut sel.brush_remove, true, "Remove");
+            });
+        }
+        Some(Tool::Colour) => {
+            ui.add(egui::Slider::new(&mut sel.tolerance, 0.0..=1.0).text("Tolerance"));
+            ui.checkbox(&mut sel.contiguous, "Contiguous");
+        }
+        Some(Tool::Polygon) => {
+            ui.label(RichText::new("Click the corners, double-click to close.").small());
+        }
+        _ => {}
+    }
+    if sel.tool.is_some() {
+        ui.label(
+            RichText::new("Shift adds, Alt subtracts, both intersect.")
+                .small()
+                .color(Color32::from_gray(150)),
+        );
+    }
+    if sel.plane.is_some() {
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut sel.feather).range(0.0..=500.0).suffix(" px"));
+            if ui.small_button("Feather").clicked() {
+                let r = sel.feather;
+                sel.edit(|p| p.feather(r));
+            }
+            ui.add(egui::DragValue::new(&mut sel.grow).range(-500.0..=500.0).suffix(" px"));
+            if ui.small_button("Grow").on_hover_text("Negative contracts").clicked() {
+                let r = sel.grow;
+                sel.edit(|p| p.expand(r));
+            }
+        });
+        ui.horizontal(|ui| {
+            if ui.small_button("Invert").clicked() {
+                sel.edit(|p| p.invert());
+            }
+            if ui.small_button("Clear").clicked() {
+                sel.clear();
+            }
+            ui.checkbox(&mut sel.show_overlay, "Show");
+        });
+    }
+    let plane = sel.plane.clone();
+    ui.horizontal(|ui| {
+        if let Some(plane) = plane {
+            if ui.button("Save as mask").clicked() {
+                let n = rows.len() + 1;
+                match LocalMask::new(&format!("Mask {n}"), plane.clone()) {
+                    Ok(m) => {
+                        app.editor.push_undo(&app.project);
+                        if let Some(c) = app.project.clip_mut(id) {
+                            c.masks.push(m);
+                            c.active_mask = Some(c.masks.len() - 1);
+                        }
+                        app.selection.clear();
+                        app.editor.mark_changed();
+                    }
+                    Err(e) => app.status = format!("Could not store the mask: {e}"),
+                }
+            }
+            if let Some(i) = active {
+                if ui.button("Replace mask").clicked() {
+                    match crate::masks::Matte::new(plane) {
+                        Ok(m) => {
+                            app.editor.push_undo(&app.project);
+                            if let Some(c) = app.project.clip_mut(id) {
+                                c.masks[i].matte = m;
+                            }
+                            app.selection.clear();
+                            app.editor.mark_changed();
+                        }
+                        Err(e) => app.status = format!("Could not store the mask: {e}"),
+                    }
+                }
+            }
+        } else if let Some(i) = active {
+            if ui.button("Load selection").on_hover_text("Refine this mask with the tools").clicked() {
+                let matte = app.project.clip(id).map(|c| (*c.masks[i].matte.plane).clone());
+                if let Some(p) = matte {
+                    let p = if (p.w, p.h) == size { p } else { p.resized(size.0, size.1) };
+                    app.selection.apply(p, Combine::Replace);
+                }
+            }
+        }
+    });
+}
+
+/// The selection on the picture: the tint, the gesture in progress, and the
+/// pointer while a tool is armed. Drawn after the video pass, in its branch.
+pub(crate) fn selection_canvas(ui: &mut egui::Ui, app: &mut ReelApp, img_rect: Rect, response: &egui::Response) {
+    use crate::masks::{view_to_source, Plane, Tool};
+    let Some(clip) = app.masked_clip().map(|c| (c.id, c.effects)) else { return };
+    if app.selection.clip != Some(clip.0) {
+        return;
+    }
+    let fx = clip.1;
+    let turns = app.preview_turns(&fx);
+    let (w, h) = app.selection.size;
+    let source_uv = |pos: egui::Pos2| {
+        let uv = (pos - img_rect.min) / img_rect.size();
+        view_to_source([uv.x, uv.y], Some(&fx), turns)
+    };
+    let to_px = |pos: egui::Pos2| {
+        let s = source_uv(pos);
+        [s[0] * w as f32, s[1] * h as f32]
+    };
+
+    if let Some(tool) = app.selection.tool {
+        let (shift, alt, enter, esc) = ui.input(|i| {
+            (
+                i.modifiers.shift,
+                i.modifiers.alt,
+                i.key_pressed(egui::Key::Enter),
+                i.key_pressed(egui::Key::Escape),
+            )
+        });
+        let sel = &mut app.selection;
+        let op = sel.combine(shift, alt, tool);
+        let hover = response.interact_pointer_pos();
+        match tool {
+            Tool::Lasso | Tool::Brush => {
+                if response.dragged() || response.drag_started() {
+                    if let Some(p) = hover {
+                        sel.path.push(to_px(p));
+                    }
+                }
+                if response.drag_stopped() {
+                    sel.commit(op);
+                } else if tool == Tool::Brush && response.clicked() {
+                    if let Some(p) = hover {
+                        sel.path.push(to_px(p));
+                        sel.commit(op);
+                    }
+                }
+            }
+            Tool::Rectangle | Tool::Ellipse => {
+                if let Some(p) = hover.filter(|_| response.dragged() || response.drag_started()) {
+                    if sel.path.is_empty() {
+                        sel.path.push(to_px(p));
+                    }
+                    sel.path.truncate(1);
+                    sel.path.push(to_px(p));
+                }
+                if response.drag_stopped() {
+                    sel.commit(op);
+                }
+            }
+            Tool::Polygon => {
+                if response.double_clicked() || enter {
+                    sel.commit(op);
+                } else if response.clicked() {
+                    if let Some(p) = hover {
+                        sel.path.push(to_px(p));
+                    }
+                }
+                if esc {
+                    sel.path.clear();
+                }
+            }
+            Tool::Colour => {
+                if let Some(p) = hover.filter(|_| response.clicked()) {
+                    let s = source_uv(p);
+                    let (tolerance, contiguous) = (sel.tolerance, sel.contiguous);
+                    let picked = match (&app.image, app.player.as_ref().and_then(|pl| pl.current.as_ref())) {
+                        (Some(img), _) => Some((&img.data, img.width, img.height)),
+                        (None, Some(f)) => Some((&f.data, f.width, f.height)),
+                        _ => None,
+                    };
+                    if let Some((px, pw, ph)) = picked {
+                        let seed = ((s[0] * pw as f32) as u32, (s[1] * ph as f32) as u32);
+                        let mut shape = Plane::colour_range(px, pw, ph, seed, tolerance, contiguous);
+                        if (pw, ph) != (w, h) {
+                            shape = shape.resized(w, h);
+                        }
+                        app.selection.apply(shape, op);
+                    }
+                }
+            }
+        }
+    }
+
+    let painter = ui.painter_at(img_rect);
+    if app.selection.show_overlay {
+        let rev = app.selection.revision;
+        if app.selection.overlay.as_ref().is_none_or(|(r, _)| *r != rev) {
+            app.selection.overlay = app.selection.plane.as_ref().map(|p| {
+                // A tint needs no more than screen-ish detail.
+                let step = (p.w.max(p.h) / 1024).max(1) as usize;
+                let (tw, th) = (p.w as usize / step, p.h as usize / step);
+                let px: Vec<Color32> = (0..tw * th)
+                    .map(|i| {
+                        let (x, y) = (i % tw * step, i / tw * step);
+                        let v = p.data[y * p.w as usize + x] as u32;
+                        Color32::from_rgba_premultiplied((v * 150 / 255) as u8, 0, (v * 60 / 255) as u8, (v * 110 / 255) as u8)
+                    })
+                    .collect();
+                let img = egui::ColorImage { size: [tw, th], pixels: px };
+                (rev, ui.ctx().load_texture("reel-selection", img, egui::TextureOptions::LINEAR))
+            });
+        }
+        if let Some((_, tex)) = &app.selection.overlay {
+            // Corners through the view mapping, so zoom/flip/turns all hold.
+            let mut mesh = egui::Mesh::with_texture(tex.id());
+            for pos in [img_rect.left_top(), img_rect.right_top(), img_rect.right_bottom(), img_rect.left_bottom()] {
+                let s = source_uv(pos);
+                mesh.vertices.push(egui::epaint::Vertex { pos, uv: egui::pos2(s[0], s[1]), color: Color32::WHITE });
+            }
+            mesh.indices = vec![0, 1, 2, 0, 2, 3];
+            painter.add(egui::Shape::mesh(mesh));
+        }
+    }
+    // The gesture in progress, on screen. Stored in picture pixels, so it is
+    // shown through the inverse of the view only for the plain case; a zoomed
+    // or turned clip still selects correctly and shows the result on release.
+    if !app.selection.path.is_empty() && fx.zoom <= 1.0 && turns == 0 && !fx.flip_h && !fx.flip_v {
+        let pts: Vec<egui::Pos2> = app
+            .selection
+            .path
+            .iter()
+            .map(|p| img_rect.min + Vec2::new(p[0] / w as f32 * img_rect.width(), p[1] / h as f32 * img_rect.height()))
+            .collect();
+        painter.add(egui::Shape::line(pts, egui::Stroke::new(1.5, theme::CYAN)));
+    }
+}
+
 fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
     let avail = ui.available_size();
     let (rect, response) = ui.allocate_exact_size(avail, Sense::click_and_drag());
@@ -2140,7 +2467,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             painter.add(egui_wgpu::Callback::new_paint_callback(
                 img_rect,
                 crate::video_pass::VideoDraw {
-                    view,
+                    view: app.local_view().unwrap_or(view),
                     tint: [1.0, 1.0, 1.0, fade],
                     use_src_alpha: app.image.is_some(),
                     effects,
@@ -2152,6 +2479,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                     bounds: [1.0, 1.0],
                 },
             ));
+            selection_canvas(ui, app, img_rect, &response);
             // The incoming half of a crossfade, blended over the outgoing
             // picture at the ramp's opacity — drawn through the same video
             // pass so its colour effects apply. This is what makes a fade
@@ -2198,9 +2526,9 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
                                     _ => img_rect,
                                 },
                                 crate::video_pass::VideoDraw {
-                                    view: tex
-                                        .texture
-                                        .create_view(&wgpu::TextureViewDescriptor::default()),
+                                    view: app.local_incoming_view().unwrap_or_else(|| {
+                                        tex.texture.create_view(&wgpu::TextureViewDescriptor::default())
+                                    }),
                                     tint: [1.0, 1.0, 1.0, in_mul],
                                     use_src_alpha: false,
                                     effects: fx,
@@ -2429,7 +2757,7 @@ fn draw_pip(app: &mut ReelApp, ctx: &egui::Context, painter: &egui::Painter, pic
 /// Drag the selected overlay around the frame. Same contract as titles:
 /// position is a fraction, so what you place is what renders at any size.
 fn drag_pip(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
-    if app.mode != Mode::Editor || pic.width() <= 0.0 || !response.dragged() {
+    if app.mode != Mode::Editor || app.selection.tool.is_some() || pic.width() <= 0.0 || !response.dragged() {
         return;
     }
     let Some(id) = app.editor.selected else { return };
@@ -2513,7 +2841,7 @@ fn draw_titles(app: &ReelApp, painter: &egui::Painter, pic: Rect) {
 /// fractions, so a title placed here lands in the same spot at any export
 /// resolution — the thing that makes this safe to do by eye.
 fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
-    if app.mode != Mode::Editor || pic.width() <= 0.0 {
+    if app.mode != Mode::Editor || app.selection.tool.is_some() || pic.width() <= 0.0 {
         return;
     }
     let Some(i) = app.editor.selected_title else { return };
@@ -2540,7 +2868,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
     let curves = app
         .project
         .clip(id)
-        .and_then(|c| c.effects.curves)
+        .and_then(|c| c.adjust_fx().curves)
         .unwrap_or_default();
     let ch = app.curve_channel;
     let pts = match ch {
@@ -2585,7 +2913,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
                 app.editor.push_undo(&app.project);
             }
             if let Some(c) = app.project.clip_mut(id) {
-                let mut cv = c.effects.curves.unwrap_or_default();
+                let mut cv = c.adjust_fx().curves.unwrap_or_default();
                 let arr = match ch {
                     0 => &mut cv.master,
                     1 => &mut cv.r,
@@ -2593,7 +2921,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
                     _ => &mut cv.b,
                 };
                 arr[xi] = y;
-                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
+                c.adjust_fx_mut().curves = if cv.is_identity() { None } else { Some(cv) };
             }
             app.editor.mark_changed();
         }
@@ -3759,6 +4087,8 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     Ok(job) => app.export = Some(job),
                     Err(e) => app.status = format!("Export: {e}"),
                 }
+            } else if start.clicked() && app.export_edited_photo() {
+                app.export_open = false;
             } else if start.clicked() {
                 // ffmpeg can't read SVG — hand it the rasterized copy instead.
                 let input = if crate::media::is_svg_path(&source) {

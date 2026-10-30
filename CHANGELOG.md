@@ -7,6 +7,9 @@ materialized from the Pixygon Changelog API — edit there, not here.
 ## [Unreleased]
 
 ### Added
+- **Selections and local edits.** In the editor, a clip's new Masks section has lasso (freehand and polygon), rectangle, ellipse, a brush that adds or removes, and a colour pick with a tolerance slider and contiguous on/off. Shift adds, Alt subtracts, both intersect; feather, grow/contract, invert, clear; the selection shows as a tint you can toggle. Save it as a named, hideable mask, stored at picture resolution inside the project, and every Adjust setting then edits only that mask. Several masks stack, and overlaps accumulate. Exporting an edited photo now carries its edits.
+- **The same mask works on video** as a static matte, on every frame. Preview and render run one shared GPU pass, so they match, and tests compare the pixels.
+- **`reel mask`** imports a PNG matte, adjusts, hides, lists and removes masks. See docs/CLI.md.
 - Picture effects, one shader stage shared by preview and render: `--blur`, `--rgb-split`, `--glitch`, `--shake`/`--shake-hz` and free `--rotate-deg`. A shake on an adjustment clip moves the whole frame.
 - Logo build: `reel effects --build tiles N --build-seconds S` assembles a picture from tiles.
 - Plates: `reel add P color:RRGGBB --duration N`, and `color:transparent` for a blank canvas.
@@ -21,9 +24,20 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - PNG alpha on the overlay track now survives the render.
 - `reel frame` no longer loses a still that isn't at the very start of the timeline.
 
-## [2.1.0] — 2026-10-30
+## [2.2.0] — 2026-10-30
 
-_Reel adds live picture effects (blur, glitch, shake, logo build), reusable template slots, and multi-aspect-ratio variants._
+_Reel adds local selections and masks — paint a selection, give it its own grade, and see it rendered identically in preview and export._
+
+### Added
+- You can now select part of an image or video clip — with lasso, polygon, rectangle, ellipse, brush and colour-range tools, plus add/subtract/intersect, feather, grow and invert — and turn that selection into a named, hideable local mask with its own grade (exposure, contrast, saturation). Masks are stored right in the project at full picture resolution, and the preview shows exactly what will render.
+- New `reel mask` CLI command lets you import a PNG matte onto a clip, adjust its feather/grow/invert and colour settings, name it, hide or show it, remove it, or list all masks on a clip — all without opening the app.
+
+### Improved
+- Photo export now runs the edited photo through the same rendering engine used for the live preview and frame grabs, so what you see while editing is exactly what you get in the exported file, including any masks or local adjustments.
+
+Codex impact: none
+
+## [2.1.0] — 2026-10-30
 
 ### Added
 - New picture effects for clips: free-angle rotation, Gaussian blur, RGB split, glitch (seeded tears and jittering split), screen shake, and a logo 'build' animation that assembles the picture from tiles. All run live in preview and in the final render.

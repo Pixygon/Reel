@@ -41,11 +41,35 @@ pub struct OverlayPreview {
     pub tex_id: Option<egui::TextureId>,
 }
 
+/// Local masks in the preview: the SAME `LocalChain` the frame server runs,
+/// on the window's device. `key` holds everything that forces a rebuild.
+pub struct LocalPreview {
+    comp: crate::engine::compositor::Compositor,
+    built: Option<LocalBuilt>,
+    /// The incoming clip of a transition: a second picture, a second chain.
+    incoming: Option<LocalBuilt>,
+}
+
+type LocalKey = (Vec<(u64, bool, crate::effects::Effects)>, u32, u32, u8);
+
+struct LocalBuilt {
+    key: LocalKey,
+    chain: crate::engine::compositor::LocalChain,
+    /// A still's straight-alpha pixels and its premultiplied output.
+    still: Option<(wgpu::TextureView, wgpu::Texture)>,
+    view: Option<wgpu::TextureView>,
+}
+
 pub struct ReelApp {
     pub mode: Mode,
     pub player: Option<Player>,
     /// A still image being viewed (mutually exclusive with `player`).
     pub image: Option<ImageDoc>,
+    /// The selection tools' state (see masks.rs).
+    pub selection: crate::masks::Selection,
+    /// The preview's run of the local-mask chain; the frame the viewport
+    /// draws instead of the raw one while a mask is showing.
+    pub local: Option<LocalPreview>,
     image_uploaded: bool,
     pub project: Project,
     pub editor: EditorState,
@@ -217,6 +241,8 @@ impl ReelApp {
             export_out: String::new(),
             export: None,
             export_timeline: false,
+            selection: Default::default(),
+            local: None,
             queue: export::Queue::default(),
             captions_job: None,
             waveforms: crate::waveform::Cache::default(),
@@ -485,7 +511,7 @@ impl ReelApp {
                                 self.editor.push_undo(&self.project);
                                 let idx = self.project.add_lut(&abs);
                                 if let Some(c) = self.project.clip_mut(clip) {
-                                    c.effects.lut = Some(idx);
+                                    c.adjust_fx_mut().lut = Some(idx);
                                 }
                                 self.editor.mark_changed();
                                 self.status = "LUT applied — previewed and rendered alike.".into();
@@ -1302,6 +1328,197 @@ impl ReelApp {
                 }
             }
         }
+    }
+
+    /// The clip whose picture is on the viewport, when its masks apply: only
+    /// the editor previews edits, exactly as for `preview_effects`.
+    pub fn masked_clip(&self) -> Option<&crate::edit::Clip> {
+        if self.mode != Mode::Editor {
+            return None;
+        }
+        self.project.clip_at(TrackKind::Video, self.editor.playhead)
+    }
+
+    /// The picture's own size: the resolution a selection is made at.
+    pub fn picture_size(&self) -> Option<(u32, u32)> {
+        if let Some(img) = &self.image {
+            return Some((img.width, img.height));
+        }
+        let info = self.player.as_ref().map(|p| (p.info.width, p.info.height));
+        info.filter(|&(w, h)| w > 0 && h > 0).or_else(|| self.tex_dims())
+    }
+
+    /// Quarter turns between stored picture and on-screen frame: mpv rotates
+    /// video for the preview; stills are shown as stored.
+    pub fn preview_turns(&self, fx: &crate::effects::Effects) -> u8 {
+        if self.image.is_some() { 0 } else { fx.rotate }
+    }
+
+    fn local_preview<'a>(slot: &'a mut Option<LocalPreview>, gpu: &Gpu) -> &'a mut LocalPreview {
+        slot.get_or_insert_with(|| LocalPreview {
+            comp: crate::engine::compositor::Compositor::with_device(
+                gpu.device.clone(),
+                gpu.queue.clone(),
+            ),
+            built: None,
+            incoming: None,
+        })
+    }
+
+    /// The incoming half of a transition, over the preview pool's frame. The
+    /// pool doesn't rotate its players, so that frame is the stored picture.
+    fn sync_incoming_local(&mut self, gpu: &Gpu) {
+        let masked = self.transition_preview.and_then(|(id, ..)| {
+            let masks = self.project.clip(id)?.masks.clone();
+            let tex = self.overlay_previews.get(&id)?.tex.as_ref()?;
+            let view = tex.texture.create_view(&wgpu::TextureViewDescriptor::default());
+            masks.iter().any(|m| m.visible).then_some((masks, view, tex.width, tex.height))
+        });
+        let Some((masks, frame, w, h)) = masked else {
+            if let Some(l) = &mut self.local {
+                l.incoming = None;
+            }
+            return;
+        };
+        let key: LocalKey =
+            (masks.iter().map(|m| (m.matte.uid, m.visible, m.adjust)).collect(), w, h, 0);
+        let local = Self::local_preview(&mut self.local, gpu);
+        if local.incoming.as_ref().is_none_or(|b| b.key != key) {
+            local.incoming = crate::engine::render::local_chain(
+                &local.comp,
+                &masks,
+                (w, h),
+                |_| [0.0, 0.0, 1.0, 1.0],
+                0,
+                false,
+                &self.project.luts,
+                &self.project.plugins,
+            )
+            .map(|chain| LocalBuilt { key, chain, still: None, view: None });
+        }
+        if let Some(b) = &mut local.incoming {
+            b.view = Some(b.chain.run(&local.comp, &frame));
+        }
+    }
+
+    /// The incoming clip's frame with its masks, while a transition shows it.
+    pub fn local_incoming_view(&self) -> Option<wgpu::TextureView> {
+        self.local.as_ref()?.incoming.as_ref()?.view.clone()
+    }
+
+    /// Run the local-mask chain over the frame just synced.
+    pub fn sync_local_preview(&mut self, gpu: &Gpu) {
+        self.sync_incoming_local(gpu);
+        let Some(clip) = self.masked_clip().filter(|c| c.masks.iter().any(|m| m.visible)) else {
+            if let Some(l) = &mut self.local {
+                l.built = None;
+            }
+            return;
+        };
+        let Some(tex) = &self.tex else { return };
+        let turns = if self.image.is_some() { 0 } else { clip.effects.rotate };
+        let key: LocalKey = (
+            clip.masks.iter().map(|m| (m.matte.uid, m.visible, m.adjust)).collect(),
+            tex.width,
+            tex.height,
+            turns,
+        );
+        let masks = clip.masks.clone();
+        let local = Self::local_preview(&mut self.local, gpu);
+        if local.built.as_ref().is_none_or(|b| b.key != key) {
+            let Some(chain) = crate::engine::render::local_chain(
+                &local.comp,
+                &masks,
+                (tex.width, tex.height),
+                |_| [0.0, 0.0, 1.0, 1.0], // the preview frame IS the picture
+                turns,
+                self.image.is_some(),
+                &self.project.luts,
+                &self.project.plugins,
+            ) else {
+                return;
+            };
+            let still = self.image.as_ref().map(|img| {
+                (local.comp.upload(&img.data, img.width, img.height), local.comp.target(tex.width, tex.height))
+            });
+            local.built = Some(LocalBuilt { key, chain, still, view: None });
+        }
+        let Some(b) = &mut local.built else { return };
+        // A still only changes with the key; video changes every frame.
+        if b.still.is_some() && b.view.is_some() {
+            return;
+        }
+        b.view = Some(match &b.still {
+            Some((src, out)) => {
+                local.comp.premultiply(&b.chain.run(&local.comp, src), out);
+                out.create_view(&wgpu::TextureViewDescriptor::default())
+            }
+            None => b.chain.run(&local.comp, &tex.view),
+        });
+    }
+
+    /// The frame to draw instead of the raw one, while a mask is showing.
+    pub fn local_view(&self) -> Option<wgpu::TextureView> {
+        self.local.as_ref()?.built.as_ref()?.view.clone()
+    }
+
+    /// Export a photo with its edits: one still through the same engine as
+    /// the frame grab, at the photo's own size. Source export would copy the
+    /// untouched file. Returns false when this photo has no edits to carry.
+    pub fn export_edited_photo(&mut self) -> bool {
+        let (Some(img), Some(path)) = (&self.image, self.media_path()) else { return false };
+        let (w, h) = (img.width, img.height);
+        let Some(mut seg) = self.project.export_segments().into_iter().find(|s| s.source == path)
+        else {
+            return false;
+        };
+        if seg.locals.is_empty() && seg.effects == Default::default() {
+            return false;
+        }
+        seg.transition_in = 0.0;
+        let out = self.export_out.clone();
+        let result = (|| -> anyhow::Result<()> {
+            if std::path::Path::new(&out).exists() {
+                anyhow::bail!("{out} already exists");
+            }
+            let png = format!("{out}.reel-still.png");
+            let settings = export::ExportSettings {
+                resolution: export::Resolution::Source,
+                fit: export::Fit::Letterbox,
+                ..self.export_settings.clone()
+            };
+            let ov = export::Overlays {
+                captions: &[],
+                caption_size: self.project.caption_size,
+                titles: &[],
+                music: None,
+                roomtone: None,
+                overlays: &[],
+                markers: &[],
+                marker_labels: &[],
+                luts: &self.project.luts,
+                plugins: &self.project.plugins,
+                audio_clips: &[],
+            };
+            crate::engine::render::still_png(&[seg], &ov, (w, h, 25.0), &settings, 0.0, &png)?;
+            let done = image::open(&png)
+                .map_err(anyhow::Error::from)
+                .and_then(|i| {
+                    if self.export_settings.codec == export::Codec::Jpeg {
+                        i.into_rgb8().save(&out)?;
+                    } else {
+                        i.save(&out)?;
+                    }
+                    Ok(())
+                });
+            let _ = std::fs::remove_file(&png);
+            done
+        })();
+        self.status = match result {
+            Ok(()) => format!("Saved {out}"),
+            Err(e) => format!("Photo export failed: {e}"),
+        };
+        true
     }
 
     pub fn sync_frame(&mut self, gpu: &Gpu, egui: &mut EguiBackend) {

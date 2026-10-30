@@ -265,7 +265,8 @@ pub fn render_still(
     let comp = Compositor::headless()?;
     let (tw, th, tfps) = export::render_target(project, settings);
     let plan = plan(segments);
-    let mut layers_data: Vec<(Vec<u8>, u32, u32, super::Layer)> = Vec::new();
+    let mut layers_data: Vec<(Vec<u8>, u32, u32, super::Layer, Option<super::compositor::LocalChain>)> =
+        Vec::new();
 
     let grab = |source: &str,
                     in_point: f64,
@@ -353,6 +354,16 @@ pub fn render_still(
                     lut,
                     plugin: plugin_of(&fx, overlays.plugins),
                 },
+                local_chain(
+                    &comp,
+                    &seg.locals,
+                    (tw, th),
+                    fitted(settings.fit, tw, th, seg.effects.rotate),
+                    seg.effects.rotate,
+                    true,
+                    overlays.luts,
+                    overlays.plugins,
+                ),
             ));
         }
     }
@@ -399,13 +410,17 @@ pub fn render_still(
                     }),
                     plugin: plugin_of(&o.effects, overlays.plugins),
                 },
+                None,
             ));
         }
     }
     let layers: Vec<super::Layer> = layers_data
         .into_iter()
-        .map(|(buf, w, h, mut l)| {
+        .map(|(buf, w, h, mut l, chain)| {
             l.view = comp.upload(&buf, w, h);
+            if let Some(c) = chain {
+                l.view = c.run(&comp, &l.view);
+            }
             l
         })
         .collect();
@@ -474,7 +489,7 @@ fn adjustment_shake(adjustments: &[OverlaySegment], t: f64) -> [f32; 2] {
 
 /// The device lattice for a grade STACK (clip grade + any adjustment
 /// layers), cached by the stack's combined key.
-fn lut_for_stack(
+pub(crate) fn lut_for_stack(
     stack: &[&crate::effects::Effects],
     cache: &mut std::collections::HashMap<u64, Option<wgpu::TextureView>>,
     lut_table: &[String],
@@ -505,9 +520,54 @@ fn lut_for_stack(
         .clone()
 }
 
+/// The local-mask stage for one clip at frame size `(w, h)`, resolved on
+/// `comp`'s device. `rect` says where the picture sits in that frame and
+/// `turns` how it was rotated on the way there. `None` when no mask is showing.
+pub(crate) fn local_chain(
+    comp: &Compositor,
+    masks: &[crate::masks::LocalMask],
+    (w, h): (u32, u32),
+    rect: impl Fn(&crate::masks::Plane) -> [f32; 4],
+    turns: u8,
+    use_src_alpha: bool,
+    luts: &[String],
+    plugins: &[String],
+) -> Option<super::compositor::LocalChain> {
+    let mut cache = std::collections::HashMap::new();
+    let passes: Vec<_> = masks
+        .iter()
+        .filter(|m| m.visible)
+        .map(|m| {
+            let fx = m.colour_adjust();
+            super::compositor::LocalPass {
+                matte: super::compositor::MatteBind {
+                    view: comp.matte_texture(&m.matte.plane),
+                    rect: rect(&m.matte.plane),
+                    turns,
+                },
+                effects: fx,
+                lut: lut_for_stack(&[&fx], &mut cache, luts, comp),
+                plugin: plugin_of(&fx, plugins),
+            }
+        })
+        .collect();
+    (!passes.is_empty())
+        .then(|| super::compositor::LocalChain::new(comp, passes, w, h, use_src_alpha))
+}
+
+/// The export-side `rect` for `local_chain`: the source picture's window once
+/// the fit has placed it in a `tw`×`th` frame. A matte has its source's aspect
+/// by construction, so its own size is the source size.
+fn fitted(fit: export::Fit, tw: u32, th: u32, turns: u8) -> impl Fn(&crate::masks::Plane) -> [f32; 4] {
+    move |m| {
+        let (sw, sh) = if turns % 2 == 1 { (m.h, m.w) } else { (m.w, m.h) };
+        fit.picture_rect(sw, sh, tw, th)
+    }
+}
+
 /// Resolve a clip's effect plugin from the project table; a load failure
 /// logs once per file (the loader caches) and renders the built-in look.
-fn plugin_of(
+pub(crate) fn plugin_of(
     fx: &crate::effects::Effects,
     table: &[String],
 ) -> Option<std::sync::Arc<crate::plugins::Plugin>> {
@@ -673,6 +733,8 @@ fn run(
     // Baked grade lattices (LUT ∘ curves) on this device, one per distinct
     // grade (or grade STACK, when adjustment layers sit on top) — clips
     // sharing a look share one texture.
+    let mut local_chains: std::collections::HashMap<usize, Option<super::compositor::LocalChain>> =
+        Default::default();
     let mut grade_views: std::collections::HashMap<u64, Option<wgpu::TextureView>> =
         Default::default();
     let mut base_active: Vec<Option<Active>> = (0..segments.len()).map(|_| None).collect();
@@ -814,8 +876,26 @@ fn run(
                     let eff = crate::effects::Effects::compose_stack(&stack);
                     (eff, lut_for_stack(&stack, &mut grade_views, &lut_table, &comp))
                 };
+                // Local masks rewrite the source frame first, through the same
+                // chain the preview runs.
+                let chain = local_chains.entry(p.seg).or_insert_with(|| {
+                    local_chain(
+                        &comp,
+                        &seg.locals,
+                        (tw, th),
+                        fitted(settings.fit, tw, th, seg.effects.rotate),
+                        seg.effects.rotate,
+                        true,
+                        &lut_table,
+                        &plugin_table,
+                    )
+                });
+                let frame = match chain {
+                    Some(c) => c.run(&comp, &a.view),
+                    None => a.view.clone(),
+                };
                 layers.push(super::Layer {
-                    view: a.view.clone(),
+                    view: frame,
                     rect,
                     uv,
                     opacity,
@@ -950,6 +1030,7 @@ mod tests {
 
     fn seg(dur: f64, fade: f64) -> Segment {
         Segment {
+            locals: Vec::new(),
             source: "s".into(),
             in_point: 0.0,
             duration: dur,
@@ -1042,5 +1123,257 @@ mod tests {
         assert!((base_opacity(&p[0], &segs[0], 1.0) - 1.0).abs() < 1e-6);
         assert!((base_opacity(&p[0], &segs[0], 3.0) - 0.5).abs() < 1e-6);
         assert!(base_opacity(&p[0], &segs[0], 3.99) < 0.02);
+    }
+}
+
+#[cfg(test)]
+mod local_mask_tests {
+    use super::*;
+    use crate::masks::{LocalMask, Plane};
+
+    const SRC_W: u32 = 320;
+    const SRC_H: u32 = 240;
+
+    /// A soft gradient photo, so a mask error can't hide in a flat field.
+    fn photo(name: &str) -> (std::path::PathBuf, Vec<u8>) {
+        let img = image::RgbaImage::from_fn(SRC_W, SRC_H, |x, y| {
+            image::Rgba([60 + (x / 4) as u8, 90, 70 + (y / 4) as u8, 255])
+        });
+        let path = std::env::temp_dir().join(format!("reel-mask-{}-{name}.png", std::process::id()));
+        img.save(&path).unwrap();
+        (path, img.into_raw())
+    }
+
+    fn seg_for(source: &str, locals: Vec<LocalMask>) -> Segment {
+        Segment {
+            source: source.to_string(),
+            in_point: 0.0,
+            duration: 1.0,
+            effects: Default::default(),
+            locals,
+            transition_in: 0.0,
+            transition_kind: Default::default(),
+            gain_db: 0.0,
+            speed: 1.0,
+            keys: Vec::new(),
+            stabilize: false,
+            audio: Default::default(),
+            raw_filter: None,
+        }
+    }
+
+    fn ov() -> Overlays<'static> {
+        Overlays::default()
+    }
+
+    /// What the app's `sync_local_preview` does with a still.
+    fn preview_still(comp: &Compositor, rgba: &[u8], masks: &[LocalMask]) -> Vec<u8> {
+        let chain = local_chain(comp, masks, (SRC_W, SRC_H), |_| [0.0, 0.0, 1.0, 1.0], 0, true, &[], &[])
+            .expect("a visible mask");
+        let src = comp.upload(rgba, SRC_W, SRC_H);
+        let out = comp.target(SRC_W, SRC_H);
+        comp.premultiply(&chain.run(comp, &src), &out);
+        comp.read_back(&out)
+    }
+
+    fn feathered_left_half() -> Plane {
+        let mut p = Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [160.0, 240.0]);
+        p.feather(12.0);
+        p
+    }
+
+    fn assert_close(a: &[u8], b: &[u8], tol: i32, what: &str) {
+        assert_eq!(a.len(), b.len());
+        let worst = a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap();
+        assert!(worst <= tol, "{what}: worst channel difference {worst}");
+    }
+
+    #[test]
+    fn a_masked_edit_stays_inside_its_matte_and_preview_matches_export() {
+        let Ok(comp) = Compositor::headless() else {
+            eprintln!("no GPU — skipping");
+            return;
+        };
+        let (path, rgba) = photo("still");
+        let mut sky = LocalMask::new("Sky", feathered_left_half()).unwrap();
+        sky.adjust.exposure = 1.5;
+        sky.adjust.saturation = 0.4;
+        sky.adjust.wb_temp = 0.3; // a lattice setting, not only the trims
+        let masks = vec![sky];
+
+        let seg = seg_for(path.to_str().unwrap(), masks.clone());
+        let settings = ExportSettings::default();
+        let (exported, w, h) =
+            render_still(&[seg], &ov(), (SRC_W, SRC_H, 25.0), &settings, 0.0).unwrap();
+        assert_eq!((w, h), (SRC_W, SRC_H));
+        let preview = preview_still(&comp, &rgba, &masks);
+        assert_close(&preview, &exported, 2, "preview vs export");
+
+        let at = |b: &[u8], x: u32, y: u32| b[((y * SRC_W + x) * 4) as usize] as i32;
+        // Right of the feather: not one pixel touched.
+        for x in [200u32, 260, 319] {
+            assert!((at(&exported, x, 120) - at(&rgba, x, 120)).abs() <= 1, "outside changed at {x}");
+        }
+        // Well inside: the full adjustment, against the CPU formula's trims.
+        let want = masks[0].colour_adjust();
+        assert!(at(&exported, 40, 120) > at(&rgba, 40, 120) + 20, "inside must brighten");
+        assert!(want.exposure > 1.0);
+        // On the feather: partway, and monotonic falling across it.
+        let ramp: Vec<i32> = (140..182).map(|x| at(&exported, x, 120) - at(&rgba, x, 120)).collect();
+        assert!(ramp.windows(2).all(|d| d[0] + 1 >= d[1]), "edge blends: {ramp:?}");
+        assert!(ramp[0] > ramp[41] + 10);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn overlapping_masks_accumulate_and_a_hidden_one_changes_nothing() {
+        let Ok(comp) = Compositor::headless() else { return };
+        let (_path, rgba) = photo("stack");
+        let mut a = LocalMask::new("A", Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [200.0, 240.0])).unwrap();
+        a.adjust.exposure = 1.3;
+        let mut b = LocalMask::new("B", Plane::rect(SRC_W, SRC_H, [100.0, 0.0], [320.0, 240.0])).unwrap();
+        b.adjust.exposure = 1.3;
+        let out = preview_still(&comp, &rgba, &[a.clone(), b.clone()]);
+        let at = |b: &[u8], x: u32| b[((120 * SRC_W + x) * 4) as usize] as f32;
+        let gain = |x: u32| at(&out, x) / at(&rgba, x);
+        assert!((gain(50) - 1.3).abs() < 0.03, "A alone: {}", gain(50));
+        assert!((gain(150) - 1.69).abs() < 0.05, "both stack: {}", gain(150));
+        assert!((gain(300) - 1.3).abs() < 0.03, "B alone: {}", gain(300));
+
+        b.visible = false;
+        let hidden = preview_still(&comp, &rgba, &[a.clone(), b]);
+        let only_a = preview_still(&comp, &rgba, &[a]);
+        assert_close(&hidden, &only_a, 0, "a hidden mask");
+        let _ = std::fs::remove_file(&_path);
+    }
+
+    #[test]
+    fn the_matte_finds_the_picture_inside_a_letterboxed_or_turned_frame() {
+        if Compositor::headless().is_err() {
+            return;
+        }
+        let (path, rgba) = photo("fit");
+        // Left half of the PICTURE.
+        let mut m = LocalMask::new("L", Plane::rect(SRC_W, SRC_H, [0.0, 0.0], [160.0, 240.0])).unwrap();
+        m.adjust.exposure = 1.6;
+        let settings = ExportSettings::default();
+        // 640×240 pillarboxes the 320×240 picture into x = 160..480.
+        let seg = seg_for(path.to_str().unwrap(), vec![m.clone()]);
+        let (out, w, _) = render_still(&[seg], &ov(), (640, 240, 25.0), &settings, 0.0).unwrap();
+        let at = |b: &[u8], x: u32, y: u32, w: u32| b[((y * w + x) * 4) as usize] as i32;
+        let src = |x: u32| at(&rgba, x, 120, SRC_W);
+        assert!(at(&out, 200, 120, w) > src(40) + 15, "inside the picture's left half");
+        assert!((at(&out, 400, 120, w) - src(240)).abs() <= 2, "right half untouched");
+        assert!(at(&out, 40, 120, w) <= 2, "the bars stay black");
+
+        // Turned 90° clockwise the source's left half becomes the TOP half.
+        let mut seg = seg_for(path.to_str().unwrap(), vec![m]);
+        seg.effects.rotate = 1;
+        let (out, w, _) = render_still(&[seg], &ov(), (SRC_H, SRC_W, 25.0), &settings, 0.0).unwrap();
+        let plain = {
+            let mut s = seg_for(path.to_str().unwrap(), Vec::new());
+            s.effects.rotate = 1;
+            render_still(&[s], &ov(), (SRC_H, SRC_W, 25.0), &settings, 0.0).unwrap().0
+        };
+        assert!(at(&out, 120, 40, w) > at(&plain, 120, 40, w) + 15, "top half brightened");
+        assert!((at(&out, 120, 280, w) - at(&plain, 120, 280, w)).abs() <= 2, "bottom untouched");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_static_matte_on_video_renders_the_same_in_preview_and_export() {
+        let Ok(comp) = Compositor::headless() else { return };
+        let fixture = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixture.mp4");
+        let mut m = LocalMask::new("Matte", feathered_left_half()).unwrap();
+        m.adjust.exposure = 3.0;
+        let masks = vec![m];
+        let settings = ExportSettings::default();
+
+        // Two moments of the clip: the same matte holds on each.
+        for (i, t) in [0.2f64, 1.2].into_iter().enumerate() {
+            let mut r = SegmentReader::open(
+                fixture,
+                t,
+                0.5,
+                1.0,
+                None,
+                &settings.fit.chain(SRC_W, SRC_H, "s"),
+                (SRC_W, SRC_H, 25.0),
+            )
+            .unwrap();
+            let mut frame = Vec::new();
+            assert!(r.next_into(&mut frame));
+            // The preview's route: the opaque video frame through the chain.
+            let chain = local_chain(&comp, &masks, (SRC_W, SRC_H), |_| [0.0, 0.0, 1.0, 1.0], 0, false, &[], &[])
+                .unwrap();
+            let src = comp.upload(&frame, SRC_W, SRC_H);
+            let target = comp.target(SRC_W, SRC_H);
+            comp.premultiply(&chain.run(&comp, &src), &target);
+            let preview = comp.read_back(&target);
+
+            let seg = Segment { in_point: t, ..seg_for(fixture, masks.clone()) };
+            let (export, _, _) = render_still(&[seg], &ov(), (SRC_W, SRC_H, 25.0), &settings, 0.0).unwrap();
+            assert_close(&preview, &export, 2, "video preview vs export");
+
+            // The matte really is on this frame too: left brighter than raw.
+            let band = |from: u32, to: u32| {
+                let mut sum = 0i64;
+                for y in 0..SRC_H {
+                    for x in from..to {
+                        let o = ((y * SRC_W + x) * 4) as usize;
+                        sum += (0..3).map(|c| export[o + c] as i64 - frame[o + c] as i64).sum::<i64>();
+                    }
+                }
+                sum / ((to - from) * SRC_H * 3) as i64
+            };
+            assert!(band(10, 110) >= 3, "frame {i}: inside untouched ({})", band(10, 110));
+            assert!(band(220, 310).abs() <= 1, "frame {i}: outside changed ({})", band(220, 310));
+        }
+
+        // And the full frame-server render agrees with those stills: the
+        // same chain, on every frame of a real export.
+        let out = std::env::temp_dir().join(format!("reel-mask-{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&out);
+        let segs = vec![Segment { duration: 1.0, ..seg_for(fixture, masks) }];
+        let job = export::start_timeline_with_captions(
+            &segs,
+            &out.to_string_lossy(),
+            &settings,
+            (SRC_W, SRC_H, 25.0),
+            ov(),
+        )
+        .unwrap();
+        loop {
+            let st = job.state();
+            if st.finished {
+                assert!(st.error.is_none(), "{:?}", st.error);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(30));
+        }
+        let grab = |src: &str, vf: &str| {
+            let o = std::process::Command::new("ffmpeg")
+                .args(["-v", "error", "-i", src, "-vframes", "1", "-vf", vf, "-f", "rawvideo", "-pix_fmt", "gray", "-"])
+                .output()
+                .unwrap();
+            o.stdout
+        };
+        let rendered = grab(&out.to_string_lossy(), "null");
+        let raw = grab(fixture, "null");
+        assert_eq!(rendered.len(), raw.len());
+        let mean = |b: &[u8], a: usize, z: usize| {
+            let mut s = 0u64;
+            let mut n = 0u64;
+            for row in b.chunks(SRC_W as usize) {
+                for v in &row[a..z] {
+                    s += *v as u64;
+                    n += 1;
+                }
+            }
+            s as f64 / n as f64
+        };
+        assert!(mean(&rendered, 0, 100) > mean(&raw, 0, 100) + 3.0, "export: inside brightened");
+        assert!((mean(&rendered, 220, 320) - mean(&raw, 220, 320)).abs() < 3.0, "export: outside held");
+        let _ = std::fs::remove_file(&out);
     }
 }

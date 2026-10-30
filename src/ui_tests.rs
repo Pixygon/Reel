@@ -88,3 +88,49 @@ fn side_panel_resize_sticks() {
         "panel snapped back after release: {while_dragging} → {after}"
     );
 }
+
+/// One frame of the editor's mask UI, on a 400×300 picture at (100, 100).
+fn mask_frame(ctx: &Context, app: &mut crate::app::ReelApp, id: u64, input: RawInput) {
+    let _ = ctx.run(input, |ctx| {
+        crate::ui::media_panel_frame(ctx, true, |ui| crate::ui::mask_panel(ui, app, id));
+        egui::CentralPanel::default().show(ctx, |ui| {
+            let (_, resp) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click_and_drag());
+            let pic = egui::Rect::from_min_size(Pos2::new(600.0, 100.0), Vec2::new(400.0, 300.0));
+            crate::ui::selection_canvas(ui, app, pic, &resp);
+        });
+    });
+}
+
+#[test]
+fn dragging_a_rectangle_on_the_picture_selects_those_pixels_and_the_panel_keeps_its_width() {
+    let dir = std::env::temp_dir().join(format!("reel-ui-mask-{}.png", std::process::id()));
+    image::RgbaImage::from_pixel(800, 600, image::Rgba([90, 120, 150, 255])).save(&dir).unwrap();
+    let path = dir.to_str().unwrap();
+    let mut app = crate::app::ReelApp::new();
+    app.mode = crate::app::Mode::Editor;
+    app.image = Some(crate::media::ImageDoc::open(path).unwrap());
+    app.project.append_video("photo", path, 5.0);
+    let id = app.project.tracks[0].clips[0].id;
+    app.editor.playhead = 1.0;
+
+    let ctx = Context::default();
+    mask_frame(&ctx, &mut app, id, pointer_input(Pos2::new(10.0, 10.0), None));
+    assert_eq!(app.selection.size, (800, 600));
+    app.selection.tool = Some(crate::masks::Tool::Rectangle);
+    // The tool's panel row and the selection tools all lay out with no picture size surprises.
+    let (a, b) = (Pos2::new(700.0, 150.0), Pos2::new(800.0, 250.0));
+    mask_frame(&ctx, &mut app, id, pointer_input(a, None));
+    mask_frame(&ctx, &mut app, id, pointer_input(a, Some(true)));
+    for p in [Pos2::new(740.0, 190.0), b] {
+        mask_frame(&ctx, &mut app, id, pointer_input(p, None));
+    }
+    mask_frame(&ctx, &mut app, id, pointer_input(b, Some(false)));
+    mask_frame(&ctx, &mut app, id, pointer_input(b, None));
+    let plane = app.selection.plane.as_ref().expect("the drag made a selection");
+    // Screen (700,150)..(800,250) is picture (200,100)..(400,300).
+    let at = |x: u32, y: u32| plane.data[(y * plane.w + x) as usize];
+    assert_eq!(at(300, 200), 255);
+    assert_eq!(at(450, 200), 0);
+    assert_eq!(at(100, 200), 0);
+    let _ = std::fs::remove_file(&dir);
+}

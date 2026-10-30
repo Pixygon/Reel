@@ -358,6 +358,44 @@ Place a picture-in-picture overlay in the frame
 | `--y` | `0..1` | Centre of the inset down the frame |
 | `--scale` | `0..1` | Inset width as a fraction of the frame |
 
+### `reel mask PROJECT`
+
+Add, adjust, hide or list a clip's local masks (a PNG matte imports as a mask; with neither --import nor --name, lists them)
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--clip` | `ID` | Clip id (a clip on the main video track) |
+| `--import` | `PNG` | Add a mask from a matte image: white = selected, black or transparent = not |
+| `--name` | `TEXT` | Name for the imported mask, or the mask to change |
+| `--feather` | `PX` | Soften the imported matte's edge, in source pixels |
+| `--grow` | `PX` | Expand (positive) or contract (negative) the imported matte |
+| `--invert` | — | Invert the imported matte |
+| `--exposure` | `N` | Exposure inside the mask |
+| `--contrast` | `N` | Contrast inside the mask |
+| `--saturation` | `N` | Saturation inside the mask |
+| `--hide` | — | Keep the mask but stop applying it |
+| `--show` | — | Apply a hidden mask again |
+| `--remove` | — | Delete the mask named by --name |
+
+A mask limits an edit to part of the picture, on a photo or a video clip; on
+video the same matte applies to every frame. Any greyscale image works as a
+matte. One of a different size is resampled to the source, so a matte with a
+different aspect stretches to fit. The matte is stored inside the `.reel` file,
+so the PNG can go away afterwards. Soft greys in the matte blend the edit.
+
+```bash
+reel mask photo.reel --clip 100 --import sky.png --name Sky --feather 12 --exposure 0.8
+reel mask photo.reel --clip 100 --name Sky --saturation 1.3   # change it later
+reel mask photo.reel --clip 100 --name Sky --hide             # keep it, stop applying it
+reel mask photo.reel --clip 100 --json                        # list them
+reel frame photo.reel --out photo-edited.png                # the result
+```
+
+Masks are drawn by the render engine, so the `REEL_RENDER=graph` fallback warns
+and leaves them out. `--feather`, `--grow` and `--invert` act only together with
+`--import`. The other colour settings inside a mask (levels, white balance, qualifier,
+curves, LUT, power window, plugin) are set in the app's Masks panel.
+
 ### `reel speed PROJECT`
 
 Change how fast a clip plays

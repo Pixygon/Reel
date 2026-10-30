@@ -38,6 +38,10 @@ struct Uniforms {
     motion: [f32; 4],
     rot: [f32; 4],
     build: [f32; 4],
+    /// Local-mask pass: the picture's window in the frame.
+    matte: [f32; 4],
+    /// x = enable, y = quarter turns; zw reserved.
+    matte2: [f32; 4],
 }
 
 /// picture.wgsl + compose.wgsl — the shared stage is spliced, never copied.
@@ -52,6 +56,8 @@ pub struct Compositor {
     sampler: wgpu::Sampler,
     /// Bound for every layer without a LUT, so the shader samples freely.
     identity_lut: wgpu::TextureView,
+    /// Bound for every layer that is not a local-mask pass.
+    white: wgpu::TextureView,
     /// Plugin pipeline variants, keyed by the plugin's path+mtime hash.
     pipeline_layout: wgpu::PipelineLayout,
     variants: std::sync::Mutex<std::collections::HashMap<u64, Option<wgpu::RenderPipeline>>>,
@@ -72,7 +78,8 @@ impl Compositor {
         static VK_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _init = VK_INIT.lock().unwrap_or_else(|e| e.into_inner());
         let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::PRIMARY,
+            // WGPU_BACKEND=gl lets a GPU-less box (Mesa llvmpipe) run this path.
+            backends: wgpu::Backends::from_env().unwrap_or(wgpu::Backends::PRIMARY),
             ..Default::default()
         });
         let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
@@ -137,6 +144,16 @@ impl Compositor {
                     },
                     count: None,
                 },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
             ],
         });
         let pl = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -176,6 +193,7 @@ impl Compositor {
             ..Default::default()
         });
         let identity_lut = crate::lut::to_texture(&crate::lut::identity(), &device, &queue);
+        let white = Self::r8_texture(&device, &queue, &[255], 1, 1);
         Self {
             device,
             queue,
@@ -183,6 +201,7 @@ impl Compositor {
             layout,
             sampler,
             identity_lut,
+            white,
             pipeline_layout: pl,
             variants: Default::default(),
         }
@@ -191,6 +210,45 @@ impl Compositor {
     /// Upload a lattice for use on this compositor's device.
     pub fn lut_texture(&self, lut: &crate::lut::Lut) -> wgpu::TextureView {
         crate::lut::to_texture(lut, &self.device, &self.queue)
+    }
+
+    fn r8_texture(
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        w: u32,
+        h: u32,
+    ) -> wgpu::TextureView {
+        let tex = device.create_texture_with_data(
+            queue,
+            &wgpu::TextureDescriptor {
+                label: Some("reel-compose-matte"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::R8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            data,
+        );
+        tex.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// Upload a matte; one bigger than the device allows is scaled to fit
+    /// (coordinates are fractions, so it still lands on the same pixels).
+    pub fn matte_texture(&self, plane: &crate::masks::Plane) -> wgpu::TextureView {
+        let max = self.device.limits().max_texture_dimension_2d;
+        if plane.w.max(plane.h) > max {
+            let s = max as f32 / plane.w.max(plane.h) as f32;
+            let w = ((plane.w as f32 * s) as u32).max(1);
+            let h = ((plane.h as f32 * s) as u32).max(1);
+            let small = plane.resized(w, h);
+            return Self::r8_texture(&self.device, &self.queue, &small.data, w, h);
+        }
+        Self::r8_texture(&self.device, &self.queue, &plane.data, plane.w, plane.h)
     }
 
     /// Upload straight-alpha RGBA pixels as a compositor input texture.
@@ -232,6 +290,34 @@ impl Compositor {
 
     /// Render `scene` into `target`: layers back-to-front over opaque black.
     pub fn render(&self, scene: &Scene, target: &wgpu::Texture) {
+        self.render_with(scene, target, wgpu::Color::BLACK, None);
+    }
+
+    /// Straight alpha to premultiplied, in linear light — what the preview's
+    /// pipeline expects of a still.
+    pub fn premultiply(&self, view: &wgpu::TextureView, target: &wgpu::Texture) {
+        let scene = Scene {
+            layers: vec![super::Layer {
+                view: view.clone(),
+                rect: [0.0, 0.0, 1.0, 1.0],
+                uv: [0.0, 0.0, 1.0, 1.0],
+                opacity: 1.0,
+                effects: Default::default(),
+                use_src_alpha: true,
+                lut: None,
+                plugin: None,
+            }],
+        };
+        self.render_with(&scene, target, wgpu::Color::TRANSPARENT, None);
+    }
+
+    fn render_with(
+        &self,
+        scene: &Scene,
+        target: &wgpu::Texture,
+        clear: wgpu::Color,
+        matte: Option<&MatteBind>,
+    ) {
         let size = target.size();
         let frame_aspect = size.width as f32 / size.height.max(1) as f32;
         let view = target.create_view(&wgpu::TextureViewDescriptor::default());
@@ -263,7 +349,7 @@ impl Compositor {
             .map(|l| {
                 let ubo = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
                     label: Some("reel-compose-ubo"),
-                    contents: bytemuck::bytes_of(&Self::uniforms(l, frame_aspect)),
+                    contents: bytemuck::bytes_of(&Self::uniforms(l, frame_aspect, matte)),
                     usage: wgpu::BufferUsages::UNIFORM,
                 });
                 self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -285,6 +371,12 @@ impl Compositor {
                                 l.lut.as_ref().unwrap_or(&self.identity_lut),
                             ),
                         },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::TextureView(
+                                matte.map(|m| &m.view).unwrap_or(&self.white),
+                            ),
+                        },
                     ],
                 })
             })
@@ -300,7 +392,7 @@ impl Compositor {
                     view: &view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::Clear(clear),
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -326,7 +418,7 @@ impl Compositor {
         self.queue.submit(Some(encoder.finish()));
     }
 
-    fn uniforms(l: &Layer, frame_aspect: f32) -> Uniforms {
+    fn uniforms(l: &Layer, frame_aspect: f32, matte: Option<&MatteBind>) -> Uniforms {
         // The whole picture's shape: a wipe crops rect and uv together.
         let (rw, rh) = (l.rect[2] - l.rect[0], l.rect[3] - l.rect[1]);
         let (uw, uh) = (l.uv[2] - l.uv[0], l.uv[3] - l.uv[1]);
@@ -389,6 +481,8 @@ impl Compositor {
             motion,
             rot,
             build,
+            matte: matte.map(|m| m.rect).unwrap_or([0.0; 4]),
+            matte2: matte.map(|m| [1.0, m.turns as f32, 0.0, 0.0]).unwrap_or([0.0; 4]),
         }
     }
 
@@ -457,6 +551,60 @@ impl Compositor {
         drop(data);
         buf.unmap();
         out
+    }
+}
+
+/// A matte ready to draw: its texture and where the picture sits in the frame.
+pub struct MatteBind {
+    pub view: wgpu::TextureView,
+    pub rect: [f32; 4],
+    pub turns: u8,
+}
+
+/// One local adjustment, resolved on this device.
+pub struct LocalPass {
+    pub matte: MatteBind,
+    pub effects: crate::effects::Effects,
+    pub lut: Option<wgpu::TextureView>,
+    pub plugin: Option<std::sync::Arc<crate::plugins::Plugin>>,
+}
+
+/// The local-mask stage: every visible mask in order, each grading the result
+/// of the one before (overlaps accumulate). Its output is simply a better
+/// source frame, so everything after it — the clip's grade, geometry, fades —
+/// is untouched. Preview and frame server both run THIS, which is what holds
+/// them identical. Targets are owned so a video reuses them frame to frame.
+pub struct LocalChain {
+    passes: Vec<(LocalPass, wgpu::Texture)>,
+    use_src_alpha: bool,
+}
+
+impl LocalChain {
+    pub fn new(comp: &Compositor, passes: Vec<LocalPass>, w: u32, h: u32, use_src_alpha: bool) -> Self {
+        let passes = passes.into_iter().map(|p| (p, comp.target(w, h))).collect();
+        Self { passes, use_src_alpha }
+    }
+
+    /// Run the chain over `src`; returns the frame to use instead of it.
+    pub fn run(&self, comp: &Compositor, src: &wgpu::TextureView) -> wgpu::TextureView {
+        let mut view = src.clone();
+        for (p, target) in &self.passes {
+            let scene = Scene {
+                layers: vec![super::Layer {
+                    view,
+                    rect: [0.0, 0.0, 1.0, 1.0],
+                    uv: [0.0, 0.0, 1.0, 1.0],
+                    opacity: 1.0,
+                    effects: p.effects,
+                    use_src_alpha: self.use_src_alpha,
+                    lut: p.lut.clone(),
+                    plugin: p.plugin.clone(),
+                }],
+            };
+            comp.render_with(&scene, target, wgpu::Color::TRANSPARENT, Some(&p.matte));
+            view = target.create_view(&wgpu::TextureViewDescriptor::default());
+        }
+        view
     }
 }
 

@@ -390,6 +390,7 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   watching the preview move without a keyboard.
 - CLI media paths are canonicalized at `add`/`music set` — a project must
   find its media when opened from any directory.
+- LOCAL MASKS (`masks.rs`): a selection is a `Plane` (one byte per picture pixel); `Clip.masks` holds named `LocalMask`s (matte + `Effects`), V1 clips only, embedded in the .reel as base64 PNG encoded at creation (`Matte`). `LocalChain` (compositor) is the ONE path: it rewrites the SOURCE frame before the clip's grade, each mask reading the previous result, and preview (`app.sync_local_preview`) and both export paths run it. compose.wgsl only: binding 4 + `matte`/`matte2` uniforms, straight alpha out; video.wgsl has no matte on purpose. Stored mattes are unrotated source coordinates; `Fit::picture_rect` + quarter turns map them into a frame. The Adjust panel reads and writes through `Clip::adjust_fx`/`adjust_fx_mut`. While a mask is active the panel hides what a mask ignores (fades, reframe, keyframes). A transition's incoming clip runs its own chain over the pool's frame (`sync_incoming_local`). The graph fallback warns and drops masks; overlay clips carry none.
 
 - PICTURE STAGE: `src/picture.wgsl` is ONE text spliced in front of both
   video.wgsl and compose.wgsl (`VIDEO_WGSL`/`COMPOSE_WGSL`) — blur, split,
@@ -399,7 +400,7 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   called inside every `animated()`. Shake is zoom + pan, so no new shader.
   `engine/picture_tests.rs` draws both real pipelines and compares pixels; with
   no adapter it SKIPS, so a sandbox without /dev/dri proves nothing. Run it
-  there on Mesa's software GL with a temporary `Backends::from_env()` and
+  there on Mesa's software GL: `Compositor` honours
   `WGPU_BACKEND=gl LIBGL_ALWAYS_SOFTWARE=1 EGL_PLATFORM=surfaceless`.
 - Plates (`plates.rs`) are real cached PNGs; `Clip.plate` is the document and
   `Project::load` rebuilds the file. Variants (`edit/variants.rs`) resolve into

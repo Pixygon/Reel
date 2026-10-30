@@ -89,6 +89,11 @@ not the finished tool, but real, honest software you can build and run today.
 - **Scopes, chapters, stills.** A live histogram and waveform while you
   grade; markers become real MP4 chapters on export; and one button saves
   the composed frame under the playhead as a PNG.
+- **Selections and local edits.** Lasso, polygon, rectangle, ellipse, brush
+  and colour range, with add/subtract/intersect, feather, grow and invert.
+  A selection becomes a named, hideable mask with its own grade, stored in
+  the project at picture resolution — on a photo, or as a static matte on a
+  video clip. The preview and the render run the same GPU chain.
 - **Power windows.** Limit any grade to an ellipse or rectangle — feathered,
   invertible, and keyframable, so the window can follow a face across the
   shot. Pixel-tested inside, outside and inverted.

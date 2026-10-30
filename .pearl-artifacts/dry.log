@@ -1,0 +1,36 @@
+
+📦 6a8ff6bdddf9c5f6e9899f1c  (6a8ff6bdddf9c5f6e9899f1c)
+
+[1/5] tests (dry — would run: cargo test)
+      ✓ diff gate: allow (in_scope, 35 path(s) against origin/master)
+[2/5] reading diff
+      diff: 429.5 KB · 0 commit(s)
+[3/5] drafting entries (AI)
+      cost: $0.0894
+
+  Headline: Added selection-based local masks, letting you grade just part of a photo or clip.
+  Added    Local selections and masks: use lasso, polygon, rectangle, ellipse, brush and colour-range tools to isolate part of a picture or clip, then combine them with add/subtract/intersect, feather, grow and invert. A selection becomes a named, hideable mask with its own grade (colour, curves, LUT, power window, plugin), stored at full picture resolution — either on a photo or as a static matte on a video clip.
+  Added    The brush selection tool now has an explicit Add/Remove switch, so you can erase part of a selection with the brush without needing to hold a modifier key (handy on systems where Alt+drag is already taken by the window manager).
+  Improved When editing a mask, the clip panel now hides controls that a mask ignores (fades, reframe, keyframes), making clear which settings actually apply while a mask is selected.
+  Fixed    The incoming clip of a transition now renders with its own masks applied during preview, instead of showing an unmasked picture.
+
+      README.md: still true to this diff
+[4/5] /ship
+      (dry) would release 2.1.0 → 2.2.0 — nothing written, committed or recorded
+      CHANGELOG.md would gain:
+        ## [2.2.0] — 2026-10-30
+        
+        _Added selection-based local masks, letting you grade just part of a photo or clip._
+        
+        ### Added
+        - Local selections and masks: use lasso, polygon, rectangle, ellipse, brush and colour-range tools to isolate part of a picture or clip, then combine them with add/subtract/intersect, feather, grow and invert. A selection becomes a named, hideable mask with its own grade (colour, curves, LUT, power window, plugin), stored at full picture resolution — either on a photo or as a static matte on a video clip.
+        - The brush selection tool now has an explicit Add/Remove switch, so you can erase part of a selection with the brush without needing to hold a modifier key (handy on systems where Alt+drag is already taken by the window manager).
+        
+        ### Improved
+        - When editing a mask, the clip panel now hides controls that a mask ignores (fades, reframe, keyframes), making clear which settings actually apply while a mask is selected.
+        
+        ### Fixed
+        - The incoming clip of a transition now renders with its own masks applied during preview, instead of showing an unmasked picture.
+        
+        Codex impact: none
+receipt: dry run: would release 2.1.0 → 2.2.0
