@@ -46,6 +46,9 @@ pub struct ReelApp {
     pub player: Option<Player>,
     /// A still image being viewed (mutually exclusive with `player`).
     pub image: Option<ImageDoc>,
+    /// The Adjust panel behind a still in the player (see photo.rs).
+    pub photo: Option<crate::photo::PhotoState>,
+    photo_save: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     image_uploaded: bool,
     pub project: Project,
     pub editor: EditorState,
@@ -277,6 +280,8 @@ impl ReelApp {
             status_at: std::time::Instant::now(),
             status_prev: String::new(),
             quit_requested: false,
+            photo: None,
+            photo_save: None,
             tray_available: false,
             debug_open_export: false,
             debug_autoplay: false,
@@ -557,6 +562,7 @@ impl ReelApp {
     /// (instant); video/audio open on a worker thread so the window never
     /// blocks on a demuxer — `poll_opening` lands the player when ready.
     pub fn open(&mut self, path: &str) {
+        self.flush_photo();
         let name = std::path::Path::new(path)
             .file_name()
             .map(|s| s.to_string_lossy().to_string())
@@ -567,6 +573,12 @@ impl ReelApp {
         if path.to_lowercase().ends_with(".reel") {
             match Project::load(path) {
                 Ok(project) => {
+                    // A photo document is just its photo, reopened.
+                    if let Some(edit) = &project.photo {
+                        let source = crate::photo::source_of(path, edit);
+                        self.open(&source);
+                        return;
+                    }
                     let first_source = project
                         .tracks
                         .iter()
@@ -609,7 +621,7 @@ impl ReelApp {
 
         if media::is_image_path(path) {
             match ImageDoc::open(path) {
-                Ok(img) => {
+                Ok(mut img) => {
                     self.player = None;
                     // Stills live on the video track with a default 5 s hold.
                     self.project.append_video(&name, path, 5.0);
@@ -617,6 +629,21 @@ impl ReelApp {
                     self.window_title = format!("{name} — Reel");
                     self.export_settings.codec = crate::export::Codec::Png;
                     self.export_out = export::default_output(path, self.export_settings.codec);
+                    // Rasters open with the Adjust panel. What ImageDoc holds
+                    // from here on is the preview; the file stays the master.
+                    self.photo = None;
+                    if !media::is_svg_path(path) {
+                        let original = crate::photo::Pixels {
+                            width: img.width,
+                            height: img.height,
+                            data: std::mem::take(&mut img.data),
+                        };
+                        let photo = crate::photo::PhotoState::new(path, original);
+                        img.width = photo.base.width;
+                        img.height = photo.base.height;
+                        img.data = photo.developed.clone();
+                        self.photo = Some(photo);
+                    }
                     self.image = Some(img);
                     self.image_uploaded = false;
                     self.tex_id = None;
@@ -746,6 +773,7 @@ impl ReelApp {
                 }
             }
             self.image = None;
+            self.photo = None;
             self.image_uploaded = false;
             self.tex_id = None;
             self.tex = None;
@@ -779,6 +807,7 @@ impl ReelApp {
         self.window_title = format!("{name} — Reel");
         self.export_out = export::default_output(&path, self.export_settings.codec);
         self.image = None;
+        self.photo = None;
         self.image_uploaded = false;
         self.tex_id = None;
         self.tex = None;
@@ -1312,23 +1341,22 @@ impl ReelApp {
         if let Some(img) = &mut self.image {
             if !self.image_uploaded {
                 img.clamp_to(gpu.max_texture_dim);
-                // egui blends premultiplied-alpha textures; ImageDoc keeps
-                // straight alpha (exports need it), so premultiply the copy
-                // we upload — without this, transparency renders wrong.
-                let mut rgba = img.data.clone();
-                for px in rgba.chunks_exact_mut(4) {
-                    let a = px[3] as u32;
-                    if a < 255 {
-                        px[0] = (px[0] as u32 * a / 255) as u8;
-                        px[1] = (px[1] as u32 * a / 255) as u8;
-                        px[2] = (px[2] as u32 * a / 255) as u8;
-                    }
-                }
+                let rgba = premultiplied(&img.data);
                 let tex = VideoTexture::new(&gpu.device, img.width, img.height);
                 tex.write(&gpu.queue, &rgba);
                 self.tex_id = Some(egui.register_texture(&gpu.device, &tex.view));
                 self.tex = Some(tex);
                 self.image_uploaded = true;
+            }
+            // The photo's newest render, or a new position of the split.
+            // The editor previews stills through their clip effects, which
+            // know nothing of these settings: it gets the plain original.
+            if let (Some(photo), Some(tex)) = (&mut self.photo, &self.tex) {
+                let split = if self.mode == Mode::Editor { 1.0 } else { photo.compare.unwrap_or(0.0) };
+                if photo.shown != Some(split) && tex.width == photo.base.width && tex.height == photo.base.height {
+                    tex.write(&gpu.queue, &premultiplied(&photo.composite(split)));
+                    photo.shown = Some(split);
+                }
             }
             return;
         }
@@ -1366,6 +1394,14 @@ impl ReelApp {
     /// likely to want: in the editor with clips on the timeline, that's the
     /// EDIT; in the player, the source file.
     pub fn open_export(&mut self) {
+        // A photo in the player exports developed. The source dialog below
+        // would convert the original and silently drop the adjustments.
+        if self.mode == Mode::Player {
+            if let Some(photo) = self.photo.as_mut() {
+                photo.export_open = true;
+                return;
+            }
+        }
         let has_cut = !self.project.export_segments().is_empty();
         let is_image = self.image.is_some();
         self.export_timeline = self.mode == Mode::Editor && has_cut && !is_image;
@@ -1416,6 +1452,32 @@ impl ReelApp {
         }
         self.queue.push(export::Queued { label: label.clone(), output, settings: self.export_settings.clone(), job });
         self.status = format!("Queued {label} ({} waiting).", self.queue.len_pending());
+    }
+
+    /// Land the photo's render and write its settings when they are due.
+    pub fn poll_photo(&mut self) {
+        let Some(photo) = &mut self.photo else { return };
+        photo.poll();
+        if let Some(save) = photo.poll_save() {
+            self.photo_save = Some(save);
+        }
+        if self.photo_save.as_ref().is_some_and(|h| h.is_finished()) {
+            if let Some(Ok(Err(e))) = self.photo_save.take().map(|h| h.join()) {
+                self.status = format!("Could not save photo settings: {e}");
+            }
+        }
+    }
+
+    /// Settings owed to disk go now: the photo is about to be left.
+    pub fn flush_photo(&mut self) {
+        let owed = self.photo.as_mut().and_then(|p| p.save_now());
+        // A debounced write may still be running: quitting must not cut it
+        // off, and reopening must read what it wrote.
+        for h in self.photo_save.take().into_iter().chain(owed) {
+            if let Ok(Err(e)) = h.join() {
+                self.status = format!("Could not save photo settings: {e}");
+            }
+        }
     }
 
     /// Save the project automatically, shortly after edits stop. Serialising
@@ -2241,6 +2303,7 @@ impl ReelApp {
         }
         self.status = format!("Added {name} to the timeline.");
         self.image = None;
+        self.photo = None;
         self.image_uploaded = false;
         self.tex_id = None;
         self.tex = None;
@@ -2390,6 +2453,7 @@ impl ReelApp {
             || self.samples.is_busy()
             || self.picker.is_some()
             || self.opening.is_some()
+            || self.photo.as_ref().is_some_and(|p| p.busy())
             || self.shot_rx.is_some()
             || self.rec_start_rx.is_some()
             || self.rec_rx.is_some()
@@ -2448,4 +2512,20 @@ impl ReelApp {
             .as_ref()
             .map(|t| t.texture.create_view(&wgpu::TextureViewDescriptor::default()))
     }
+}
+
+/// egui blends premultiplied-alpha textures; ImageDoc keeps straight alpha
+/// (exports need it), so premultiply the copy we upload — without this,
+/// transparency renders wrong.
+fn premultiplied(data: &[u8]) -> Vec<u8> {
+    let mut rgba = data.to_vec();
+    for px in rgba.chunks_exact_mut(4) {
+        let a = px[3] as u32;
+        if a < 255 {
+            px[0] = (px[0] as u32 * a / 255) as u8;
+            px[1] = (px[1] as u32 * a / 255) as u8;
+            px[2] = (px[2] as u32 * a / 255) as u8;
+        }
+    }
+    rgba
 }

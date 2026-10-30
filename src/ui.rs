@@ -22,6 +22,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
         ctx.set_zoom_factor(z.clamp(0.7, 2.0));
     }
     app.poll_autosave();
+    app.poll_photo();
     app.poll_captions();
     app.update_editor_playback();
     app.track_status();
@@ -51,6 +52,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
             timeline(ui, app);
         });
     media_panel_frame(ctx, editing, |ui| media_panel_contents(ui, app));
+    photo_panel_frame(ctx, app);
+    photo_export_window(ctx, app);
     match app.mode {
         Mode::Player => player_view(ctx, app),
         Mode::Editor => {
@@ -312,6 +315,11 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
             app.mode = Mode::Player;
         } else {
             app.enter_editor();
+        }
+    }
+    if app.mode == Mode::Player && ctx.input(|i| i.key_pressed(egui::Key::Backslash)) {
+        if let Some(photo) = app.photo.as_mut() {
+            photo.compare = if photo.compare.is_some() { None } else { Some(0.5) };
         }
     }
 
@@ -2217,6 +2225,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
             // Captions sit on top of the picture, so they must be painted
             // AFTER the video callback — and inside this branch, which
             // returns early for every real frame.
+            photo_split(app, &response, &painter, img_rect);
             draw_pip(app, ui.ctx(), &painter, img_rect);
             draw_overlays(app, &painter, img_rect);
             drag_title(app, &response, img_rect);
@@ -2536,7 +2545,7 @@ fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
 /// Master and per-channel; the drawn curve is `curve_eval`, the same
 /// function the lattice bakes — so the widget IS the grade.
 fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
-    use crate::effects::{curve_eval, Curves};
+    use crate::effects::Curves;
     let curves = app
         .project
         .clip(id)
@@ -2550,6 +2559,29 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
         _ => curves.b,
     };
 
+    if let Some((xi, y, started)) = curve_plot(ui, &pts, ch) {
+        if started {
+            app.editor.push_undo(&app.project);
+        }
+        if let Some(c) = app.project.clip_mut(id) {
+                let mut cv = c.effects.curves.unwrap_or_default();
+                let arr = match ch {
+                    0 => &mut cv.master,
+                    1 => &mut cv.r,
+                    2 => &mut cv.g,
+                    _ => &mut cv.b,
+                };
+                arr[xi] = y;
+                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
+            }
+        app.editor.mark_changed();
+    }
+    let _ = Curves::default();
+}
+
+/// Draw one five-point curve; a drag answers (point, new value, drag began).
+fn curve_plot(ui: &mut egui::Ui, pts: &[f32; 5], ch: usize) -> Option<(usize, f32, bool)> {
+    use crate::effects::curve_eval;
     let width = ui.available_width().max(60.0);
     let (rect, response) =
         ui.allocate_exact_size(Vec2::new(width, 110.0), Sense::click_and_drag());
@@ -2567,7 +2599,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
     let line: Vec<egui::Pos2> = (0..=n)
         .map(|i| {
             let x = i as f32 / n as f32;
-            egui::pos2(to_x(x), to_y(curve_eval(&pts, x)))
+            egui::pos2(to_x(x), to_y(curve_eval(pts, x)))
         })
         .collect();
     painter.add(egui::Shape::line(line, Stroke::new(1.5, colour)));
@@ -2577,28 +2609,13 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
         painter.circle_stroke(p, 4.0, Stroke::new(1.0, theme::VOID));
     }
 
-    if response.dragged() || response.clicked() {
-        if let Some(m) = response.interact_pointer_pos() {
-            let xi = (((m.x - rect.left()) / rect.width()) * 4.0).round().clamp(0.0, 4.0) as usize;
-            let y = (1.0 - (m.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
-            if response.drag_started() || response.clicked() {
-                app.editor.push_undo(&app.project);
-            }
-            if let Some(c) = app.project.clip_mut(id) {
-                let mut cv = c.effects.curves.unwrap_or_default();
-                let arr = match ch {
-                    0 => &mut cv.master,
-                    1 => &mut cv.r,
-                    2 => &mut cv.g,
-                    _ => &mut cv.b,
-                };
-                arr[xi] = y;
-                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
-            }
-            app.editor.mark_changed();
-        }
+    if !(response.dragged() || response.clicked()) {
+        return None;
     }
-    let _ = Curves::default();
+    let m = response.interact_pointer_pos()?;
+    let xi = (((m.x - rect.left()) / rect.width()) * 4.0).round().clamp(0.0, 4.0) as usize;
+    let y = (1.0 - (m.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+    Some((xi, y, response.drag_started() || response.clicked()))
 }
 
 /// The keyframe curve editor for one clip + the panel's selected parameter.
@@ -3115,7 +3132,8 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                     .file_name()
                     .map(|s| s.to_string_lossy().to_string())
                     .unwrap_or_else(|| img.path.clone());
-                let text = format!("{name}  ·  {}×{}", img.width, img.height);
+                let (w, h) = app.photo.as_ref().map(|p| p.full).unwrap_or((img.width, img.height));
+                let text = format!("{name}  ·  {w}×{h}");
                 let est = 20.0 + text.chars().count() as f32 * 7.0;
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
                 ui.label(RichText::new(text).color(theme::STAR));
@@ -3150,6 +3168,13 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         cols[2].scope(|ui| {
             if let Some(img_open) = app.image.is_some().then_some(()) {
                 let _ = img_open;
+                if mode == Mode::Player {
+                    if let Some(photo) = app.photo.as_mut() {
+                        if ui.selectable_label(photo.panel_open, "Adjust").clicked() {
+                            photo.panel_open = !photo.panel_open;
+                        }
+                    }
+                }
                 if ui
                     .button(RichText::new("⬇ Export").color(theme::CYAN))
                     .on_hover_text("Convert — PNG/JPEG/WebP, resize")
@@ -4646,4 +4671,221 @@ fn fmt_time(secs: f64) -> String {
     } else {
         format!("{m:02}:{rem:05.2}")
     }
+}
+
+/// A panel slider: 0 is home, and double-clicking goes there.
+pub(crate) fn adjust_slider(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut f32,
+    range: std::ops::RangeInclusive<f32>,
+    decimals: usize,
+) {
+    let response = ui.add(egui::Slider::new(value, range).text(label).fixed_decimals(decimals));
+    // Sliders sense drags only, so `response.double_clicked()` never fires.
+    let double = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
+    if double && response.contains_pointer() {
+        *value = 0.0;
+    }
+}
+
+/// The Adjust panel. Only in the player: the editor grades clips, and a
+/// still on the timeline is a clip like any other. Same width discipline
+/// as the media panel — a drag must never spring back.
+fn photo_panel_frame(ctx: &egui::Context, app: &mut ReelApp) {
+    let open = app.mode == Mode::Player && app.photo.as_ref().is_some_and(|p| p.panel_open);
+    egui::SidePanel::right("photo_adjust")
+        .resizable(true)
+        .default_width(300.0)
+        .width_range(190.0..=480.0)
+        .show_animated(ctx, open, |ui| {
+            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.spacing_mut().slider_width = (ui.available_width() - 104.0).clamp(48.0, 300.0);
+                photo_panel(ui, app);
+            });
+        });
+}
+
+fn photo_panel(ui: &mut egui::Ui, app: &mut ReelApp) {
+    let Some(photo) = app.photo.as_mut() else { return };
+    let mut a = photo.adjust;
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("Adjust").color(theme::CYAN).strong());
+        let on = photo.compare.is_some();
+        if ui.selectable_label(on, "Before/after").on_hover_text("Split view (\\)").clicked() {
+            photo.compare = if on { None } else { Some(0.5) };
+        }
+        if ui.button("Reset all").on_hover_text("Back to the original").clicked() {
+            a = Default::default();
+        }
+    });
+    ui.label(RichText::new("Double-click a slider to reset it").small().color(Color32::from_gray(120)));
+
+    egui::CollapsingHeader::new("Light").default_open(true).show(ui, |ui| {
+        adjust_slider(ui, "Exposure", &mut a.exposure, -5.0..=5.0, 2);
+        adjust_slider(ui, "Contrast", &mut a.contrast, -100.0..=100.0, 0);
+        adjust_slider(ui, "Highlights", &mut a.highlights, -100.0..=100.0, 0);
+        adjust_slider(ui, "Shadows", &mut a.shadows, -100.0..=100.0, 0);
+        adjust_slider(ui, "Whites", &mut a.whites, -100.0..=100.0, 0);
+        adjust_slider(ui, "Blacks", &mut a.blacks, -100.0..=100.0, 0);
+    });
+    egui::CollapsingHeader::new("Colour").default_open(true).show(ui, |ui| {
+        adjust_slider(ui, "Temperature", &mut a.temperature, -100.0..=100.0, 0);
+        adjust_slider(ui, "Tint", &mut a.tint, -100.0..=100.0, 0);
+        adjust_slider(ui, "Vibrance", &mut a.vibrance, -100.0..=100.0, 0);
+        adjust_slider(ui, "Saturation", &mut a.saturation, -100.0..=100.0, 0);
+        ui.add_space(4.0);
+        ui.horizontal_wrapped(|ui| {
+            for (i, (name, hue)) in crate::photo::BANDS.iter().enumerate() {
+                let c = crate::effects::hsl_to_rgb([*hue, 0.75, 0.55]).map(|v| (v * 255.0) as u8);
+                let chip = egui::Button::new("")
+                    .fill(Color32::from_rgb(c[0], c[1], c[2]))
+                    .stroke(if photo.band == i { Stroke::new(2.0, theme::STAR) } else { Stroke::NONE })
+                    .min_size(Vec2::splat(20.0));
+                if ui.add(chip).on_hover_text(*name).clicked() {
+                    photo.band = i;
+                }
+            }
+        });
+        let band = &mut a.hsl[photo.band];
+        adjust_slider(ui, "Hue", &mut band.hue, -100.0..=100.0, 0);
+        adjust_slider(ui, "Sat", &mut band.sat, -100.0..=100.0, 0);
+        adjust_slider(ui, "Lum", &mut band.lum, -100.0..=100.0, 0);
+    });
+    egui::CollapsingHeader::new("Presence").default_open(true).show(ui, |ui| {
+        adjust_slider(ui, "Clarity", &mut a.clarity, -100.0..=100.0, 0);
+        adjust_slider(ui, "Dehaze", &mut a.dehaze, -100.0..=100.0, 0);
+        adjust_slider(ui, "Vignette", &mut a.vignette, -100.0..=100.0, 0);
+    });
+    egui::CollapsingHeader::new("Tone curve").default_open(true).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            for (i, label) in ["All", "R", "G", "B"].iter().enumerate() {
+                if ui.selectable_label(app.curve_channel == i, *label).clicked() {
+                    app.curve_channel = i;
+                }
+            }
+            if !a.curve.is_identity() && ui.small_button("Reset").clicked() {
+                a.curve = Default::default();
+            }
+        });
+        let ch = app.curve_channel;
+        let pts = match ch {
+            0 => &mut a.curve.master,
+            1 => &mut a.curve.r,
+            2 => &mut a.curve.g,
+            _ => &mut a.curve.b,
+        };
+        if let Some((i, y, _)) = curve_plot(ui, pts, ch) {
+            pts[i] = y;
+        }
+    });
+
+    ui.separator();
+    ui.horizontal(|ui| {
+        if ui.button("Copy settings").clicked() {
+            if let Err(e) = crate::photo::copy_settings(&a) {
+                app.status = format!("Could not copy settings: {e}");
+            }
+        }
+        if ui.button("Paste").clicked() {
+            match crate::photo::pasted_settings() {
+                Some(copied) => a = copied,
+                None => app.status = "No settings copied yet.".into(),
+            }
+        }
+    });
+    ui.horizontal(|ui| {
+        ui.add(egui::TextEdit::singleline(&mut photo.preset_name).hint_text("Preset name").desired_width(120.0));
+        if ui.add_enabled(!photo.preset_name.trim().is_empty(), egui::Button::new("Save")).clicked() {
+            match crate::photo::save_preset(&photo.preset_name, &a) {
+                Ok(()) => {
+                    photo.presets = crate::photo::read_presets();
+                    photo.preset_name.clear();
+                }
+                Err(e) => app.status = format!("Could not save preset: {e}"),
+            }
+        }
+    });
+    let mut delete = None;
+    for (name, look) in &photo.presets {
+        ui.horizontal(|ui| {
+            if ui.button(name).on_hover_text("Apply this preset").clicked() {
+                a = *look;
+            }
+            if ui.small_button("🗑").on_hover_text("Delete this preset").clicked() {
+                delete = Some(name.clone());
+            }
+        });
+    }
+    if let Some(name) = delete {
+        if let Err(e) = crate::photo::delete_preset(&name) {
+            app.status = format!("Could not delete preset: {e}");
+        }
+        photo.presets = crate::photo::read_presets();
+    }
+    ui.separator();
+    if ui.button(RichText::new("⬇ Export photo").color(theme::CYAN)).clicked() {
+        photo.export_open = true;
+    }
+    photo.set(a);
+}
+
+/// The before/after divider: the original left of it, the result right.
+fn photo_split(app: &mut ReelApp, response: &egui::Response, painter: &egui::Painter, pic: Rect) {
+    if app.mode != Mode::Player {
+        return;
+    }
+    let Some(photo) = app.photo.as_mut() else { return };
+    let Some(split) = photo.compare.as_mut() else { return };
+    if let Some(m) = response.interact_pointer_pos().filter(|_| response.dragged() || response.clicked()) {
+        *split = ((m.x - pic.left()) / pic.width()).clamp(0.0, 1.0);
+    }
+    let x = pic.left() + *split * pic.width();
+    painter.line_segment([egui::pos2(x, pic.top()), egui::pos2(x, pic.bottom())], Stroke::new(2.0, theme::STAR));
+    let tag = |pos: egui::Pos2, align, text: &str| {
+        painter.text(pos, align, text, egui::FontId::proportional(13.0), theme::STAR);
+    };
+    tag(egui::pos2(x - 8.0, pic.top() + 8.0), egui::Align2::RIGHT_TOP, "Before");
+    tag(egui::pos2(x + 8.0, pic.top() + 8.0), egui::Align2::LEFT_TOP, "After");
+}
+
+/// Format, quality, size, where — only the controls this format honours.
+fn photo_export_window(ctx: &egui::Context, app: &mut ReelApp) {
+    use crate::photo::Format;
+    let Some(photo) = app.photo.as_mut() else { return };
+    let mut open = photo.export_open;
+    egui::Window::new("Export photo").open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
+        ui.horizontal(|ui| {
+            for f in Format::ALL {
+                if ui.selectable_label(photo.export_format == f, f.label()).clicked() {
+                    photo.export_format = f;
+                    photo.export_path = std::path::Path::new(&photo.export_path)
+                        .with_extension(f.ext())
+                        .to_string_lossy()
+                        .into_owned();
+                }
+            }
+        });
+        if photo.export_format != Format::Png {
+            let mut q = photo.export_opts.quality as f32;
+            if ui.add(egui::Slider::new(&mut q, 1.0..=100.0).text("Quality").fixed_decimals(0)).changed() {
+                photo.export_opts.quality = q as u8;
+            }
+        }
+        let mut edge = photo.export_opts.width;
+        let (w, h) = photo.full;
+        ui.add(egui::DragValue::new(&mut edge).range(0..=w.max(h)).prefix("Long edge ").suffix(" px"))
+            .on_hover_text("0 keeps the original size. Never enlarges.");
+        photo.export_opts.width = edge;
+        photo.export_opts.height = edge;
+        ui.add(egui::TextEdit::singleline(&mut photo.export_path).desired_width(320.0));
+        if ui.add_enabled(!photo.exporting(), egui::Button::new("Export")).clicked() {
+            photo.start_export();
+        }
+        if !photo.export_note.is_empty() {
+            ui.label(RichText::new(&photo.export_note).small());
+        }
+    });
+    photo.export_open = open;
 }

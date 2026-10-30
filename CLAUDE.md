@@ -410,6 +410,20 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   to 0 — `-ss` past its one frame decodes nothing. The live inset preview is
   still opaque for stills (mpv's padding byte).
 
+- REEL PHOTO (`photo.rs`): one CPU renderer, `render()` = fit then `develop`,
+  is BOTH the preview and the export — no shader or ffmpeg mirror, so at one
+  size they are the same bytes (tested per operator through PNG and lossless
+  WebP). Spatial operators (clarity, dehaze) measure on a fixed 512 px grid
+  so the preview's size never changes the look. Settings are a `.reel` next
+  to the photo, full name kept (`photo.jpg.reel`), with `Project.photo` set;
+  identity never creates one. `app.image` holds PREVIEW pixels for a photo,
+  never the master, and `open_export` sends every player Export door to the
+  photo dialog (the source dialog would convert the file and drop the
+  settings). The editor shows the plain original (`sync_frame` split
+  1.0): timeline renders do not read these settings. Sliders sense drags
+  only — `response.double_clicked()` never fires on one. `integration.rs`
+  is Linux-only, so nothing cross-platform may call into it.
+
 ## macOS (Apple silicon)
 
 - `scripts/mac.sh [--zip] [--no-install]` builds `target/mac/Reel.app`

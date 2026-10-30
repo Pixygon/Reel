@@ -12,6 +12,9 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - Plates: `reel add P color:RRGGBB --duration N`, and `color:transparent` for a blank canvas.
 - Template slots: `reel slot set|list|bind|unbind`, plus `--slot` on `add` and `title add`.
 - Aspect variants: `reel variant add|list|set|remove` and `render`/`frame --variant`, laid out from the main edit inside the safe area, with per-variant overrides.
+- Reel photo: JPEG, PNG and WebP stills now open with a Lightroom-style Adjust panel — Light (exposure, contrast, highlights, shadows, whites, blacks), Colour (temperature, tint, vibrance, saturation, an 8-band HSL mixer), Presence (clarity, dehaze, vignette) and the tone curve. Double-click resets a slider; Reset all, a before/after split, copy/paste settings and named presets are in the panel.
+- Photo edits are non-destructive: the original is never written, settings save themselves to `photo.jpg.reel` and reopen as they were, and the preview and the export are one renderer.
+- Photo export to JPEG, PNG or WebP with quality and resize, from the panel or `reel photo export`; every operator is a `reel photo` flag.
 
 ### Changed
 - `reel add` gives a still 5 seconds by default instead of refusing it.
@@ -20,10 +23,23 @@ materialized from the Pixygon Changelog API — edit there, not here.
 ### Fixed
 - PNG alpha on the overlay track now survives the render.
 - `reel frame` no longer loses a still that isn't at the very start of the timeline.
+- Stills with an EXIF orientation now open upright.
+
+## [2.2.0] — 2026-10-30
+
+_Reel now has a full non-destructive photo editor built in — Adjust panel, presets, and export, in the app and from the CLI._
+
+### Added
+- Reel can now develop photos. Open a JPEG, PNG or WebP and get a non-destructive Adjust panel with Light, Colour (including an 8-band HSL mixer), Presence and a tone curve, plus a before/after split view, copy/paste of settings, and named presets.
+- Photos can be exported straight from the Adjust panel to JPEG, PNG or WebP, with control over quality and resize. The original file is never modified — your edits are saved alongside it so you can always get back to the untouched source.
+- New `reel photo` CLI command for scripting photo edits: show, set, reset, copy/paste settings, export, and manage presets (preset-list, preset-save, preset-delete), with flags for every adjustment available in the panel.
+
+### Fixed
+- Photos taken on phones and held sideways now open the right way up — Reel reads the EXIF orientation and rotates the image automatically instead of showing it lying on its side.
+
+Codex impact: none
 
 ## [2.1.0] — 2026-10-30
-
-_Reel adds live picture effects (blur, glitch, shake, logo build), reusable template slots, and multi-aspect-ratio variants._
 
 ### Added
 - New picture effects for clips: free-angle rotation, Gaussian blur, RGB split, glitch (seeded tears and jittering split), screen shake, and a logo 'build' animation that assembles the picture from tiles. All run live in preview and in the final render.

@@ -1,0 +1,2424 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 0a835bd..79d3211 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
+ [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
+ materialized from the Pixygon Changelog API — edit there, not here.
+ 
++## [Unreleased]
++
++### Added
++- Reel photo: JPEG, PNG and WebP stills now open with a Lightroom-style Adjust panel — Light (exposure, contrast, highlights, shadows, whites, blacks), Colour (temperature, tint, vibrance, saturation, an 8-band HSL mixer), Presence (clarity, dehaze, vignette) and the tone curve. Double-click resets a slider; Reset all, a before/after split, copy/paste settings and named presets are in the panel.
++- Photo edits are non-destructive: the original is never written, settings save themselves to `photo.jpg.reel` and reopen as they were, and the preview and the export are one renderer.
++- Photo export to JPEG, PNG or WebP with quality and resize, from the panel or `reel photo export`; every operator is a `reel photo` flag.
++
++### Fixed
++- Stills with an EXIF orientation now open upright.
++
++
+ ## [2.0.0] — 2026-10-22
+ 
+ ### Added
+diff --git a/CLAUDE.md b/CLAUDE.md
+index d50a095..aeb4064 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -391,6 +391,18 @@ pearl ship                     # ship ritual: test → draft → ship → commit
+ - CLI media paths are canonicalized at `add`/`music set` — a project must
+   find its media when opened from any directory.
+ 
++- REEL PHOTO (`photo.rs`): one CPU renderer, `render()` = fit then `develop`,
++  is BOTH the preview and the export — no shader or ffmpeg mirror, so at one
++  size they are the same bytes (tested per operator through PNG and lossless
++  WebP). Spatial operators (clarity, dehaze) measure on a fixed 512 px grid
++  so the preview's size never changes the look. Settings are a `.reel` next
++  to the photo, full name kept (`photo.jpg.reel`), with `Project.photo` set;
++  identity never creates one. `app.image` holds PREVIEW pixels for a photo,
++  never the master. The editor shows the plain original (`sync_frame` split
++  1.0): timeline renders do not read these settings. Sliders sense drags
++  only — `response.double_clicked()` never fires on one. `integration.rs`
++  is Linux-only, so nothing cross-platform may call into it.
++
+ ## macOS (Apple silicon)
+ 
+ - `scripts/mac.sh [--zip] [--no-install]` builds `target/mac/Reel.app`
+diff --git a/README.md b/README.md
+index eb1d13a..883e886 100644
+--- a/README.md
++++ b/README.md
+@@ -25,6 +25,11 @@ not the finished tool, but real, honest software you can build and run today.
+   open instantly through the same GPU path — ultrawide screenshots, 8K
+   stills, **and SVG, rasterized crisply via resvg**. Everything lands on the
+   editor timeline (video/stills on V1, audio on A1).
++- **Develops photos.** A JPEG, PNG or WebP opens with a non-destructive Adjust
++  panel: Light, Colour (with an 8-band HSL mixer), Presence and the tone curve,
++  a before/after split, copy/paste, named presets, and export to JPEG, PNG or
++  WebP with quality and resize. The original is never written; settings save
++  themselves to `photo.jpg.reel`. Everything is also `reel photo`.
+ - **An editor that finishes the job.** Trim by dragging clip edges, split at
+   the playhead, move with snapping, undo/redo, set in/out markers, drop in
+   more source files, give clips a **look** (exposure/contrast/saturation and
+@@ -229,6 +234,7 @@ src/
+ │   ├── mpv.rs      libmpv backend (dlopen'd): hw decode, A/V sync, audio, exact seek
+ │   └── decoder.rs  fallback: ffmpeg subprocess → raw RGBA frames over a bounded channel
+ ├── media.rs        media kinds + instant still-image documents (image crate, resvg for SVG)
++├── photo.rs        the Adjust panel's one renderer: develop, settings document, presets, export
+ ├── capture.rs      screenshots + recording dispatch (modes, tool tiers)
+ ├── portal.rs       built-in Linux capture: xdg-desktop-portal + PipeWire → ffmpeg encode
+ ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)
+diff --git a/ROADMAP.md b/ROADMAP.md
+index 212f914..eabd370 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -306,6 +306,11 @@ Ordered by leverage; each lands with measured tests like everything above.
+       in both engines, verified in the live preview. Power windows stay
+       screen-space through a flip, as they should. Quarter-turn rotation
+       (aspect swap) still open.
++- [x] Reel photo: a non-destructive **Adjust panel** for stills (Light,
++      Colour with 8-band HSL, Presence, tone curve), before/after, presets,
++      copy/paste, JPEG/PNG/WebP export and `reel photo`. One CPU renderer is
++      both preview and export. Selections, RAW, crop and retouch still open;
++      timeline renders of a still do not read these settings.
+ 
+ A still is a one-frame composition; the compositor, grade stack, masks,
+ titles and adjustment layers already work on one. The plan (unchanged from
+diff --git a/docs/CLI.md b/docs/CLI.md
+index cf5662d..5514645 100644
+--- a/docs/CLI.md
++++ b/docs/CLI.md
+@@ -408,6 +408,75 @@ Add an adjustment layer — a span whose colour grade applies to everything bene
+ | `--duration` | `SECONDS` | How long it lasts (default 4) |
+ | `--json` | — | Print the result as JSON |
+ 
++### `reel photo ACTION [IMAGE] [OUT]`
++
++Non-destructive photo edits. The original is only ever read: settings live in `photo.jpg.reel`, the same document the Adjust panel saves, and reopen as they were. Preview and export are one renderer, so what the panel shows is what the file holds.
++
++| Action | Does |
++| --- | --- |
++| `show IMAGE` | Print the settings (flags apply to the printout only) |
++| `set IMAGE` | Change the saved settings: `reel photo set a.jpg --exposure 0.5 --shadows 30` |
++| `reset IMAGE` | Back to the untouched original |
++| `copy IMAGE` | Copy its settings; the panel's Paste sees them too |
++| `paste IMAGE` | Save the copied settings onto this photo |
++| `export IMAGE OUT` | Write `.jpg`, `.png` or `.webp`; flags here affect this export only |
++| `preset-list` | List saved presets |
++| `preset-save NAME IMAGE` | Save this photo's settings as a preset |
++| `preset-delete NAME` | Delete a preset |
++
++Flags layer in this order: saved settings (or `--reset`), `--from`, `--preset`, then the operators. Each still is developed at 8 bits; exports do not carry EXIF or ICC metadata.
++
++| Flag | Value | Meaning |
++| --- | --- | --- |
++| `--exposure` | `STOPS` | Exposure in stops, -5..5 |
++| `--contrast` | `N` | Contrast, -100..100 |
++| `--highlights` | `N` | Highlights, -100..100 |
++| `--shadows` | `N` | Shadows, -100..100 |
++| `--whites` | `N` | White end of the range, -100..100 |
++| `--blacks` | `N` | Black end of the range, -100..100 |
++| `--temperature` | `N` | Warm (+) or cool (-), -100..100 |
++| `--tint` | `N` | Magenta (+) or green (-), -100..100 |
++| `--vibrance` | `N` | Saturation that spares saturated colours, -100..100 |
++| `--saturation` | `N` | Saturation, -100..100 (-100 = monochrome) |
++| `--clarity` | `N` | Mid-tone local contrast, -100..100 |
++| `--dehaze` | `N` | Remove (+) or add (-) haze, -100..100 |
++| `--vignette` | `N` | Darken (-) or lighten (+) the corners, -100..100 |
++| `--red-hue` | `N` | Hue of the red band, -100..100 |
++| `--red-sat` | `N` | Saturation of the red band, -100..100 |
++| `--red-lum` | `N` | Luminance of the red band, -100..100 |
++| `--orange-hue` | `N` | Hue of the orange band, -100..100 |
++| `--orange-sat` | `N` | Saturation of the orange band, -100..100 |
++| `--orange-lum` | `N` | Luminance of the orange band, -100..100 |
++| `--yellow-hue` | `N` | Hue of the yellow band, -100..100 |
++| `--yellow-sat` | `N` | Saturation of the yellow band, -100..100 |
++| `--yellow-lum` | `N` | Luminance of the yellow band, -100..100 |
++| `--green-hue` | `N` | Hue of the green band, -100..100 |
++| `--green-sat` | `N` | Saturation of the green band, -100..100 |
++| `--green-lum` | `N` | Luminance of the green band, -100..100 |
++| `--aqua-hue` | `N` | Hue of the aqua band, -100..100 |
++| `--aqua-sat` | `N` | Saturation of the aqua band, -100..100 |
++| `--aqua-lum` | `N` | Luminance of the aqua band, -100..100 |
++| `--blue-hue` | `N` | Hue of the blue band, -100..100 |
++| `--blue-sat` | `N` | Saturation of the blue band, -100..100 |
++| `--blue-lum` | `N` | Luminance of the blue band, -100..100 |
++| `--purple-hue` | `N` | Hue of the purple band, -100..100 |
++| `--purple-sat` | `N` | Saturation of the purple band, -100..100 |
++| `--purple-lum` | `N` | Luminance of the purple band, -100..100 |
++| `--magenta-hue` | `N` | Hue of the magenta band, -100..100 |
++| `--magenta-sat` | `N` | Saturation of the magenta band, -100..100 |
++| `--magenta-lum` | `N` | Luminance of the magenta band, -100..100 |
++| `--curve` | `A,B,C,D,E` | Master tone curve: outputs (0..1) at inputs 0, ¼, ½, ¾, 1 |
++| `--curve-r` | `A,B,C,D,E` | Red tone curve |
++| `--curve-g` | `A,B,C,D,E` | Green tone curve |
++| `--curve-b` | `A,B,C,D,E` | Blue tone curve |
++| `--reset` | — | Start from the untouched original |
++| `--from` | `IMAGE` | Start from another photo's settings |
++| `--preset` | `NAME` | Start from a saved preset |
++| `--quality` | `1-100` | export: JPEG/WebP quality (default 92; WebP 100 is lossless) |
++| `--width` | `PX` | export: fit within this width; never enlarges |
++| `--height` | `PX` | export: fit within this height; never enlarges |
++| `--json` | — | Print the result as JSON |
++
+ ### `reel pool PROJECT`
+ 
+ The media pool: gather, bin and list this project's media (offline files are flagged)
+diff --git a/src/app.rs b/src/app.rs
+index 2b8278e..ad72a7a 100644
+--- a/src/app.rs
++++ b/src/app.rs
+@@ -46,6 +46,9 @@ pub struct ReelApp {
+     pub player: Option<Player>,
+     /// A still image being viewed (mutually exclusive with `player`).
+     pub image: Option<ImageDoc>,
++    /// The Adjust panel behind a still in the player (see photo.rs).
++    pub photo: Option<crate::photo::PhotoState>,
++    photo_save: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
+     image_uploaded: bool,
+     pub project: Project,
+     pub editor: EditorState,
+@@ -277,6 +280,8 @@ impl ReelApp {
+             status_at: std::time::Instant::now(),
+             status_prev: String::new(),
+             quit_requested: false,
++            photo: None,
++            photo_save: None,
+             tray_available: false,
+             debug_open_export: false,
+             debug_autoplay: false,
+@@ -557,6 +562,7 @@ impl ReelApp {
+     /// (instant); video/audio open on a worker thread so the window never
+     /// blocks on a demuxer — `poll_opening` lands the player when ready.
+     pub fn open(&mut self, path: &str) {
++        self.flush_photo();
+         let name = std::path::Path::new(path)
+             .file_name()
+             .map(|s| s.to_string_lossy().to_string())
+@@ -567,6 +573,12 @@ impl ReelApp {
+         if path.to_lowercase().ends_with(".reel") {
+             match Project::load(path) {
+                 Ok(project) => {
++                    // A photo document is just its photo, reopened.
++                    if let Some(edit) = &project.photo {
++                        let source = crate::photo::source_of(path, edit);
++                        self.open(&source);
++                        return;
++                    }
+                     let first_source = project
+                         .tracks
+                         .iter()
+@@ -609,7 +621,7 @@ impl ReelApp {
+ 
+         if media::is_image_path(path) {
+             match ImageDoc::open(path) {
+-                Ok(img) => {
++                Ok(mut img) => {
+                     self.player = None;
+                     // Stills live on the video track with a default 5 s hold.
+                     self.project.append_video(&name, path, 5.0);
+@@ -617,6 +629,21 @@ impl ReelApp {
+                     self.window_title = format!("{name} — Reel");
+                     self.export_settings.codec = crate::export::Codec::Png;
+                     self.export_out = export::default_output(path, self.export_settings.codec);
++                    // Rasters open with the Adjust panel. What ImageDoc holds
++                    // from here on is the preview; the file stays the master.
++                    self.photo = None;
++                    if !media::is_svg_path(path) {
++                        let original = crate::photo::Pixels {
++                            width: img.width,
++                            height: img.height,
++                            data: std::mem::take(&mut img.data),
++                        };
++                        let photo = crate::photo::PhotoState::new(path, original);
++                        img.width = photo.base.width;
++                        img.height = photo.base.height;
++                        img.data = photo.developed.clone();
++                        self.photo = Some(photo);
++                    }
+                     self.image = Some(img);
+                     self.image_uploaded = false;
+                     self.tex_id = None;
+@@ -746,6 +773,7 @@ impl ReelApp {
+                 }
+             }
+             self.image = None;
++            self.photo = None;
+             self.image_uploaded = false;
+             self.tex_id = None;
+             self.tex = None;
+@@ -779,6 +807,7 @@ impl ReelApp {
+         self.window_title = format!("{name} — Reel");
+         self.export_out = export::default_output(&path, self.export_settings.codec);
+         self.image = None;
++        self.photo = None;
+         self.image_uploaded = false;
+         self.tex_id = None;
+         self.tex = None;
+@@ -1312,24 +1341,23 @@ impl ReelApp {
+         if let Some(img) = &mut self.image {
+             if !self.image_uploaded {
+                 img.clamp_to(gpu.max_texture_dim);
+-                // egui blends premultiplied-alpha textures; ImageDoc keeps
+-                // straight alpha (exports need it), so premultiply the copy
+-                // we upload — without this, transparency renders wrong.
+-                let mut rgba = img.data.clone();
+-                for px in rgba.chunks_exact_mut(4) {
+-                    let a = px[3] as u32;
+-                    if a < 255 {
+-                        px[0] = (px[0] as u32 * a / 255) as u8;
+-                        px[1] = (px[1] as u32 * a / 255) as u8;
+-                        px[2] = (px[2] as u32 * a / 255) as u8;
+-                    }
+-                }
++                let rgba = premultiplied(&img.data);
+                 let tex = VideoTexture::new(&gpu.device, img.width, img.height);
+                 tex.write(&gpu.queue, &rgba);
+                 self.tex_id = Some(egui.register_texture(&gpu.device, &tex.view));
+                 self.tex = Some(tex);
+                 self.image_uploaded = true;
+             }
++            // The photo's newest render, or a new position of the split.
++            // The editor previews stills through their clip effects, which
++            // know nothing of these settings: it gets the plain original.
++            if let (Some(photo), Some(tex)) = (&mut self.photo, &self.tex) {
++                let split = if self.mode == Mode::Editor { 1.0 } else { photo.compare.unwrap_or(0.0) };
++                if photo.shown != Some(split) && tex.width == photo.base.width && tex.height == photo.base.height {
++                    tex.write(&gpu.queue, &premultiplied(&photo.composite(split)));
++                    photo.shown = Some(split);
++                }
++            }
+             return;
+         }
+         let Some(player) = &mut self.player else { return };
+@@ -1421,6 +1449,29 @@ impl ReelApp {
+     /// Save the project automatically, shortly after edits stop. Serialising
+     /// happens here (it's a small JSON document) but the write goes to a
+     /// worker thread, so a slow disk can never stall a frame.
++    /// Land the photo's render and write its settings when they are due.
++    pub fn poll_photo(&mut self) {
++        let Some(photo) = &mut self.photo else { return };
++        photo.poll();
++        if let Some(save) = photo.poll_save() {
++            self.photo_save = Some(save);
++        }
++        if self.photo_save.as_ref().is_some_and(|h| h.is_finished()) {
++            if let Some(Ok(Err(e))) = self.photo_save.take().map(|h| h.join()) {
++                self.status = format!("Could not save photo settings: {e}");
++            }
++        }
++    }
++
++    /// Settings owed to disk go now: the photo is about to be left.
++    pub fn flush_photo(&mut self) {
++        if let Some(Some(h)) = self.photo.as_mut().map(|p| p.save_now()) {
++            if let Ok(Err(e)) = h.join() {
++                self.status = format!("Could not save photo settings: {e}");
++            }
++        }
++    }
++
+     pub fn poll_autosave(&mut self) {
+         // Nothing to save, or nothing changed.
+         if !self.editor.dirty || self.project.export_segments().is_empty() {
+@@ -2241,6 +2292,7 @@ impl ReelApp {
+         }
+         self.status = format!("Added {name} to the timeline.");
+         self.image = None;
++        self.photo = None;
+         self.image_uploaded = false;
+         self.tex_id = None;
+         self.tex = None;
+@@ -2390,6 +2442,7 @@ impl ReelApp {
+             || self.samples.is_busy()
+             || self.picker.is_some()
+             || self.opening.is_some()
++            || self.photo.as_ref().is_some_and(|p| p.busy())
+             || self.shot_rx.is_some()
+             || self.rec_start_rx.is_some()
+             || self.rec_rx.is_some()
+@@ -2449,3 +2502,19 @@ impl ReelApp {
+             .map(|t| t.texture.create_view(&wgpu::TextureViewDescriptor::default()))
+     }
+ }
++
++/// egui blends premultiplied-alpha textures; ImageDoc keeps straight alpha
++/// (exports need it), so premultiply the copy we upload — without this,
++/// transparency renders wrong.
++fn premultiplied(data: &[u8]) -> Vec<u8> {
++    let mut rgba = data.to_vec();
++    for px in rgba.chunks_exact_mut(4) {
++        let a = px[3] as u32;
++        if a < 255 {
++            px[0] = (px[0] as u32 * a / 255) as u8;
++            px[1] = (px[1] as u32 * a / 255) as u8;
++            px[2] = (px[2] as u32 * a / 255) as u8;
++        }
++    }
++    rgba
++}
+diff --git a/src/cli.rs b/src/cli.rs
+index ccf4dac..4eaf32c 100644
+--- a/src/cli.rs
++++ b/src/cli.rs
+@@ -82,6 +82,57 @@ const RENDER_WATCH_FLAGS: &[Flag] = &[
+     F_JSON,
+ ];
+ 
++const PHOTO_FLAGS: &[Flag] = &[
++    Flag { name: "exposure", value: Some("STOPS"), help: "Exposure in stops, -5..5" },
++    Flag { name: "contrast", value: Some("N"), help: "Contrast, -100..100" },
++    Flag { name: "highlights", value: Some("N"), help: "Highlights, -100..100" },
++    Flag { name: "shadows", value: Some("N"), help: "Shadows, -100..100" },
++    Flag { name: "whites", value: Some("N"), help: "White end of the range, -100..100" },
++    Flag { name: "blacks", value: Some("N"), help: "Black end of the range, -100..100" },
++    Flag { name: "temperature", value: Some("N"), help: "Warm (+) or cool (-), -100..100" },
++    Flag { name: "tint", value: Some("N"), help: "Magenta (+) or green (-), -100..100" },
++    Flag { name: "vibrance", value: Some("N"), help: "Saturation that spares saturated colours, -100..100" },
++    Flag { name: "saturation", value: Some("N"), help: "Saturation, -100..100 (-100 = monochrome)" },
++    Flag { name: "clarity", value: Some("N"), help: "Mid-tone local contrast, -100..100" },
++    Flag { name: "dehaze", value: Some("N"), help: "Remove (+) or add (-) haze, -100..100" },
++    Flag { name: "vignette", value: Some("N"), help: "Darken (-) or lighten (+) the corners, -100..100" },
++    Flag { name: "red-hue", value: Some("N"), help: "Hue of the red band, -100..100" },
++    Flag { name: "red-sat", value: Some("N"), help: "Saturation of the red band, -100..100" },
++    Flag { name: "red-lum", value: Some("N"), help: "Luminance of the red band, -100..100" },
++    Flag { name: "orange-hue", value: Some("N"), help: "Hue of the orange band, -100..100" },
++    Flag { name: "orange-sat", value: Some("N"), help: "Saturation of the orange band, -100..100" },
++    Flag { name: "orange-lum", value: Some("N"), help: "Luminance of the orange band, -100..100" },
++    Flag { name: "yellow-hue", value: Some("N"), help: "Hue of the yellow band, -100..100" },
++    Flag { name: "yellow-sat", value: Some("N"), help: "Saturation of the yellow band, -100..100" },
++    Flag { name: "yellow-lum", value: Some("N"), help: "Luminance of the yellow band, -100..100" },
++    Flag { name: "green-hue", value: Some("N"), help: "Hue of the green band, -100..100" },
++    Flag { name: "green-sat", value: Some("N"), help: "Saturation of the green band, -100..100" },
++    Flag { name: "green-lum", value: Some("N"), help: "Luminance of the green band, -100..100" },
++    Flag { name: "aqua-hue", value: Some("N"), help: "Hue of the aqua band, -100..100" },
++    Flag { name: "aqua-sat", value: Some("N"), help: "Saturation of the aqua band, -100..100" },
++    Flag { name: "aqua-lum", value: Some("N"), help: "Luminance of the aqua band, -100..100" },
++    Flag { name: "blue-hue", value: Some("N"), help: "Hue of the blue band, -100..100" },
++    Flag { name: "blue-sat", value: Some("N"), help: "Saturation of the blue band, -100..100" },
++    Flag { name: "blue-lum", value: Some("N"), help: "Luminance of the blue band, -100..100" },
++    Flag { name: "purple-hue", value: Some("N"), help: "Hue of the purple band, -100..100" },
++    Flag { name: "purple-sat", value: Some("N"), help: "Saturation of the purple band, -100..100" },
++    Flag { name: "purple-lum", value: Some("N"), help: "Luminance of the purple band, -100..100" },
++    Flag { name: "magenta-hue", value: Some("N"), help: "Hue of the magenta band, -100..100" },
++    Flag { name: "magenta-sat", value: Some("N"), help: "Saturation of the magenta band, -100..100" },
++    Flag { name: "magenta-lum", value: Some("N"), help: "Luminance of the magenta band, -100..100" },
++    Flag { name: "curve", value: Some("A,B,C,D,E"), help: "Master tone curve: outputs (0..1) at inputs 0, ¼, ½, ¾, 1" },
++    Flag { name: "curve-r", value: Some("A,B,C,D,E"), help: "Red tone curve" },
++    Flag { name: "curve-g", value: Some("A,B,C,D,E"), help: "Green tone curve" },
++    Flag { name: "curve-b", value: Some("A,B,C,D,E"), help: "Blue tone curve" },
++    Flag { name: "reset", value: None, help: "Start from the untouched original" },
++    Flag { name: "from", value: Some("IMAGE"), help: "Start from another photo's settings" },
++    Flag { name: "preset", value: Some("NAME"), help: "Start from a saved preset" },
++    Flag { name: "quality", value: Some("1-100"), help: "export: JPEG/WebP quality (default 92; WebP 100 is lossless)" },
++    Flag { name: "width", value: Some("PX"), help: "export: fit within this width; never enlarges" },
++    Flag { name: "height", value: Some("PX"), help: "export: fit within this height; never enlarges" },
++    F_JSON,
++];
++
+ pub static COMMANDS: &[Cmd] = &[
+     Cmd {
+         name: "schema",
+@@ -466,6 +517,12 @@ pub static COMMANDS: &[Cmd] = &[
+         ],
+         help: "Add an adjustment layer — a span whose colour grade applies to everything beneath it (set the grade with `reel effects --clip`)",
+     },
++    Cmd {
++        name: "photo",
++        args: &["ACTION", "IMAGE?", "OUT?"],
++        flags: PHOTO_FLAGS,
++        help: "Non-destructive photo edits. ACTION: show, set, reset, copy, paste, export (IMAGE OUT), preset-list, preset-save (NAME IMAGE), preset-delete (NAME)",
++    },
+     Cmd {
+         name: "pool",
+         args: &["PROJECT"],
+@@ -846,6 +903,7 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
+         "roomtone" => cmd_roomtone(p),
+         "snapshot" => cmd_snapshot(p),
+         "adjust" => cmd_adjust(p),
++        "photo" => cmd_photo(p),
+         "pool" => cmd_pool(p),
+         "relink" => cmd_relink(p),
+         "multicam" => cmd_multicam(p),
+@@ -3488,6 +3546,137 @@ fn cmd_devices(_p: &Parsed) -> Result<Output> {
+     Ok(Output::new(text, report))
+ }
+ 
++/// The settings this command starts from, then its operator flags on top.
++fn photo_settings(p: &Parsed, image: &str) -> Result<crate::photo::Adjust> {
++    use crate::photo;
++    let mut adj = if p.on("reset") { Default::default() } else { photo::load_settings(image) };
++    if let Some(other) = p.str("from") {
++        if !std::path::Path::new(other).is_file() {
++            bail!("no such image: {other}");
++        }
++        adj = photo::load_settings(other);
++    }
++    if let Some(name) = p.str("preset") {
++        adj = *photo::read_presets()
++            .get(name)
++            .ok_or_else(|| anyhow!("no preset called {name:?}. See `reel photo preset-list`"))?;
++    }
++    for (name, lo, hi) in photo::SCALARS {
++        if let Some(v) = p.num::<f32>(name)? {
++            if !(lo..=hi).contains(&v) {
++                bail!("--{name} must be {lo}..{hi}, got {v}");
++            }
++            *adj.scalar_mut(name).expect("SCALARS names real fields") = v;
++        }
++    }
++    for (b, (band, _)) in photo::BANDS.iter().enumerate() {
++        let target = &mut adj.hsl[b];
++        for (suffix, slot) in [("hue", &mut target.hue), ("sat", &mut target.sat), ("lum", &mut target.lum)] {
++            let flag = format!("{band}-{suffix}");
++            if let Some(v) = p.num::<f32>(&flag)? {
++                if !(-100.0..=100.0).contains(&v) {
++                    bail!("--{flag} must be -100..100, got {v}");
++                }
++                *slot = v;
++            }
++        }
++    }
++    let curve = &mut adj.curve;
++    for (flag, slot) in [
++        ("curve", &mut curve.master),
++        ("curve-r", &mut curve.r),
++        ("curve-g", &mut curve.g),
++        ("curve-b", &mut curve.b),
++    ] {
++        if let Some(s) = p.str(flag) {
++            let pts: Vec<f32> = s.split(',').map(|v| v.trim().parse()).collect::<Result<_, _>>()
++                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
++            *slot = <[f32; 5]>::try_from(pts)
++                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
++            if slot.iter().any(|v| !(0.0..=1.0).contains(v)) {
++                bail!("--{flag} values must be 0..1, got {s:?}");
++            }
++        }
++    }
++    Ok(adj)
++}
++
++fn cmd_photo(p: &Parsed) -> Result<Output> {
++    use crate::photo;
++    let action = p.at(0)?;
++    let shown = |adj: &photo::Adjust, note: String| {
++        Output::new(note, serde_json::json!({ "adjust": adj }))
++    };
++    // A still that isn't there should fail here, not write a stray document.
++    let image = |i: usize| -> Result<&str> {
++        let path = p.at(i)?;
++        if !std::path::Path::new(path).is_file() {
++            bail!("no such image: {path}");
++        }
++        Ok(path)
++    };
++    match action {
++        "show" => {
++            let path = image(1)?;
++            let adj = photo_settings(p, path)?;
++            Ok(shown(&adj, serde_json::to_string_pretty(&adj)?))
++        }
++        "set" | "reset" => {
++            let path = image(1)?;
++            let adj = if action == "reset" { Default::default() } else { photo_settings(p, path)? };
++            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
++            photo::save_settings(&abs, &adj)?;
++            Ok(shown(&adj, format!("Saved settings to {}", photo::sidecar(&abs))))
++        }
++        "copy" => {
++            let adj = photo_settings(p, image(1)?)?;
++            photo::copy_settings(&adj)?;
++            Ok(shown(&adj, "Settings copied.".into()))
++        }
++        "paste" => {
++            let path = image(1)?;
++            let adj = photo::pasted_settings().ok_or_else(|| anyhow!("nothing copied yet"))?;
++            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
++            photo::save_settings(&abs, &adj)?;
++            Ok(shown(&adj, format!("Pasted settings onto {path}")))
++        }
++        "export" => {
++            let path = image(1)?;
++            let out = p.at(2)?;
++            let adj = photo_settings(p, path)?;
++            let opts = photo::ExportOpts {
++                quality: p.num::<u8>("quality")?.unwrap_or(photo::ExportOpts::default().quality),
++                width: p.num("width")?.unwrap_or(0),
++                height: p.num("height")?.unwrap_or(0),
++            };
++            let done = photo::export(path, &adj, opts, out)?;
++            Ok(Output::new(
++                format!("Wrote {out} ({}×{})", done.width, done.height),
++                serde_json::json!({ "out": out, "width": done.width, "height": done.height, "adjust": adj }),
++            ))
++        }
++        "preset-list" => {
++            let all = photo::read_presets();
++            let text = all.keys().cloned().collect::<Vec<_>>().join("\n");
++            Ok(Output::new(text, serde_json::json!({ "presets": all })))
++        }
++        "preset-save" => {
++            let name = p.at(1)?;
++            let adj = photo_settings(p, image(2)?)?;
++            photo::save_preset(name, &adj)?;
++            Ok(shown(&adj, format!("Saved preset {name:?}.")))
++        }
++        "preset-delete" => {
++            let name = p.at(1)?;
++            if !photo::delete_preset(name)? {
++                bail!("no preset called {name:?}");
++            }
++            Ok(Output::new(format!("Deleted preset {name:?}."), serde_json::json!({ "deleted": name })))
++        }
++        other => bail!("unknown photo action {other:?}. See `reel photo --help`"),
++    }
++}
++
+ fn cmd_presets() -> Result<Output> {
+     let text = export::Preset::ALL
+         .iter()
+@@ -3658,6 +3847,23 @@ mod tests {
+         }
+     }
+ 
++    /// Every operator of the panel is a flag, and the reference says so.
++    #[test]
++    fn every_photo_operator_is_a_documented_flag() {
++        let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/CLI.md")).unwrap();
++        let mut names: Vec<String> = crate::photo::SCALARS.iter().map(|s| s.0.to_string()).collect();
++        for (band, _) in crate::photo::BANDS {
++            for c in ["hue", "sat", "lum"] {
++                names.push(format!("{band}-{c}"));
++            }
++        }
++        names.extend(["curve", "curve-r", "curve-g", "curve-b"].map(String::from));
++        for n in names {
++            assert!(PHOTO_FLAGS.iter().any(|f| f.name == n), "--{n} is not a flag");
++            assert!(docs.contains(&format!("`--{n}`")), "--{n} is not in docs/CLI.md");
++        }
++    }
++
+     #[test]
+     fn colours_are_read_as_hex() {
+         assert_eq!(parse_hex("ffcc00").unwrap(), [255, 204, 0]);
+diff --git a/src/edit/mod.rs b/src/edit/mod.rs
+index a6de759..b4157a7 100644
+--- a/src/edit/mod.rs
++++ b/src/edit/mod.rs
+@@ -995,6 +995,10 @@ pub struct Project {
+     /// source time under playhead t is `t - offset`.
+     #[serde(default)]
+     pub multicam: Vec<Angle>,
++    /// A photo document: settings for one still (`photo.jpg.reel`). `None`
++    /// for every edit — see `photo.rs`.
++    #[serde(default, skip_serializing_if = "Option::is_none")]
++    pub photo: Option<crate::photo::PhotoEdit>,
+     #[serde(skip)]
+     next_id: u64,
+ }
+@@ -1072,6 +1076,7 @@ impl Default for Project {
+             pool: Vec::new(),
+             session: Session::default(),
+             multicam: Vec::new(),
++            photo: None,
+             next_id: 100,
+         }
+     }
+diff --git a/src/effects.rs b/src/effects.rs
+index 258fa0e..5e40853 100644
+--- a/src/effects.rs
++++ b/src/effects.rs
+@@ -534,9 +534,8 @@ impl Effects {
+     /// THE formula. sRGB-encoded rgb in 0..1 → adjusted rgb in 0..1.
+     /// Order matters and is mirrored exactly in video.wgsl and `filters()`:
+     /// exposure (gain), then contrast about 0.5, then saturation about luma.
+-    /// Only the parity test calls this — it exists as the executable
+-    /// statement of what `video.wgsl` and `filters()` must both do.
+-    #[allow(dead_code)]
++    /// It is the executable statement of what `video.wgsl` and `filters()`
++    /// must both do, and `photo.rs` renders stills through it directly.
+     pub fn apply_reference(&self, rgb: [f32; 3]) -> [f32; 3] {
+         let mut c = [
+             rgb[0] * self.exposure,
+diff --git a/src/main.rs b/src/main.rs
+index bf5273d..851abd9 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -27,6 +27,7 @@ mod macos;
+ mod lut;
+ mod media;
+ mod perf;
++mod photo;
+ #[cfg(target_os = "linux")]
+ mod portal;
+ mod plugins;
+@@ -148,7 +149,10 @@ impl ApplicationHandler<UserEvent> for Reel {
+         let response = egui.handle_event(&window, &event);
+ 
+         match event {
+-            WindowEvent::CloseRequested => event_loop.exit(),
++            WindowEvent::CloseRequested => {
++                self.app.flush_photo();
++                event_loop.exit();
++            }
+             WindowEvent::Resized(size) => gpu.resize(size.width, size.height),
+             WindowEvent::RedrawRequested => {
+                 // 1) advance playback and push any new frame to the GPU + egui.
+@@ -209,6 +213,7 @@ impl ApplicationHandler<UserEvent> for Reel {
+                 }
+                 self.sync_tray();
+                 if self.app.quit_requested {
++                    self.app.flush_photo();
+                     event_loop.exit();
+                 }
+             }
+diff --git a/src/media.rs b/src/media.rs
+index dfa2a24..7891a67 100644
+--- a/src/media.rs
++++ b/src/media.rs
+@@ -3,6 +3,7 @@
+ //! instant-loading image document (video/audio live in `video::Player`).
+ 
+ use anyhow::{anyhow, Result};
++use image::ImageDecoder;
+ use std::path::Path;
+ 
+ #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+@@ -45,7 +46,15 @@ impl ImageDoc {
+         if is_svg_path(path) {
+             return Self::open_svg(path);
+         }
+-        let img = image::open(path).map_err(|e| anyhow!("could not read image {path}: {e}"))?;
++        let read_err = |e: image::ImageError| anyhow!("could not read image {path}: {e}");
++        let mut decoder = image::ImageReader::open(path)?
++            .with_guessed_format()?
++            .into_decoder()
++            .map_err(read_err)?;
++        // Phones store sideways pixels plus an EXIF tag; stand them up.
++        let orientation = decoder.orientation().map_err(read_err)?;
++        let mut img = image::DynamicImage::from_decoder(decoder).map_err(read_err)?;
++        img.apply_orientation(orientation);
+         let rgba = img.to_rgba8();
+         let (width, height) = rgba.dimensions();
+         Ok(Self { path: path.to_string(), width, height, data: rgba.into_raw() })
+@@ -158,6 +167,26 @@ mod tests {
+         let _ = std::fs::remove_file(&p);
+     }
+ 
++    /// A sideways phone photo: pixels stored lying down, EXIF says "rotate".
++    #[test]
++    fn exif_orientation_stands_a_photo_up() {
++        let p = std::env::temp_dir().join(format!("reel-exif-test-{}.jpg", std::process::id()));
++        image::RgbImage::from_pixel(32, 16, image::Rgb([200, 40, 40])).save(&p).expect("write jpeg");
++        let jpeg = std::fs::read(&p).unwrap();
++        // APP1: "Exif", little-endian TIFF, one IFD entry: Orientation = 6.
++        let tiff: &[u8] = &[
++            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
++        ];
++        let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, (2 + 6 + tiff.len()) as u8];
++        out.extend(b"Exif\0\0");
++        out.extend(tiff);
++        out.extend(&jpeg[2..]);
++        std::fs::write(&p, out).unwrap();
++        let doc = ImageDoc::open(&p.to_string_lossy()).expect("open");
++        assert_eq!((doc.width, doc.height), (16, 32));
++        let _ = std::fs::remove_file(&p);
++    }
++
+     #[test]
+     fn loads_a_generated_png() {
+         let dir = std::env::temp_dir();
+diff --git a/src/photo.rs b/src/photo.rs
+new file mode 100644
+index 0000000..0fe09df
+--- /dev/null
++++ b/src/photo.rs
+@@ -0,0 +1,1227 @@
++//! Reel photo: a non-destructive develop for stills — Light, Colour and
++//! Presence — that photographers can trust because there is exactly ONE
++//! renderer.
++//!
++//! `render()` is both the preview and the export: the Adjust panel shows its
++//! output at preview size, and `export()` calls it at the chosen size. Video
++//! needs the shader/ffmpeg mirror in `effects.rs` because a frame cannot
++//! wait for the CPU; a still can, so there is nothing to mirror here and
++//! nothing to drift. Clarity and dehaze are spatial, which no 33³ lattice
++//! could express anyway.
++//!
++//! The existing grade stack does what it already can: `base_fx()` maps the
++//! panel's exposure/contrast/temperature/tint/saturation onto `Effects`, and
++//! `Curves`, `rgb_to_hsl` and `hsl_to_rgb` are reused as they are. Like the
++//! rest of the colour code, everything works on sRGB-encoded values in 0..1.
++//!
++//! Settings are a `.reel` document next to the picture (`photo.jpg.reel`,
++//! the full name so `clip.jpg` never collides with `clip.mp4`'s project).
++//! The original file is only ever read.
++
++use crate::edit::{write_atomic, Project};
++use crate::effects::{hsl_to_rgb, rgb_to_hsl, Curves, Effects, LUMA};
++use anyhow::{anyhow, bail, Context, Result};
++use serde::{Deserialize, Serialize};
++use std::collections::BTreeMap;
++use std::path::{Path, PathBuf};
++use std::sync::Arc;
++
++/// The preview's long edge. Local operators are defined in fractions of the
++/// frame, so this changes how sharp the preview is, never what it looks like.
++pub const PREVIEW_EDGE: u32 = 2560;
++
++/// Grid the spatial operators measure on. Fixed, so a 2560 preview and a
++/// 6000 px export see the same blurred picture.
++const LOCAL_GRID: usize = 512;
++
++/// The eight colour bands, by centre hue in degrees.
++pub const BANDS: [(&str, f32); 8] = [
++    ("red", 0.0),
++    ("orange", 30.0),
++    ("yellow", 60.0),
++    ("green", 120.0),
++    ("aqua", 180.0),
++    ("blue", 240.0),
++    ("purple", 285.0),
++    ("magenta", 320.0),
++];
++
++/// One band of the per-colour HSL mixer. All -100..100, 0 = untouched.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct Band {
++    pub hue: f32,
++    pub sat: f32,
++    pub lum: f32,
++}
++
++/// Everything the Adjust panel can do to a photo. Exposure is in stops, the
++/// rest are the -100..100 a Lightroom user already knows. All-default is
++/// identity, and every field defaults so older documents keep loading.
++#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
++#[serde(default)]
++pub struct Adjust {
++    pub exposure: f32,
++    pub contrast: f32,
++    pub highlights: f32,
++    pub shadows: f32,
++    pub whites: f32,
++    pub blacks: f32,
++    pub temperature: f32,
++    pub tint: f32,
++    pub vibrance: f32,
++    pub saturation: f32,
++    pub clarity: f32,
++    pub dehaze: f32,
++    pub vignette: f32,
++    pub hsl: [Band; 8],
++    pub curve: Curves,
++}
++
++/// The scalar operators: `(CLI flag, lowest, highest)`. One table for the
++/// panel-independent surface — the CLI and its test both read it.
++pub const SCALARS: [(&str, f32, f32); 13] = [
++    ("exposure", -5.0, 5.0),
++    ("contrast", -100.0, 100.0),
++    ("highlights", -100.0, 100.0),
++    ("shadows", -100.0, 100.0),
++    ("whites", -100.0, 100.0),
++    ("blacks", -100.0, 100.0),
++    ("temperature", -100.0, 100.0),
++    ("tint", -100.0, 100.0),
++    ("vibrance", -100.0, 100.0),
++    ("saturation", -100.0, 100.0),
++    ("clarity", -100.0, 100.0),
++    ("dehaze", -100.0, 100.0),
++    ("vignette", -100.0, 100.0),
++];
++
++fn smooth(edge0: f32, edge1: f32, x: f32) -> f32 {
++    let t = ((x - edge0) / (edge1 - edge0)).clamp(0.0, 1.0);
++    t * t * (3.0 - 2.0 * t)
++}
++
++fn lerp(a: f32, b: f32, t: f32) -> f32 {
++    a + (b - a) * t
++}
++
++fn luma(c: [f32; 3]) -> f32 {
++    c[0] * LUMA[0] + c[1] * LUMA[1] + c[2] * LUMA[2]
++}
++
++impl Adjust {
++    pub fn is_identity(&self) -> bool {
++        *self == Self::default()
++    }
++
++    pub fn scalar_mut(&mut self, name: &str) -> Option<&mut f32> {
++        Some(match name {
++            "exposure" => &mut self.exposure,
++            "contrast" => &mut self.contrast,
++            "highlights" => &mut self.highlights,
++            "shadows" => &mut self.shadows,
++            "whites" => &mut self.whites,
++            "blacks" => &mut self.blacks,
++            "temperature" => &mut self.temperature,
++            "tint" => &mut self.tint,
++            "vibrance" => &mut self.vibrance,
++            "saturation" => &mut self.saturation,
++            "clarity" => &mut self.clarity,
++            "dehaze" => &mut self.dehaze,
++            "vignette" => &mut self.vignette,
++            _ => return None,
++        })
++    }
++
++    /// The panel's global sliders on the existing stack: one stop of light
++    /// is 2^(1/2.2) on these encoded values.
++    fn base_fx(&self) -> Effects {
++        Effects {
++            exposure: 2f32.powf(self.exposure.clamp(-5.0, 5.0) / 2.2),
++            contrast: 2f32.powf(self.contrast.clamp(-100.0, 100.0) / 100.0),
++            wb_temp: self.temperature.clamp(-100.0, 100.0) / 100.0,
++            wb_tint: self.tint.clamp(-100.0, 100.0) / 100.0,
++            ..Default::default()
++        }
++    }
++
++    /// Highlights, shadows, whites and blacks as a shift at luma `l`. Each
++    /// slider owns a soft zone of the tonal range; the amplitudes are small
++    /// enough that a slider alone can never invert the ramp.
++    fn tone_shift(&self, l: f32) -> f32 {
++        let shadows = smooth(0.0, 0.25, l) * (1.0 - smooth(0.25, 0.6, l));
++        let highlights = smooth(0.4, 0.75, l) * (1.0 - smooth(0.75, 1.0, l));
++        let whites = smooth(0.6, 1.0, l);
++        let blacks = 1.0 - smooth(0.0, 0.4, l);
++        (self.shadows * shadows * 0.15
++            + self.highlights * highlights * 0.15
++            + self.whites * whites * 0.25
++            + self.blacks * blacks * 0.25)
++            / 100.0
++    }
++
++    /// The per-colour mixer: `(hue degrees, saturation factor, lightness
++    /// shift)` for a hue, blended between the two nearest band centres so
++    /// no hue falls between bands.
++    fn band_push(&self, hue: f32) -> (f32, f32, f32) {
++        let mut b = 7;
++        while b > 0 && hue < BANDS[b].1 {
++            b -= 1;
++        }
++        let next = (b + 1) % 8;
++        let span = (BANDS[next].1 - BANDS[b].1).rem_euclid(360.0);
++        let t = (hue - BANDS[b].1).rem_euclid(360.0) / span;
++        let (x, y) = (self.hsl[b], self.hsl[next]);
++        (
++            lerp(x.hue, y.hue, t) * 0.3,
++            1.0 + lerp(x.sat, y.sat, t) / 100.0,
++            lerp(x.lum, y.lum, t) / 100.0 * 0.35,
++        )
++    }
++
++    fn has_bands(&self) -> bool {
++        self.hsl.iter().any(|b| *b != Band::default())
++    }
++
++    /// One pixel. `local` is the blurred (luma, dark channel, airlight) under
++    /// it, `uv` where it sits in the frame. THE formula; `develop` only
++    /// walks it over the rows.
++    fn pixel(&self, rgb: [f32; 3], local: [f32; 3], uv: [f32; 2], fx: &Effects, sat_fx: &Effects) -> [f32; 3] {
++        let mut c = rgb;
++        if fx.wb_temp != 0.0 || fx.wb_tint != 0.0 {
++            c = fx.grade_reference(c);
++        }
++        c = fx.apply_reference(c);
++
++        if self.dehaze != 0.0 {
++            let (dark, air) = (local[1], local[2].max(1e-3));
++            let amount = self.dehaze.clamp(-100.0, 100.0) / 100.0;
++            if amount > 0.0 {
++                // The atmospheric model: I = J·t + A·(1 − t). Solve for J.
++                let t = (1.0 - 0.95 * amount * (dark / air).min(1.0)).max(0.15);
++                c = c.map(|v| (v - air) / t + air);
++            } else {
++                c = c.map(|v| lerp(v, air, -amount * 0.4));
++            }
++        }
++
++        let l = luma(c).clamp(0.0, 1.0);
++        let mut shift = self.tone_shift(l);
++        if self.clarity != 0.0 {
++            // Local contrast, strongest in the mid-tones: blacks and whites
++            // must not halo.
++            let mid = 4.0 * l * (1.0 - l);
++            shift += (l - local[0]) * mid * self.clarity.clamp(-100.0, 100.0) / 100.0 * 1.2;
++        }
++        c = c.map(|v| v + shift);
++
++        if self.has_bands() {
++            let hsl = rgb_to_hsl(c.map(|v| v.clamp(0.0, 1.0)));
++            let (dh, ds, dl) = self.band_push(hsl[0]);
++            // Greys carry no colour, so a colour band leaves them alone.
++            let weight = hsl[1] * 4.0 * hsl[2] * (1.0 - hsl[2]);
++            c = hsl_to_rgb([hsl[0] + dh, hsl[1] * ds, hsl[2] + dl * weight]);
++        }
++
++        if self.vibrance != 0.0 {
++            // Saturation that spares what is already saturated.
++            let max = c[0].max(c[1]).max(c[2]);
++            let min = c[0].min(c[1]).min(c[2]);
++            let gain = 1.0 + self.vibrance.clamp(-100.0, 100.0) / 100.0 * (1.0 - (max - min).clamp(0.0, 1.0));
++            let y = luma(c);
++            c = c.map(|v| y + (v - y) * gain);
++        }
++        c = sat_fx.apply_reference(c);
++
++        if !self.curve.is_identity() {
++            c = [self.curve.apply(0, c[0]), self.curve.apply(1, c[1]), self.curve.apply(2, c[2])];
++        }
++
++        if self.vignette != 0.0 {
++            // Radius² normalised so the corners are 1 on any aspect ratio.
++            let (x, y) = (uv[0] * 2.0 - 1.0, uv[1] * 2.0 - 1.0);
++            let r2 = (x * x + y * y) * 0.5;
++            let gain = 1.0 + self.vignette.clamp(-100.0, 100.0) / 100.0 * 0.8 * smooth(0.15, 1.0, r2);
++            c = c.map(|v| v * gain);
++        }
++        c.map(|v| v.clamp(0.0, 1.0))
++    }
++}
++
++/// A blurred measurement of the picture on a fixed grid: what clarity and
++/// dehaze read. Fractions of the frame on purpose — see `LOCAL_GRID`.
++struct LocalMap {
++    w: usize,
++    h: usize,
++    luma: Vec<f32>,
++    dark: Vec<f32>,
++    air: f32,
++}
++
++/// Three box passes along both axes: gaussian enough, O(1) per pixel.
++fn blur(src: &[f32], w: usize, h: usize, r: usize) -> Vec<f32> {
++    let line = |get: &dyn Fn(usize) -> f32, n: usize, put: &mut dyn FnMut(usize, f32)| {
++        let span = (2 * r + 1) as f32;
++        let at = |i: isize| get(i.clamp(0, n as isize - 1) as usize);
++        let mut sum: f32 = (-(r as isize)..=r as isize).map(at).sum();
++        for i in 0..n {
++            put(i, sum / span);
++            sum += at(i as isize + r as isize + 1) - at(i as isize - r as isize);
++        }
++    };
++    let mut a = src.to_vec();
++    let mut b = vec![0.0; a.len()];
++    for _ in 0..3 {
++        for y in 0..h {
++            line(&|x| a[y * w + x], w, &mut |x, v| b[y * w + x] = v);
++        }
++        for x in 0..w {
++            line(&|y| b[y * w + x], h, &mut |y, v| a[y * w + x] = v);
++        }
++    }
++    a
++}
++
++impl LocalMap {
++    fn measure(rgba: &[u8], w: usize, h: usize) -> Self {
++        let long = w.max(h);
++        let scale = LOCAL_GRID.min(long) as f64 / long as f64;
++        let gw = ((w as f64 * scale).round() as usize).max(1);
++        let gh = ((h as f64 * scale).round() as usize).max(1);
++        let mut l = vec![0.0f32; gw * gh];
++        let mut d = vec![0.0f32; gw * gh];
++        let mut n = vec![0u32; gw * gh];
++        for (i, px) in rgba.chunks_exact(4).enumerate() {
++            let (x, y) = (i % w, i / w);
++            let g = (y * gh / h) * gw + x * gw / w;
++            let c = [px[0] as f32 / 255.0, px[1] as f32 / 255.0, px[2] as f32 / 255.0];
++            l[g] += luma(c);
++            d[g] += c[0].min(c[1]).min(c[2]);
++            n[g] += 1;
++        }
++        for g in 0..l.len() {
++            let c = n[g].max(1) as f32;
++            l[g] /= c;
++            d[g] /= c;
++        }
++        let glong = gw.max(gh);
++        let luma = blur(&l, gw, gh, ((glong as f32 * 0.02).round() as usize).max(1));
++        let dark = blur(&d, gw, gh, ((glong as f32 * 0.03).round() as usize).max(1));
++        // The haze's own brightness: the brightest of the unblurred areas.
++        let air = l.iter().fold(0.0f32, |a, b| a.max(*b)).clamp(0.1, 1.0);
++        Self { w: gw, h: gh, luma, dark, air }
++    }
++
++    fn sample(&self, uv: [f32; 2]) -> [f32; 3] {
++        let (fx, fy) = (uv[0] * self.w as f32 - 0.5, uv[1] * self.h as f32 - 0.5);
++        let (x0, y0) = (fx.floor(), fy.floor());
++        let (tx, ty) = (fx - x0, fy - y0);
++        let ix = |x: f32| (x.max(0.0) as usize).min(self.w - 1);
++        let iy = |y: f32| (y.max(0.0) as usize).min(self.h - 1);
++        let read = |m: &[f32]| {
++            let at = |x: f32, y: f32| m[iy(y) * self.w + ix(x)];
++            lerp(
++                lerp(at(x0, y0), at(x0 + 1.0, y0), tx),
++                lerp(at(x0, y0 + 1.0), at(x0 + 1.0, y0 + 1.0), tx),
++                ty,
++            )
++        };
++        [read(&self.luma), read(&self.dark), self.air]
++    }
++}
++
++/// Straight-alpha RGBA8 pixels. The alpha channel passes through untouched.
++#[derive(Clone)]
++pub struct Pixels {
++    pub width: u32,
++    pub height: u32,
++    pub data: Vec<u8>,
++}
++
++impl Pixels {
++    /// Shrink to fit `box_w`×`box_h` — never enlarge. The one resampler, for
++    /// the preview and the export alike.
++    fn fitted(&self, box_w: u32, box_h: u32) -> Pixels {
++        let (w, h) = (self.width, self.height);
++        let scale = (box_w as f64 / w as f64).min(box_h as f64 / h as f64);
++        if scale >= 1.0 {
++            return self.clone();
++        }
++        let (nw, nh) = (((w as f64 * scale).round() as u32).max(1), ((h as f64 * scale).round() as u32).max(1));
++        let src = image::RgbaImage::from_raw(w, h, self.data.clone()).expect("pixels match their size");
++        Pixels { width: nw, height: nh, data: image::imageops::thumbnail(&src, nw, nh).into_raw() }
++    }
++}
++
++/// Apply the settings to pixels of any size.
++pub fn develop(src: &Pixels, adj: &Adjust) -> Vec<u8> {
++    if adj.is_identity() {
++        return src.data.clone();
++    }
++    let (w, h) = (src.width as usize, src.height as usize);
++    let local = (adj.clarity != 0.0 || adj.dehaze != 0.0).then(|| LocalMap::measure(&src.data, w, h));
++    let fx = adj.base_fx();
++    let sat_fx = Effects {
++        saturation: 1.0 + adj.saturation.clamp(-100.0, 100.0) / 100.0,
++        ..Default::default()
++    };
++    let mut out = src.data.clone();
++    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(1);
++    let band = (h.div_ceil(threads)).max(1) * w * 4;
++    std::thread::scope(|s| {
++        for (b, rows) in out.chunks_mut(band).enumerate() {
++            let (local, fx, sat_fx) = (&local, &fx, &sat_fx);
++            s.spawn(move || {
++                let first = b * band / (w * 4);
++                for (i, px) in rows.chunks_exact_mut(4).enumerate() {
++                    let (x, y) = (i % w, first + i / w);
++                    let uv = [(x as f32 + 0.5) / w as f32, (y as f32 + 0.5) / h as f32];
++                    let sampled = local.as_ref().map(|m| m.sample(uv)).unwrap_or_default();
++                    let c = adj.pixel(
++                        [px[0] as f32 / 255.0, px[1] as f32 / 255.0, px[2] as f32 / 255.0],
++                        sampled,
++                        uv,
++                        fx,
++                        sat_fx,
++                    );
++                    for k in 0..3 {
++                        px[k] = (c[k] * 255.0).round() as u8;
++                    }
++                }
++            });
++        }
++    });
++    out
++}
++
++/// THE renderer: fit to the box, then develop. Preview and export are both
++/// this call, so at the same size they are the same bytes.
++pub fn render(original: &Pixels, adj: &Adjust, box_w: u32, box_h: u32) -> Pixels {
++    let fitted = original.fitted(box_w, box_h);
++    let data = develop(&fitted, adj);
++    Pixels { width: fitted.width, height: fitted.height, data }
++}
++
++/// Decode a still, upright (phone photos store sideways pixels and an EXIF
++/// orientation tag).
++pub fn load(path: &str) -> Result<Pixels> {
++    let doc = crate::media::ImageDoc::open(path)?;
++    Ok(Pixels { width: doc.width, height: doc.height, data: doc.data })
++}
++
++// ── The document ─────────────────────────────────────────────────────────
++
++/// What a `.reel` carries for a photo. `Project.photo` is `None` for edits.
++#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
++pub struct PhotoEdit {
++    pub source: String,
++    #[serde(default)]
++    pub adjust: Adjust,
++}
++
++/// Where a photo's settings live.
++pub fn sidecar(path: &str) -> String {
++    format!("{path}.reel")
++}
++
++/// The settings saved for this photo, or identity.
++pub fn load_settings(path: &str) -> Adjust {
++    let doc = sidecar(path);
++    if !Path::new(&doc).exists() {
++        return Adjust::default();
++    }
++    match Project::load(&doc) {
++        Ok(p) => p.photo.map(|e| e.adjust).unwrap_or_default(),
++        Err(e) => {
++            log::warn!("could not read {doc}: {e}");
++            Adjust::default()
++        }
++    }
++}
++
++pub fn settings_json(path: &str, adjust: &Adjust) -> Result<String> {
++    let name = Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
++    // Absolute, so the document finds its photo from any directory.
++    let source = std::fs::canonicalize(path)
++        .map(|p| p.to_string_lossy().into_owned())
++        .unwrap_or_else(|_| path.to_string());
++    let mut project = Project::default();
++    project.name = name;
++    project.photo = Some(PhotoEdit { source, adjust: *adjust });
++    Ok(serde_json::to_string_pretty(&project)?)
++}
++
++pub fn save_settings(path: &str, adjust: &Adjust) -> Result<()> {
++    write_atomic(&sidecar(path), &settings_json(path, adjust)?)
++}
++
++/// The photo a `.reel` document points at: beside the document if it moved
++/// with its picture, else where it was saved from.
++pub fn source_of(doc_path: &str, edit: &PhotoEdit) -> String {
++    match doc_path.strip_suffix(".reel") {
++        Some(beside) if Path::new(beside).exists() => beside.to_string(),
++        _ => edit.source.clone(),
++    }
++}
++
++// ── Copy/paste and presets ───────────────────────────────────────────────
++// Files, not process state: a double-click starts a new Reel, and copying
++// from one photo to the next has to survive that.
++
++fn config_dir() -> PathBuf {
++    let var = |k: &str| std::env::var_os(k).map(PathBuf::from);
++    var("XDG_CONFIG_HOME")
++        .or_else(|| var("HOME").map(|h| h.join(".config")))
++        .or_else(|| var("APPDATA"))
++        .unwrap_or_else(std::env::temp_dir)
++        .join("reel")
++}
++
++fn clipboard_path() -> PathBuf {
++    config_dir().join("photo-clipboard.json")
++}
++
++fn presets_path() -> PathBuf {
++    config_dir().join("photo-presets.json")
++}
++
++fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<()> {
++    if let Some(dir) = path.parent() {
++        std::fs::create_dir_all(dir)?;
++    }
++    write_atomic(&path.to_string_lossy(), &serde_json::to_string_pretty(value)?)
++}
++
++pub fn copy_settings(adjust: &Adjust) -> Result<()> {
++    write_json(&clipboard_path(), adjust)
++}
++
++pub fn pasted_settings() -> Option<Adjust> {
++    serde_json::from_str(&std::fs::read_to_string(clipboard_path()).ok()?).ok()
++}
++
++pub fn read_presets_at(path: &Path) -> BTreeMap<String, Adjust> {
++    std::fs::read_to_string(path)
++        .ok()
++        .and_then(|s| serde_json::from_str(&s).ok())
++        .unwrap_or_default()
++}
++
++pub fn read_presets() -> BTreeMap<String, Adjust> {
++    read_presets_at(&presets_path())
++}
++
++pub fn save_preset_at(path: &Path, name: &str, adjust: &Adjust) -> Result<()> {
++    let name = name.trim();
++    if name.is_empty() {
++        bail!("a preset needs a name");
++    }
++    let mut all = read_presets_at(path);
++    all.insert(name.to_string(), *adjust);
++    write_json(path, &all)
++}
++
++pub fn save_preset(name: &str, adjust: &Adjust) -> Result<()> {
++    save_preset_at(&presets_path(), name, adjust)
++}
++
++pub fn delete_preset_at(path: &Path, name: &str) -> Result<bool> {
++    let mut all = read_presets_at(path);
++    let found = all.remove(name).is_some();
++    if found {
++        write_json(path, &all)?;
++    }
++    Ok(found)
++}
++
++pub fn delete_preset(name: &str) -> Result<bool> {
++    delete_preset_at(&presets_path(), name)
++}
++
++// ── Export ───────────────────────────────────────────────────────────────
++
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub enum Format {
++    Jpeg,
++    Png,
++    Webp,
++}
++
++impl Format {
++    pub const ALL: [Format; 3] = [Format::Jpeg, Format::Png, Format::Webp];
++
++    pub fn from_path(path: &str) -> Result<Self> {
++        match Path::new(path).extension().map(|e| e.to_string_lossy().to_lowercase()).as_deref() {
++            Some("jpg" | "jpeg") => Ok(Self::Jpeg),
++            Some("png") => Ok(Self::Png),
++            Some("webp") => Ok(Self::Webp),
++            _ => bail!("{path}: a photo exports as .jpg, .png or .webp"),
++        }
++    }
++
++    pub fn ext(self) -> &'static str {
++        match self {
++            Self::Jpeg => "jpg",
++            Self::Png => "png",
++            Self::Webp => "webp",
++        }
++    }
++
++    pub fn label(self) -> &'static str {
++        match self {
++            Self::Jpeg => "JPEG",
++            Self::Png => "PNG",
++            Self::Webp => "WebP",
++        }
++    }
++}
++
++/// Size and quality of one export. `width`/`height` are a box the picture
++/// fits inside (0 = no limit); nothing is ever enlarged.
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++pub struct ExportOpts {
++    /// 1..100. PNG is lossless and ignores it; WebP at 100 is lossless.
++    pub quality: u8,
++    pub width: u32,
++    pub height: u32,
++}
++
++impl Default for ExportOpts {
++    fn default() -> Self {
++        Self { quality: 92, width: 0, height: 0 }
++    }
++}
++
++/// JPEG has no alpha: transparency lands on white, like every photo tool.
++fn flattened(p: &Pixels) -> image::RgbImage {
++    let mut rgb = Vec::with_capacity(p.data.len() / 4 * 3);
++    for px in p.data.chunks_exact(4) {
++        let a = px[3] as u32;
++        for k in 0..3 {
++            rgb.push(((px[k] as u32 * a + 255 * (255 - a) + 127) / 255) as u8);
++        }
++    }
++    image::RgbImage::from_raw(p.width, p.height, rgb).expect("rgb matches its size")
++}
++
++fn encode(p: &Pixels, format: Format, quality: u8, out: &Path) -> Result<()> {
++    let q = quality.clamp(1, 100);
++    match format {
++        Format::Jpeg => {
++            let file = std::io::BufWriter::new(std::fs::File::create(out)?);
++            image::codecs::jpeg::JpegEncoder::new_with_quality(file, q).encode_image(&flattened(p))?;
++        }
++        Format::Png => {
++            image::RgbaImage::from_raw(p.width, p.height, p.data.clone())
++                .ok_or_else(|| anyhow!("image buffer size mismatch"))?
++                .save_with_format(out, image::ImageFormat::Png)?;
++        }
++        Format::Webp => {
++            if !encode_webp_ffmpeg(p, q, out) {
++                // No libwebp in this ffmpeg: lossless is still honest output.
++                log::warn!("ffmpeg has no libwebp; writing lossless WebP");
++                image::RgbaImage::from_raw(p.width, p.height, p.data.clone())
++                    .ok_or_else(|| anyhow!("image buffer size mismatch"))?
++                    .save_with_format(out, image::ImageFormat::WebP)?;
++            }
++        }
++    }
++    Ok(())
++}
++
++/// The image crate only writes lossless WebP; quality goes through ffmpeg.
++fn encode_webp_ffmpeg(p: &Pixels, quality: u8, out: &Path) -> bool {
++    use std::io::Write;
++    use std::process::{Command, Stdio};
++    let size = format!("{}x{}", p.width, p.height);
++    let q = quality.to_string();
++    let lossless = if quality >= 100 { "1" } else { "0" };
++    let child = Command::new("ffmpeg")
++        .args(["-y", "-v", "error", "-f", "rawvideo", "-pix_fmt", "rgba", "-s", &size, "-i", "-"])
++        .args(["-frames:v", "1", "-c:v", "libwebp", "-lossless", lossless, "-quality", &q, "-f", "webp"])
++        .arg(out)
++        .stdin(Stdio::piped())
++        .stdout(Stdio::null())
++        .stderr(Stdio::null())
++        .spawn();
++    let Ok(mut child) = child else { return false };
++    let wrote = child.stdin.take().is_some_and(|mut s| s.write_all(&p.data).is_ok());
++    child.wait().map(|s| s.success()).unwrap_or(false) && wrote
++}
++
++/// Render the photo into `out`. The original stays exactly as it was, and
++/// a half-written export never appears under the final name.
++pub fn export(source: &str, adjust: &Adjust, opts: ExportOpts, out: &str) -> Result<Pixels> {
++    let format = Format::from_path(out)?;
++    let same = |a: &str, b: &str| match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
++        (Ok(x), Ok(y)) => x == y,
++        _ => false,
++    };
++    if same(source, out) {
++        bail!("{out} is the original — Reel never overwrites it; choose another name");
++    }
++    let original = load(source)?;
++    let limit = |v: u32| if v == 0 { u32::MAX } else { v };
++    let done = render(&original, adjust, limit(opts.width), limit(opts.height));
++    let tmp = format!("{out}.reel-tmp");
++    let written = encode(&done, format, opts.quality, Path::new(&tmp))
++        .and_then(|()| std::fs::rename(&tmp, out).with_context(|| format!("could not write {out}")));
++    if written.is_err() {
++        let _ = std::fs::remove_file(&tmp);
++    }
++    written?;
++    Ok(done)
++}
++
++/// Default name for an export: beside the original, never over it.
++pub fn default_output(source: &str, format: Format) -> String {
++    let p = Path::new(source);
++    let stem = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "photo".into());
++    p.with_file_name(format!("{stem}-edit.{}", format.ext())).to_string_lossy().into_owned()
++}
++
++// ── The live state behind the Adjust panel ───────────────────────────────
++
++/// One photo open in the player. `base` is the original at preview size and
++/// is never written to; everything on screen derives from it.
++pub struct PhotoState {
++    pub path: String,
++    /// The original's real size (the panel only ever holds the preview).
++    pub full: (u32, u32),
++    pub base: Arc<Pixels>,
++    pub adjust: Adjust,
++    /// What `adjust` looks like, at preview size.
++    pub developed: Vec<u8>,
++    /// Before/after: `Some(f)` shows the original left of `f` (0..1).
++    pub compare: Option<f32>,
++    pub panel_open: bool,
++    /// Which colour band the mixer is showing.
++    pub band: usize,
++    pub preset_name: String,
++    pub export_open: bool,
++    pub export_format: Format,
++    pub export_opts: ExportOpts,
++    pub export_path: String,
++    /// What the last export did, for the dialog.
++    pub export_note: String,
++    /// Named looks, read at open and after each change.
++    pub presets: BTreeMap<String, Adjust>,
++    export_job: Option<crossbeam_channel::Receiver<Result<String, String>>>,
++    /// The split the texture currently shows; `None` forces a re-upload.
++    pub shown: Option<f32>,
++    stale: bool,
++    job: Option<crossbeam_channel::Receiver<(Adjust, Vec<u8>)>>,
++    dirty_since: Option<std::time::Instant>,
++    /// Settings already on disk, so identity never litters a sidecar.
++    has_sidecar: bool,
++}
++
++impl PhotoState {
++    pub fn new(path: &str, original: Pixels) -> Self {
++        let adjust = load_settings(path);
++        let full = (original.width, original.height);
++        let base = original.fitted(PREVIEW_EDGE, PREVIEW_EDGE);
++        let developed = develop(&base, &adjust);
++        Self {
++            path: path.to_string(),
++            full,
++            base: Arc::new(base),
++            adjust,
++            developed,
++            compare: None,
++            panel_open: true,
++            band: 0,
++            preset_name: String::new(),
++            export_open: false,
++            export_format: Format::Jpeg,
++            export_opts: ExportOpts::default(),
++            export_path: default_output(path, Format::Jpeg),
++            export_note: String::new(),
++            presets: read_presets(),
++            export_job: None,
++            shown: None,
++            stale: false,
++            job: None,
++            dirty_since: None,
++            has_sidecar: Path::new(&sidecar(path)).exists(),
++        }
++    }
++
++    /// Every change to the settings comes through here.
++    pub fn set(&mut self, adjust: Adjust) {
++        if adjust != self.adjust {
++            self.adjust = adjust;
++            self.stale = true;
++            self.dirty_since = Some(std::time::Instant::now());
++        }
++    }
++
++    /// Render the export on a worker; the full-size original is decoded
++    /// there, so the window never waits for it.
++    pub fn start_export(&mut self) {
++        if self.export_job.is_some() {
++            return;
++        }
++        let (tx, rx) = crossbeam_channel::bounded(1);
++        let (src, adjust, opts, out) = (self.path.clone(), self.adjust, self.export_opts, self.export_path.clone());
++        std::thread::spawn(move || {
++            let done = export(&src, &adjust, opts, &out)
++                .map(|p| format!("Saved {out} ({}×{})", p.width, p.height))
++                .map_err(|e| format!("{e:#}"));
++            let _ = tx.send(done);
++        });
++        self.export_note = "Exporting…".into();
++        self.export_job = Some(rx);
++    }
++
++    pub fn exporting(&self) -> bool {
++        self.export_job.is_some()
++    }
++
++    /// Latest wins: one render at a time, and a slider drag that outruns it
++    /// just renders the newest value next.
++    pub fn poll(&mut self) {
++        if let Some(Ok(done)) = self.export_job.as_ref().map(|rx| rx.try_recv()) {
++            self.export_job = None;
++            self.export_note = done.unwrap_or_else(|e| e);
++        }
++        if let Some(rx) = &self.job {
++            match rx.try_recv() {
++                Ok((rendered, pixels)) => {
++                    self.job = None;
++                    self.developed = pixels;
++                    self.shown = None;
++                    self.stale |= rendered != self.adjust;
++                }
++                Err(crossbeam_channel::TryRecvError::Empty) => {}
++                Err(crossbeam_channel::TryRecvError::Disconnected) => self.job = None,
++            }
++        }
++        if self.stale && self.job.is_none() {
++            self.stale = false;
++            let (tx, rx) = crossbeam_channel::bounded(1);
++            let (base, adjust) = (self.base.clone(), self.adjust);
++            std::thread::spawn(move || {
++                let _ = tx.send((adjust, develop(&base, &adjust)));
++            });
++            self.job = Some(rx);
++        }
++    }
++
++    /// Anything still owed? Keeps the Wait-driven loop polling until the
++    /// render lands and the debounce has written the settings.
++    pub fn busy(&self) -> bool {
++        self.stale || self.job.is_some() || self.dirty_since.is_some() || self.export_job.is_some()
++    }
++
++    /// Autosave, same manners as a project: ~700 ms after the last change,
++    /// on a worker, atomically. An untouched photo never gets a document.
++    pub fn poll_save(&mut self) -> Option<std::thread::JoinHandle<Result<()>>> {
++        let since = self.dirty_since?;
++        if since.elapsed() < std::time::Duration::from_millis(700) {
++            return None;
++        }
++        self.save_now()
++    }
++
++    /// Write owed settings immediately (leaving the photo, quitting).
++    pub fn save_now(&mut self) -> Option<std::thread::JoinHandle<Result<()>>> {
++        self.dirty_since.take()?;
++        if self.adjust.is_identity() && !self.has_sidecar {
++            return None;
++        }
++        self.has_sidecar = true;
++        let (path, adjust) = (self.path.clone(), self.adjust);
++        Some(std::thread::spawn(move || save_settings(&path, &adjust)))
++    }
++
++    /// The bytes for the texture: `developed`, with the original left of the
++    /// split. `split` of 0 is the plain result.
++    pub fn composite(&self, split: f32) -> Vec<u8> {
++        let mut out = self.developed.clone();
++        let w = self.base.width as usize;
++        let cut = ((split.clamp(0.0, 1.0) * w as f32).round() as usize).min(w) * 4;
++        if cut > 0 {
++            for (dst, src) in out.chunks_exact_mut(w * 4).zip(self.base.data.chunks_exact(w * 4)) {
++                dst[..cut].copy_from_slice(&src[..cut]);
++            }
++        }
++        out
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    /// A photo-like test card: a luminance sweep across, hue sweep down.
++    fn card(w: u32, h: u32) -> Pixels {
++        let mut data = Vec::with_capacity((w * h * 4) as usize);
++        for y in 0..h {
++            for x in 0..w {
++                let l = (x as f32 + 0.5) / w as f32;
++                let hue = (y as f32 + 0.5) / h as f32 * 360.0;
++                let c = hsl_to_rgb([hue, 0.6, 0.15 + l * 0.7]);
++                data.extend([(c[0] * 255.0) as u8, (c[1] * 255.0) as u8, (c[2] * 255.0) as u8, 255]);
++            }
++        }
++        Pixels { width: w, height: h, data }
++    }
++
++    fn one(name: &str, value: f32) -> Adjust {
++        let mut a = Adjust::default();
++        *a.scalar_mut(name).unwrap() = value;
++        a
++    }
++
++    /// Every operator, with something for each to chew on.
++    fn every_operator() -> Vec<(String, Adjust)> {
++        let mut all: Vec<(String, Adjust)> = SCALARS
++            .iter()
++            .map(|(n, _, hi)| (n.to_string(), one(n, hi * 0.6)))
++            .collect();
++        for (b, (name, _)) in BANDS.iter().enumerate() {
++            let mut a = Adjust::default();
++            a.hsl[b] = Band { hue: 40.0, sat: -50.0, lum: 30.0 };
++            all.push((format!("hsl-{name}"), a));
++        }
++        let mut a = Adjust::default();
++        a.curve.master = [0.05, 0.2, 0.5, 0.8, 0.95];
++        all.push(("curve".into(), a));
++        all
++    }
++
++    fn scratch(tag: &str) -> PathBuf {
++        let d = std::env::temp_dir().join(format!("reel-photo-{}-{tag}", std::process::id()));
++        std::fs::create_dir_all(&d).unwrap();
++        d
++    }
++
++    fn write_png(p: &Pixels, path: &Path) {
++        image::RgbaImage::from_raw(p.width, p.height, p.data.clone()).unwrap().save(path).unwrap();
++    }
++
++    fn worst_delta(a: &[u8], b: &[u8]) -> i32 {
++        assert_eq!(a.len(), b.len());
++        a.iter().zip(b).map(|(x, y)| (*x as i32 - *y as i32).abs()).max().unwrap_or(0)
++    }
++
++    fn at(p: &Pixels, data: &[u8], x: u32, y: u32) -> [i32; 3] {
++        let i = ((y * p.width + x) * 4) as usize;
++        [data[i] as i32, data[i + 1] as i32, data[i + 2] as i32]
++    }
++
++    #[test]
++    fn identity_changes_nothing() {
++        let c = card(64, 48);
++        assert_eq!(develop(&c, &Adjust::default()), c.data);
++        let zero_effect = Adjust { exposure: 0.0, ..Default::default() };
++        assert!(zero_effect.is_identity());
++    }
++
++    /// The contract of the whole feature: for every operator, what the panel
++    /// shows is what the file holds. Same size → the same bytes through PNG;
++    /// a preview smaller than the export → the same picture, resampled.
++    #[test]
++    fn every_operator_exports_exactly_what_the_preview_shows() {
++        let dir = scratch("parity");
++        let src = dir.join("src.png");
++        let original = card(800, 600);
++        write_png(&original, &src);
++        let src_s = src.to_string_lossy().into_owned();
++        for (name, adj) in every_operator() {
++            let state_preview = {
++                let mut st = PhotoState::new(&src_s, load(&src_s).unwrap());
++                st.set(adj);
++                st.poll();
++                while st.job.is_some() {
++                    st.poll();
++                }
++                st.composite(0.0)
++            };
++            let moved = worst_delta(&state_preview, &original.data);
++            assert!(moved > 2, "{name} did nothing to the card");
++
++            let png = dir.join(format!("{name}.png"));
++            let png_s = png.to_string_lossy().into_owned();
++            export(&src_s, &adj, ExportOpts::default(), &png_s).unwrap();
++            let got = image::open(&png).unwrap().to_rgba8().into_raw();
++            assert_eq!(worst_delta(&got, &state_preview), 0, "{name}: PNG differs from the preview");
++
++            let lossless = dir.join(format!("{name}.webp"));
++            let lossless_s = lossless.to_string_lossy().into_owned();
++            export(&src_s, &adj, ExportOpts { quality: 100, ..Default::default() }, &lossless_s).unwrap();
++            let got = image::open(&lossless).unwrap().to_rgba8().into_raw();
++            assert_eq!(worst_delta(&got, &state_preview), 0, "{name}: lossless WebP differs");
++
++            // A preview of 320 is the downscaled render of the same file.
++            let small = render(&original, &adj, 320, 320);
++            let big = render(&original, &adj, u32::MAX, u32::MAX);
++            let shrunk = big.fitted(320, 320);
++            let (mut sum, n) = (0i64, small.data.len() as i64);
++            for (a, b) in small.data.iter().zip(&shrunk.data) {
++                sum += (*a as i64 - *b as i64).abs();
++            }
++            assert!(sum / n <= 2, "{name}: preview scale changes the look (mean Δ{})", sum / n);
++        }
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn lossy_formats_stay_close_to_the_preview() {
++        let dir = scratch("lossy");
++        let src = dir.join("src.png");
++        let original = card(400, 300);
++        write_png(&original, &src);
++        let adj = Adjust { exposure: 0.4, clarity: 30.0, vibrance: 25.0, ..Default::default() };
++        let want = render(&original, &adj, u32::MAX, u32::MAX);
++        for ext in ["jpg", "webp"] {
++            let out = dir.join(format!("x.{ext}"));
++            let out_s = out.to_string_lossy().into_owned();
++            export(&src.to_string_lossy(), &adj, ExportOpts { quality: 95, ..Default::default() }, &out_s).unwrap();
++            let got = image::open(&out).unwrap().to_rgba8();
++            let sum: i64 = got.as_raw().iter().zip(&want.data).map(|(a, b)| (*a as i64 - *b as i64).abs()).sum();
++            let mean = sum / got.as_raw().len() as i64;
++            assert!(mean <= 3, "{ext}: mean Δ{mean}");
++        }
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn quality_and_resize_reach_the_file() {
++        let dir = scratch("size");
++        let src = dir.join("src.png");
++        write_png(&card(800, 600), &src);
++        let s = src.to_string_lossy().into_owned();
++        let bytes = |q: u8, ext: &str| {
++            let out = dir.join(format!("q{q}.{ext}")).to_string_lossy().into_owned();
++            export(&s, &Adjust::default(), ExportOpts { quality: q, ..Default::default() }, &out).unwrap();
++            std::fs::metadata(&out).unwrap().len()
++        };
++        assert!(bytes(20, "jpg") < bytes(95, "jpg"));
++        assert!(bytes(20, "webp") < bytes(95, "webp"));
++
++        let out = dir.join("small.jpg").to_string_lossy().into_owned();
++        export(&s, &Adjust::default(), ExportOpts { width: 400, ..Default::default() }, &out).unwrap();
++        assert_eq!(image::image_dimensions(&out).unwrap(), (400, 300));
++        // The box limits, it never enlarges.
++        export(&s, &Adjust::default(), ExportOpts { width: 4000, height: 150, ..Default::default() }, &out).unwrap();
++        assert_eq!(image::image_dimensions(&out).unwrap(), (200, 150));
++        export(&s, &Adjust::default(), ExportOpts { width: 4000, ..Default::default() }, &out).unwrap();
++        assert_eq!(image::image_dimensions(&out).unwrap(), (800, 600));
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn transparency_survives_png_and_flattens_on_white_in_jpeg() {
++        let dir = scratch("alpha");
++        let src = dir.join("src.png");
++        let mut c = card(64, 64);
++        for px in c.data.chunks_exact_mut(4) {
++            px[3] = 0;
++        }
++        write_png(&c, &src);
++        let s = src.to_string_lossy().into_owned();
++        let adj = one("exposure", 1.0);
++        let png = dir.join("o.png").to_string_lossy().into_owned();
++        export(&s, &adj, ExportOpts::default(), &png).unwrap();
++        assert!(image::open(&png).unwrap().to_rgba8().pixels().all(|p| p.0[3] == 0));
++        let jpg = dir.join("o.jpg").to_string_lossy().into_owned();
++        export(&s, &adj, ExportOpts::default(), &jpg).unwrap();
++        let white = image::open(&jpg).unwrap().to_rgb8();
++        assert!(white.pixels().all(|p| p.0.iter().all(|v| *v > 250)));
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn the_original_is_never_touched_and_settings_reopen() {
++        let dir = scratch("doc");
++        let src = dir.join("photo.png");
++        write_png(&card(120, 90), &src);
++        let s = src.to_string_lossy().into_owned();
++        let before = std::fs::read(&src).unwrap();
++
++        // Only opening leaves no trace.
++        let mut st = PhotoState::new(&s, load(&s).unwrap());
++        st.dirty_since = Some(std::time::Instant::now());
++        if let Some(h) = st.save_now() {
++            h.join().unwrap().unwrap();
++        }
++        assert!(!Path::new(&sidecar(&s)).exists(), "an untouched photo must leave no document");
++
++        let adj = Adjust { exposure: 0.7, vignette: -40.0, ..Default::default() };
++        st.set(adj);
++        st.save_now().unwrap().join().unwrap().unwrap();
++
++        // Reopening restores it, and the document is a real project.
++        let again = PhotoState::new(&s, load(&s).unwrap());
++        assert_eq!(again.adjust, adj);
++        assert_eq!(again.developed, develop(&again.base, &adj), "reopens looking as it was left");
++        let project = Project::load(&sidecar(&s)).unwrap();
++        assert_eq!(project.photo.as_ref().unwrap().adjust, adj);
++        assert!(project.export_segments().is_empty());
++
++        let out = dir.join("out.jpg").to_string_lossy().into_owned();
++        export(&s, &adj, ExportOpts::default(), &out).unwrap();
++        assert!(export(&s, &adj, ExportOpts::default(), &s).is_err(), "refuses to overwrite the original");
++        assert_eq!(std::fs::read(&src).unwrap(), before, "the original's bytes changed");
++
++        // Reset all: back to the untouched picture, and it persists.
++        let mut st = again;
++        st.set(Adjust::default());
++        st.save_now().unwrap().join().unwrap().unwrap();
++        assert!(load_settings(&s).is_identity());
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn before_after_splits_original_from_result() {
++        let dir = scratch("split");
++        let src = dir.join("photo.png");
++        write_png(&card(100, 40), &src);
++        let s = src.to_string_lossy().into_owned();
++        let mut st = PhotoState::new(&s, load(&s).unwrap());
++        st.developed = develop(&st.base, &one("exposure", 1.0));
++        let shown = st.composite(0.5);
++        let p = &*st.base;
++        assert_eq!(at(p, &shown, 10, 20), at(p, &p.data, 10, 20), "left of the split is the original");
++        assert_eq!(at(p, &shown, 90, 20), at(p, &st.developed, 90, 20), "right of it the result");
++        assert_eq!(st.composite(0.0), st.developed);
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    #[test]
++    fn presets_save_list_and_delete() {
++        let dir = scratch("presets");
++        let file = dir.join("nested/presets.json");
++        let look = Adjust { contrast: 20.0, vibrance: 15.0, ..Default::default() };
++        save_preset_at(&file, " Golden hour ", &look).unwrap();
++        save_preset_at(&file, "Punchy", &one("clarity", 40.0)).unwrap();
++        assert!(save_preset_at(&file, "  ", &look).is_err());
++        let all = read_presets_at(&file);
++        assert_eq!(all.keys().map(String::as_str).collect::<Vec<_>>(), ["Golden hour", "Punchy"]);
++        assert_eq!(all["Golden hour"], look);
++        assert!(delete_preset_at(&file, "Punchy").unwrap());
++        assert!(!delete_preset_at(&file, "Punchy").unwrap());
++        assert_eq!(read_presets_at(&file).len(), 1);
++        let _ = std::fs::remove_dir_all(&dir);
++    }
++
++    /// Mid grey for the single-pixel direction checks.
++    fn probe(adj: &Adjust, rgb: [f32; 3], local: [f32; 3], uv: [f32; 2]) -> [f32; 3] {
++        let sat = Effects { saturation: 1.0 + adj.saturation / 100.0, ..Default::default() };
++        adj.pixel(rgb, local, uv, &adj.base_fx(), &sat)
++    }
++
++    #[test]
++    fn each_operator_moves_the_picture_the_way_it_says() {
++        let mid = [0.5, 0.5, 0.5];
++        let flat = [0.5, 0.0, 1.0];
++        let c = [0.5, 0.5];
++        let y = |a: &Adjust, v: f32| probe(a, [v, v, v], flat, c)[0];
++        // One stop of light brightens, zero does not.
++        assert!(y(&one("exposure", 1.0), 0.4) > 0.5);
++        assert!(y(&one("contrast", 60.0), 0.8) > 0.85 && y(&one("contrast", 60.0), 0.2) < 0.15);
++        // Zones: each slider moves its own tones and leaves the far end.
++        assert!(y(&one("highlights", -80.0), 0.75) < 0.7 && (y(&one("highlights", -80.0), 0.2) - 0.2).abs() < 1e-3);
++        assert!(y(&one("shadows", 80.0), 0.25) > 0.3 && (y(&one("shadows", 80.0), 0.8) - 0.8).abs() < 1e-3);
++        assert!(y(&one("whites", -80.0), 0.95) < 0.85 && (y(&one("whites", -80.0), 0.3) - 0.3).abs() < 1e-3);
++        assert!(y(&one("blacks", 80.0), 0.05) > 0.15 && (y(&one("blacks", 80.0), 0.7) - 0.7).abs() < 1e-3);
++
++        let warm = probe(&one("temperature", 60.0), mid, flat, c);
++        assert!(warm[0] > warm[1] && warm[1] > warm[2]);
++        let magenta = probe(&one("tint", 60.0), mid, flat, c);
++        assert!(magenta[1] < magenta[0]);
++
++        // Vibrance lifts a muted colour more than a loud one; saturation doesn't care.
++        let chroma = |v: [f32; 3]| v[0] - v[2];
++        let (muted, loud) = ([0.55, 0.5, 0.45], [0.9, 0.5, 0.1]);
++        let vib = one("vibrance", 60.0);
++        let lift = |a: &Adjust, v| chroma(probe(a, v, flat, c)) / chroma(v);
++        assert!(lift(&vib, muted) > lift(&vib, loud) + 0.3);
++        assert!(lift(&one("saturation", -50.0), muted) < 0.6);
++
++        // Clarity pushes a pixel away from its neighbourhood.
++        let clar = one("clarity", 80.0);
++        assert!(probe(&clar, [0.6; 3], [0.4, 0.0, 1.0], c)[0] > 0.6);
++        assert!(probe(&clar, [0.4; 3], [0.6, 0.0, 1.0], c)[0] < 0.4);
++        assert_eq!(probe(&clar, mid, flat, c), mid, "flat areas have nothing to enhance");
++
++        // Dehaze deepens a veiled pixel; negative adds the veil back.
++        let veil = [0.5, 0.45, 1.0];
++        assert!(probe(&one("dehaze", 70.0), [0.5, 0.5, 0.6], veil, c)[0] < 0.5);
++        assert!(probe(&one("dehaze", -70.0), [0.2; 3], veil, c)[0] > 0.2);
++
++        // The vignette touches corners, never the centre.
++        let dark = one("vignette", -80.0);
++        assert_eq!(probe(&dark, mid, flat, c), mid);
++        assert!(probe(&dark, mid, flat, [0.0, 0.0])[0] < 0.2);
++        assert!(probe(&one("vignette", 80.0), mid, flat, [1.0, 1.0])[0] > 0.8);
++    }
++
++    #[test]
++    fn the_tone_sliders_never_invert_the_ramp() {
++        for (name, _, hi) in &SCALARS[2..6] {
++            for sign in [1.0, -1.0] {
++                let a = one(name, hi * sign);
++                let mut last = -1.0f32;
++                for i in 0..=255 {
++                    let v = i as f32 / 255.0;
++                    let y = probe(&a, [v; 3], [0.5, 0.0, 1.0], [0.5, 0.5])[0];
++                    assert!(y >= last - 1e-3, "{name} {sign} inverted at {v}: {y} < {last}");
++                    last = y;
++                }
++            }
++        }
++    }
++
++    #[test]
++    fn colour_bands_reach_their_colour_and_spare_the_rest() {
++        let (flat, c) = ([0.5, 0.0, 1.0], [0.5, 0.5]);
++        for (b, (name, centre)) in BANDS.iter().enumerate() {
++            let mut a = Adjust::default();
++            a.hsl[b].sat = -100.0;
++            let at_centre = hsl_to_rgb([*centre, 0.7, 0.5]);
++            let opposite = hsl_to_rgb([centre + 180.0, 0.7, 0.5]);
++            let done = probe(&a, at_centre, flat, c);
++            assert!(done[0].max(done[1]).max(done[2]) - done[0].min(done[1]).min(done[2]) < 0.02, "{name}");
++            let spared = probe(&a, opposite, flat, c);
++            for k in 0..3 {
++                assert!((spared[k] - opposite[k]).abs() < 0.01, "{name} touched its opposite");
++            }
++            // Grey has no colour to push.
++            a.hsl[b] = Band { hue: 100.0, sat: 100.0, lum: 100.0 };
++            assert!((probe(&a, [0.5; 3], flat, c)[0] - 0.5).abs() < 1e-3, "{name} moved grey");
++        }
++        // Hue pushes turn the colour; luminance moves the lightness.
++        let mut a = Adjust::default();
++        a.hsl[5].hue = 100.0;
++        let pushed = rgb_to_hsl(probe(&a, hsl_to_rgb([240.0, 0.7, 0.5]), flat, c));
++        assert!((pushed[0] - 270.0).abs() < 1.0, "{pushed:?}");
++        let mut a = Adjust::default();
++        a.hsl[3].lum = 100.0;
++        assert!(rgb_to_hsl(probe(&a, hsl_to_rgb([120.0, 0.7, 0.5]), flat, c))[2] > 0.7);
++    }
++
++    #[test]
++    fn local_measurement_is_blind_to_resolution() {
++        let (a, b) = (card(2000, 1500), card(1000, 750));
++        let (ma, mb) = (LocalMap::measure(&a.data, 2000, 1500), LocalMap::measure(&b.data, 1000, 750));
++        for uv in [[0.2, 0.3], [0.5, 0.5], [0.81, 0.77]] {
++            let (x, y) = (ma.sample(uv), mb.sample(uv));
++            for k in 0..3 {
++                assert!((x[k] - y[k]).abs() < 0.01, "{uv:?}: {x:?} vs {y:?}");
++            }
++        }
++    }
++
++    #[test]
++    fn old_documents_and_partial_settings_load() {
++        let a: Adjust = serde_json::from_str(r#"{"contrast": 12}"#).unwrap();
++        assert_eq!(a, Adjust { contrast: 12.0, ..Default::default() });
++        let p: Project = serde_json::from_str(
++            r#"{"name":"x","fps":30,"width":10,"height":10,"tracks":[]}"#,
++        ).unwrap();
++        assert!(p.photo.is_none());
++    }
++}
+diff --git a/src/ui.rs b/src/ui.rs
+index 1e89bde..479c96a 100644
+--- a/src/ui.rs
++++ b/src/ui.rs
+@@ -22,6 +22,7 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
+         ctx.set_zoom_factor(z.clamp(0.7, 2.0));
+     }
+     app.poll_autosave();
++    app.poll_photo();
+     app.poll_captions();
+     app.update_editor_playback();
+     app.track_status();
+@@ -51,6 +52,8 @@ pub fn draw(ctx: &egui::Context, app: &mut ReelApp) {
+             timeline(ui, app);
+         });
+     media_panel_frame(ctx, editing, |ui| media_panel_contents(ui, app));
++    photo_panel_frame(ctx, app);
++    photo_export_window(ctx, app);
+     match app.mode {
+         Mode::Player => player_view(ctx, app),
+         Mode::Editor => {
+@@ -314,6 +317,11 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
+             app.enter_editor();
+         }
+     }
++    if app.mode == Mode::Player && ctx.input(|i| i.key_pressed(egui::Key::Backslash)) {
++        if let Some(photo) = app.photo.as_mut() {
++            photo.compare = if photo.compare.is_some() { None } else { Some(0.5) };
++        }
++    }
+ 
+     // Editor-only keys.
+     if app.mode == Mode::Editor {
+@@ -2213,6 +2221,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
+             // Captions sit on top of the picture, so they must be painted
+             // AFTER the video callback — and inside this branch, which
+             // returns early for every real frame.
++            photo_split(app, &response, &painter, img_rect);
+             draw_pip(app, ui.ctx(), &painter, img_rect);
+             draw_overlays(app, &painter, img_rect);
+             drag_title(app, &response, img_rect);
+@@ -2527,7 +2536,7 @@ fn drag_title(app: &mut ReelApp, response: &egui::Response, pic: Rect) {
+ /// Master and per-channel; the drawn curve is `curve_eval`, the same
+ /// function the lattice bakes — so the widget IS the grade.
+ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+-    use crate::effects::{curve_eval, Curves};
++    use crate::effects::Curves;
+     let curves = app
+         .project
+         .clip(id)
+@@ -2541,6 +2550,29 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+         _ => curves.b,
+     };
+ 
++    if let Some((xi, y, started)) = curve_plot(ui, &pts, ch) {
++        if started {
++            app.editor.push_undo(&app.project);
++        }
++        if let Some(c) = app.project.clip_mut(id) {
++                let mut cv = c.effects.curves.unwrap_or_default();
++                let arr = match ch {
++                    0 => &mut cv.master,
++                    1 => &mut cv.r,
++                    2 => &mut cv.g,
++                    _ => &mut cv.b,
++                };
++                arr[xi] = y;
++                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
++            }
++        app.editor.mark_changed();
++    }
++    let _ = Curves::default();
++}
++
++/// Draw one five-point curve; a drag answers (point, new value, drag began).
++fn curve_plot(ui: &mut egui::Ui, pts: &[f32; 5], ch: usize) -> Option<(usize, f32, bool)> {
++    use crate::effects::curve_eval;
+     let width = ui.available_width().max(60.0);
+     let (rect, response) =
+         ui.allocate_exact_size(Vec2::new(width, 110.0), Sense::click_and_drag());
+@@ -2558,7 +2590,7 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+     let line: Vec<egui::Pos2> = (0..=n)
+         .map(|i| {
+             let x = i as f32 / n as f32;
+-            egui::pos2(to_x(x), to_y(curve_eval(&pts, x)))
++            egui::pos2(to_x(x), to_y(curve_eval(pts, x)))
+         })
+         .collect();
+     painter.add(egui::Shape::line(line, Stroke::new(1.5, colour)));
+@@ -2568,28 +2600,13 @@ fn tone_curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64) {
+         painter.circle_stroke(p, 4.0, Stroke::new(1.0, theme::VOID));
+     }
+ 
+-    if response.dragged() || response.clicked() {
+-        if let Some(m) = response.interact_pointer_pos() {
+-            let xi = (((m.x - rect.left()) / rect.width()) * 4.0).round().clamp(0.0, 4.0) as usize;
+-            let y = (1.0 - (m.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
+-            if response.drag_started() || response.clicked() {
+-                app.editor.push_undo(&app.project);
+-            }
+-            if let Some(c) = app.project.clip_mut(id) {
+-                let mut cv = c.effects.curves.unwrap_or_default();
+-                let arr = match ch {
+-                    0 => &mut cv.master,
+-                    1 => &mut cv.r,
+-                    2 => &mut cv.g,
+-                    _ => &mut cv.b,
+-                };
+-                arr[xi] = y;
+-                c.effects.curves = if cv.is_identity() { None } else { Some(cv) };
+-            }
+-            app.editor.mark_changed();
+-        }
++    if !(response.dragged() || response.clicked()) {
++        return None;
+     }
+-    let _ = Curves::default();
++    let m = response.interact_pointer_pos()?;
++    let xi = (((m.x - rect.left()) / rect.width()) * 4.0).round().clamp(0.0, 4.0) as usize;
++    let y = (1.0 - (m.y - rect.top()) / rect.height()).clamp(0.0, 1.0);
++    Some((xi, y, response.drag_started() || response.clicked()))
+ }
+ 
+ /// The keyframe curve editor for one clip + the panel's selected parameter.
+@@ -3106,7 +3123,8 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
+                     .file_name()
+                     .map(|s| s.to_string_lossy().to_string())
+                     .unwrap_or_else(|| img.path.clone());
+-                let text = format!("{name}  ·  {}×{}", img.width, img.height);
++                let (w, h) = app.photo.as_ref().map(|p| p.full).unwrap_or((img.width, img.height));
++                let text = format!("{name}  ·  {w}×{h}");
+                 let est = 20.0 + text.chars().count() as f32 * 7.0;
+                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
+                 ui.label(RichText::new(text).color(theme::STAR));
+@@ -3146,7 +3164,10 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
+                     .on_hover_text("Convert — PNG/JPEG/WebP, resize")
+                     .clicked()
+                 {
+-                    open_export = true;
++                    match app.photo.as_mut() {
++                        Some(photo) => photo.export_open = true,
++                        None => open_export = true,
++                    }
+                 }
+                 if mode == Mode::Player {
+                     if ui.button(RichText::new("✂ Edit").color(theme::EMBER)).clicked() {
+@@ -4638,3 +4659,220 @@ fn fmt_time(secs: f64) -> String {
+         format!("{m:02}:{rem:05.2}")
+     }
+ }
++
++/// A panel slider: 0 is home, and double-clicking goes there.
++pub(crate) fn adjust_slider(
++    ui: &mut egui::Ui,
++    label: &str,
++    value: &mut f32,
++    range: std::ops::RangeInclusive<f32>,
++    decimals: usize,
++) {
++    let response = ui.add(egui::Slider::new(value, range).text(label).fixed_decimals(decimals));
++    // Sliders sense drags only, so `response.double_clicked()` never fires.
++    let double = ui.input(|i| i.pointer.button_double_clicked(egui::PointerButton::Primary));
++    if double && response.contains_pointer() {
++        *value = 0.0;
++    }
++}
++
++/// The Adjust panel. Only in the player: the editor grades clips, and a
++/// still on the timeline is a clip like any other. Same width discipline
++/// as the media panel — a drag must never spring back.
++fn photo_panel_frame(ctx: &egui::Context, app: &mut ReelApp) {
++    let open = app.mode == Mode::Player && app.photo.as_ref().is_some_and(|p| p.panel_open);
++    egui::SidePanel::right("photo_adjust")
++        .resizable(true)
++        .default_width(300.0)
++        .width_range(190.0..=480.0)
++        .show_animated(ctx, open, |ui| {
++            egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| {
++                ui.set_width(ui.available_width());
++                ui.spacing_mut().slider_width = (ui.available_width() - 104.0).clamp(48.0, 300.0);
++                photo_panel(ui, app);
++            });
++        });
++}
++
++fn photo_panel(ui: &mut egui::Ui, app: &mut ReelApp) {
++    let Some(photo) = app.photo.as_mut() else { return };
++    let mut a = photo.adjust;
++    ui.horizontal(|ui| {
++        ui.label(RichText::new("Adjust").color(theme::CYAN).strong());
++        let on = photo.compare.is_some();
++        if ui.selectable_label(on, "Before/after").on_hover_text("Split view (\\)").clicked() {
++            photo.compare = if on { None } else { Some(0.5) };
++        }
++        if ui.button("Reset all").on_hover_text("Back to the original").clicked() {
++            a = Default::default();
++        }
++    });
++    ui.label(RichText::new("Double-click a slider to reset it").small().color(Color32::from_gray(120)));
++
++    egui::CollapsingHeader::new("Light").default_open(true).show(ui, |ui| {
++        adjust_slider(ui, "Exposure", &mut a.exposure, -5.0..=5.0, 2);
++        adjust_slider(ui, "Contrast", &mut a.contrast, -100.0..=100.0, 0);
++        adjust_slider(ui, "Highlights", &mut a.highlights, -100.0..=100.0, 0);
++        adjust_slider(ui, "Shadows", &mut a.shadows, -100.0..=100.0, 0);
++        adjust_slider(ui, "Whites", &mut a.whites, -100.0..=100.0, 0);
++        adjust_slider(ui, "Blacks", &mut a.blacks, -100.0..=100.0, 0);
++    });
++    egui::CollapsingHeader::new("Colour").default_open(true).show(ui, |ui| {
++        adjust_slider(ui, "Temperature", &mut a.temperature, -100.0..=100.0, 0);
++        adjust_slider(ui, "Tint", &mut a.tint, -100.0..=100.0, 0);
++        adjust_slider(ui, "Vibrance", &mut a.vibrance, -100.0..=100.0, 0);
++        adjust_slider(ui, "Saturation", &mut a.saturation, -100.0..=100.0, 0);
++        ui.add_space(4.0);
++        ui.horizontal_wrapped(|ui| {
++            for (i, (name, hue)) in crate::photo::BANDS.iter().enumerate() {
++                let c = crate::effects::hsl_to_rgb([*hue, 0.75, 0.55]).map(|v| (v * 255.0) as u8);
++                let chip = egui::Button::new("")
++                    .fill(Color32::from_rgb(c[0], c[1], c[2]))
++                    .stroke(if photo.band == i { Stroke::new(2.0, theme::STAR) } else { Stroke::NONE })
++                    .min_size(Vec2::splat(20.0));
++                if ui.add(chip).on_hover_text(*name).clicked() {
++                    photo.band = i;
++                }
++            }
++        });
++        let band = &mut a.hsl[photo.band];
++        adjust_slider(ui, "Hue", &mut band.hue, -100.0..=100.0, 0);
++        adjust_slider(ui, "Sat", &mut band.sat, -100.0..=100.0, 0);
++        adjust_slider(ui, "Lum", &mut band.lum, -100.0..=100.0, 0);
++    });
++    egui::CollapsingHeader::new("Presence").default_open(true).show(ui, |ui| {
++        adjust_slider(ui, "Clarity", &mut a.clarity, -100.0..=100.0, 0);
++        adjust_slider(ui, "Dehaze", &mut a.dehaze, -100.0..=100.0, 0);
++        adjust_slider(ui, "Vignette", &mut a.vignette, -100.0..=100.0, 0);
++    });
++    egui::CollapsingHeader::new("Tone curve").default_open(true).show(ui, |ui| {
++        ui.horizontal(|ui| {
++            for (i, label) in ["All", "R", "G", "B"].iter().enumerate() {
++                if ui.selectable_label(app.curve_channel == i, *label).clicked() {
++                    app.curve_channel = i;
++                }
++            }
++            if !a.curve.is_identity() && ui.small_button("Reset").clicked() {
++                a.curve = Default::default();
++            }
++        });
++        let ch = app.curve_channel;
++        let pts = match ch {
++            0 => &mut a.curve.master,
++            1 => &mut a.curve.r,
++            2 => &mut a.curve.g,
++            _ => &mut a.curve.b,
++        };
++        if let Some((i, y, _)) = curve_plot(ui, pts, ch) {
++            pts[i] = y;
++        }
++    });
++
++    ui.separator();
++    ui.horizontal(|ui| {
++        if ui.button("Copy settings").clicked() {
++            if let Err(e) = crate::photo::copy_settings(&a) {
++                app.status = format!("Could not copy settings: {e}");
++            }
++        }
++        if ui.button("Paste").clicked() {
++            match crate::photo::pasted_settings() {
++                Some(copied) => a = copied,
++                None => app.status = "No settings copied yet.".into(),
++            }
++        }
++    });
++    ui.horizontal(|ui| {
++        ui.add(egui::TextEdit::singleline(&mut photo.preset_name).hint_text("Preset name").desired_width(120.0));
++        if ui.add_enabled(!photo.preset_name.trim().is_empty(), egui::Button::new("Save")).clicked() {
++            match crate::photo::save_preset(&photo.preset_name, &a) {
++                Ok(()) => {
++                    photo.presets = crate::photo::read_presets();
++                    photo.preset_name.clear();
++                }
++                Err(e) => app.status = format!("Could not save preset: {e}"),
++            }
++        }
++    });
++    let mut delete = None;
++    for (name, look) in &photo.presets {
++        ui.horizontal(|ui| {
++            if ui.button(name).on_hover_text("Apply this preset").clicked() {
++                a = *look;
++            }
++            if ui.small_button("🗑").on_hover_text("Delete this preset").clicked() {
++                delete = Some(name.clone());
++            }
++        });
++    }
++    if let Some(name) = delete {
++        if let Err(e) = crate::photo::delete_preset(&name) {
++            app.status = format!("Could not delete preset: {e}");
++        }
++        photo.presets = crate::photo::read_presets();
++    }
++    ui.separator();
++    if ui.button(RichText::new("⬇ Export photo").color(theme::CYAN)).clicked() {
++        photo.export_open = true;
++    }
++    photo.set(a);
++}
++
++/// The before/after divider: the original left of it, the result right.
++fn photo_split(app: &mut ReelApp, response: &egui::Response, painter: &egui::Painter, pic: Rect) {
++    if app.mode != Mode::Player {
++        return;
++    }
++    let Some(photo) = app.photo.as_mut() else { return };
++    let Some(split) = photo.compare.as_mut() else { return };
++    if let Some(m) = response.interact_pointer_pos().filter(|_| response.dragged() || response.clicked()) {
++        *split = ((m.x - pic.left()) / pic.width()).clamp(0.0, 1.0);
++    }
++    let x = pic.left() + *split * pic.width();
++    painter.line_segment([egui::pos2(x, pic.top()), egui::pos2(x, pic.bottom())], Stroke::new(2.0, theme::STAR));
++    let tag = |pos: egui::Pos2, align, text: &str| {
++        painter.text(pos, align, text, egui::FontId::proportional(13.0), theme::STAR);
++    };
++    tag(egui::pos2(x - 8.0, pic.top() + 8.0), egui::Align2::RIGHT_TOP, "Before");
++    tag(egui::pos2(x + 8.0, pic.top() + 8.0), egui::Align2::LEFT_TOP, "After");
++}
++
++/// Format, quality, size, where — only the controls this format honours.
++fn photo_export_window(ctx: &egui::Context, app: &mut ReelApp) {
++    use crate::photo::Format;
++    let Some(photo) = app.photo.as_mut() else { return };
++    let mut open = photo.export_open;
++    egui::Window::new("Export photo").open(&mut open).resizable(false).collapsible(false).show(ctx, |ui| {
++        ui.horizontal(|ui| {
++            for f in Format::ALL {
++                if ui.selectable_label(photo.export_format == f, f.label()).clicked() {
++                    photo.export_format = f;
++                    photo.export_path = std::path::Path::new(&photo.export_path)
++                        .with_extension(f.ext())
++                        .to_string_lossy()
++                        .into_owned();
++                }
++            }
++        });
++        if photo.export_format != Format::Png {
++            let mut q = photo.export_opts.quality as f32;
++            if ui.add(egui::Slider::new(&mut q, 1.0..=100.0).text("Quality").fixed_decimals(0)).changed() {
++                photo.export_opts.quality = q as u8;
++            }
++        }
++        let mut edge = photo.export_opts.width;
++        let (w, h) = photo.full;
++        ui.add(egui::DragValue::new(&mut edge).range(0..=w.max(h)).prefix("Long edge ").suffix(" px"))
++            .on_hover_text("0 keeps the original size. Never enlarges.");
++        photo.export_opts.width = edge;
++        photo.export_opts.height = edge;
++        ui.add(egui::TextEdit::singleline(&mut photo.export_path).desired_width(320.0));
++        if ui.add_enabled(!photo.exporting(), egui::Button::new("Export")).clicked() {
++            photo.start_export();
++        }
++        if !photo.export_note.is_empty() {
++            ui.label(RichText::new(&photo.export_note).small());
++        }
++    });
++    photo.export_open = open;
++}
+diff --git a/src/ui_tests.rs b/src/ui_tests.rs
+index 32354aa..8a2a9ea 100644
+--- a/src/ui_tests.rs
++++ b/src/ui_tests.rs
+@@ -88,3 +88,89 @@ fn side_panel_resize_sticks() {
+         "panel snapped back after release: {while_dragging} → {after}"
+     );
+ }
++
++/// One frame of a lone adjust slider; returns where it sits.
++fn slider_frame(ctx: &Context, input: RawInput, value: &mut f32) -> Pos2 {
++    let mut at = Pos2::ZERO;
++    ctx.run(input, |ctx| {
++        egui::CentralPanel::default().show(ctx, |ui| {
++            ui.spacing_mut().slider_width = 200.0;
++            at = ui.next_widget_position();
++            crate::ui::adjust_slider(ui, "Exposure", value, -5.0..=5.0, 2);
++        });
++    });
++    at
++}
++
++#[test]
++fn double_click_sends_a_photo_slider_home() {
++    let ctx = Context::default();
++    let mut value = 2.5f32;
++    let start = slider_frame(&ctx, pointer_input(Pos2::ZERO, None), &mut value);
++    let on = Pos2::new(start.x + 60.0, start.y + 2.0);
++    for _ in 0..2 {
++        for down in [true, false] {
++            slider_frame(&ctx, pointer_input(on, Some(down)), &mut value);
++        }
++    }
++    slider_frame(&ctx, pointer_input(on, None), &mut value);
++    assert_eq!(value, 0.0, "a double-click resets the slider");
++}
++
++/// One frame of the real UI; returns where the text `label` was drawn.
++fn app_frame(ctx: &Context, app: &mut crate::app::ReelApp, input: RawInput, label: &str) -> Option<egui::Rect> {
++    let out = ctx.run(input, |ctx| crate::ui::draw(ctx, app));
++    fn find(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Rect> {
++        match shape {
++            egui::epaint::Shape::Text(t) if t.galley.job.text == label => Some(t.visual_bounding_rect()),
++            egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, label)),
++            _ => None,
++        }
++    }
++    out.shapes.iter().find_map(|c| find(&c.shape, label))
++}
++
++/// The whole loop through the real UI: a still opens with the panel, a
++/// slider moves, the picture re-renders and the settings reach the document
++/// while the original's bytes stay as they were.
++#[test]
++fn opening_a_still_gives_a_working_adjust_panel() {
++    let dir = std::env::temp_dir().join(format!("reel-panel-{}", std::process::id()));
++    std::fs::create_dir_all(&dir).unwrap();
++    let path = dir.join("p.png");
++    image::RgbaImage::from_pixel(64, 48, image::Rgba([90, 120, 150, 255])).save(&path).unwrap();
++    let before = std::fs::read(&path).unwrap();
++    let path_s = path.to_string_lossy().into_owned();
++
++    let ctx = Context::default();
++    let mut app = crate::app::ReelApp::new();
++    app.open(&path_s);
++    assert!(app.photo.is_some(), "a raster still opens with the panel");
++    assert!(app.image.is_some());
++
++    let pointer = |pos, down| pointer_input(pos, down);
++    let mut label = None;
++    for _ in 0..4 {
++        label = app_frame(&ctx, &mut app, RawInput::default(), "Exposure");
++    }
++    let label = label.expect("the panel draws an Exposure slider");
++    let on = Pos2::new(label.left() - 90.0, label.center().y); // on the rail
++    for down in [Some(true), Some(false)] {
++        app_frame(&ctx, &mut app, pointer(on, down), "Exposure");
++    }
++    let moved = app.photo.as_ref().unwrap().adjust.exposure;
++    assert!(moved > 0.5, "the click reached the slider: {moved}");
++
++    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
++    while app.photo.as_ref().unwrap().busy() && std::time::Instant::now() < deadline {
++        std::thread::sleep(std::time::Duration::from_millis(20));
++        app_frame(&ctx, &mut app, RawInput::default(), "Exposure");
++    }
++    let photo = app.photo.as_ref().unwrap();
++    assert_ne!(photo.developed, photo.base.data, "the preview re-rendered");
++    app.flush_photo();
++    std::thread::sleep(std::time::Duration::from_millis(100));
++    assert_eq!(crate::photo::load_settings(&path_s).exposure, moved, "settings saved themselves");
++    assert_eq!(std::fs::read(&path).unwrap(), before, "the original is untouched");
++    let _ = std::fs::remove_dir_all(&dir);
++}

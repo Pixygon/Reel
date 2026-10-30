@@ -681,9 +681,8 @@ impl Effects {
     /// THE formula. sRGB-encoded rgb in 0..1 → adjusted rgb in 0..1.
     /// Order matters and is mirrored exactly in video.wgsl and `filters()`:
     /// exposure (gain), then contrast about 0.5, then saturation about luma.
-    /// Only the parity test calls this — it exists as the executable
-    /// statement of what `video.wgsl` and `filters()` must both do.
-    #[allow(dead_code)]
+    /// It is the executable statement of what `video.wgsl` and `filters()`
+    /// must both do, and `photo.rs` renders stills through it directly.
     pub fn apply_reference(&self, rgb: [f32; 3]) -> [f32; 3] {
         let mut c = [
             rgb[0] * self.exposure,

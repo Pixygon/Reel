@@ -1,0 +1,12 @@
+- REEL PHOTO (`photo.rs`): one CPU renderer, `render()` = fit then `develop`,
+  is BOTH the preview and the export — no shader or ffmpeg mirror, so at one
+  size they are the same bytes (tested per operator through PNG and lossless
+  WebP). Spatial operators (clarity, dehaze) measure on a fixed 512 px grid
+  so the preview's size never changes the look. Settings are a `.reel` next
+  to the photo, full name kept (`photo.jpg.reel`), with `Project.photo` set;
+  identity never creates one. `app.image` holds PREVIEW pixels for a photo,
+  never the master. The editor shows the plain original (`sync_frame` split
+  1.0): timeline renders do not read these settings. Sliders sense drags
+  only — `response.double_clicked()` never fires on one. `integration.rs`
+  is Linux-only, so nothing cross-platform may call into it.
+

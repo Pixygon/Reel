@@ -1,0 +1,136 @@
+{
+  "name": "c.webp",
+  "fps": 30.0,
+  "width": 1920,
+  "height": 1080,
+  "tracks": [
+    {
+      "id": 1,
+      "name": "V1",
+      "kind": "Video",
+      "clips": [],
+      "muted": false,
+      "gain_db": 0.0,
+      "solo": false,
+      "pan": 0.0
+    },
+    {
+      "id": 2,
+      "name": "A1",
+      "kind": "Audio",
+      "clips": [],
+      "muted": false,
+      "gain_db": 0.0,
+      "solo": false,
+      "pan": 0.0
+    }
+  ],
+  "captions": [],
+  "caption_size": 20,
+  "titles": [],
+  "music": null,
+  "roomtone": null,
+  "markers": [],
+  "marker_labels": [],
+  "luts": [],
+  "plugins": [],
+  "pool": [],
+  "session": {
+    "playhead": 0.0,
+    "zoom": 0.0,
+    "scroll_x": 0.0,
+    "selected": null
+  },
+  "multicam": [],
+  "photo": {
+    "source": "/tmp/pearl-decide-wt/decision-6ae48f687b80cb8b593513fa-a1/Reel/.pearl-artifacts/live/c.webp",
+    "adjust": {
+      "exposure": 0.4,
+      "contrast": 0.0,
+      "highlights": 0.0,
+      "shadows": 30.0,
+      "whites": 0.0,
+      "blacks": 0.0,
+      "temperature": 0.0,
+      "tint": 0.0,
+      "vibrance": 0.0,
+      "saturation": 0.0,
+      "clarity": 25.0,
+      "dehaze": 0.0,
+      "vignette": 0.0,
+      "hsl": [
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": -40.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        },
+        {
+          "hue": 0.0,
+          "sat": 0.0,
+          "lum": 0.0
+        }
+      ],
+      "curve": {
+        "master": [
+          0.02,
+          0.22,
+          0.5,
+          0.8,
+          0.98
+        ],
+        "r": [
+          0.0,
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "g": [
+          0.0,
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ],
+        "b": [
+          0.0,
+          0.25,
+          0.5,
+          0.75,
+          1.0
+        ]
+      }
+    }
+  },
+  "variants": []
+}

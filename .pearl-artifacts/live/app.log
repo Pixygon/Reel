@@ -1,0 +1,4 @@
+
+thread 'main' (1187178) panicked at src/main.rs:430:72:
+event loop: Os(OsError { line: 89, file: "/home/pixygon/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/winit-0.30.13/src/platform_impl/linux/wayland/event_loop/mod.rs", error: WaylandError(Connection(NoCompositor)) })
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

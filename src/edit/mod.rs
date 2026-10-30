@@ -1010,6 +1010,10 @@ pub struct Project {
     /// source time under playhead t is `t - offset`.
     #[serde(default)]
     pub multicam: Vec<Angle>,
+    /// A photo document: settings for one still (`photo.jpg.reel`). `None`
+    /// for every edit — see `photo.rs`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub photo: Option<crate::photo::PhotoEdit>,
     /// Other frame shapes of this same edit. See variants.rs.
     #[serde(default)]
     pub variants: Vec<Variant>,
@@ -1090,6 +1094,7 @@ impl Default for Project {
             pool: Vec::new(),
             session: Session::default(),
             multicam: Vec::new(),
+            photo: None,
             variants: Vec::new(),
             next_id: 100,
         }
