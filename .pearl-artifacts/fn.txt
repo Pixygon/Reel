@@ -1,0 +1,128 @@
+/// The settings this command starts from, then its operator flags on top.
+fn photo_settings(p: &Parsed, image: &str) -> Result<crate::photo::Adjust> {
+    use crate::photo;
+    let mut adj = if p.on("reset") { Default::default() } else { photo::load_settings(image) };
+    if let Some(other) = p.str("from") {
+        adj = photo::load_settings(other);
+    }
+    if let Some(name) = p.str("preset") {
+        adj = *photo::read_presets()
+            .get(name)
+            .ok_or_else(|| anyhow!("no preset called {name:?}. See `reel photo preset-list`"))?;
+    }
+    for (name, lo, hi) in photo::SCALARS {
+        if let Some(v) = p.num::<f32>(name)? {
+            if !(lo..=hi).contains(&v) {
+                bail!("--{name} must be {lo}..{hi}, got {v}");
+            }
+            *adj.scalar_mut(name).expect("SCALARS names real fields") = v;
+        }
+    }
+    for (b, (band, _)) in photo::BANDS.iter().enumerate() {
+        let target = &mut adj.hsl[b];
+        for (suffix, slot) in [("hue", &mut target.hue), ("sat", &mut target.sat), ("lum", &mut target.lum)] {
+            let flag = format!("{band}-{suffix}");
+            if let Some(v) = p.num::<f32>(&flag)? {
+                if !(-100.0..=100.0).contains(&v) {
+                    bail!("--{flag} must be -100..100, got {v}");
+                }
+                *slot = v;
+            }
+        }
+    }
+    let curve = &mut adj.curve;
+    for (flag, slot) in [
+        ("curve", &mut curve.master),
+        ("curve-r", &mut curve.r),
+        ("curve-g", &mut curve.g),
+        ("curve-b", &mut curve.b),
+    ] {
+        if let Some(s) = p.str(flag) {
+            let pts: Vec<f32> = s.split(',').map(|v| v.trim().parse()).collect::<Result<_, _>>()
+                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
+            *slot = <[f32; 5]>::try_from(pts)
+                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
+            if slot.iter().any(|v| !(0.0..=1.0).contains(v)) {
+                bail!("--{flag} values must be 0..1, got {s:?}");
+            }
+        }
+    }
+    Ok(adj)
+}
+
+fn cmd_photo(p: &Parsed) -> Result<Output> {
+    use crate::photo;
+    let action = p.at(0)?;
+    let shown = |adj: &photo::Adjust, note: String| {
+        Output::new(note, serde_json::json!({ "adjust": adj }))
+    };
+    // A still that isn't there should fail here, not write a stray document.
+    let image = |i: usize| -> Result<&str> {
+        let path = p.at(i)?;
+        if !std::path::Path::new(path).is_file() {
+            bail!("no such image: {path}");
+        }
+        Ok(path)
+    };
+    match action {
+        "show" => {
+            let path = image(1)?;
+            let adj = photo_settings(p, path)?;
+            Ok(shown(&adj, serde_json::to_string_pretty(&adj)?))
+        }
+        "set" | "reset" => {
+            let path = image(1)?;
+            let adj = if action == "reset" { Default::default() } else { photo_settings(p, path)? };
+            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
+            photo::save_settings(&abs, &adj)?;
+            Ok(shown(&adj, format!("Saved settings to {}", photo::sidecar(&abs))))
+        }
+        "copy" => {
+            let adj = photo_settings(p, image(1)?)?;
+            photo::copy_settings(&adj)?;
+            Ok(shown(&adj, "Settings copied.".into()))
+        }
+        "paste" => {
+            let path = image(1)?;
+            let adj = photo::pasted_settings().ok_or_else(|| anyhow!("nothing copied yet"))?;
+            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
+            photo::save_settings(&abs, &adj)?;
+            Ok(shown(&adj, format!("Pasted settings onto {path}")))
+        }
+        "export" => {
+            let path = image(1)?;
+            let out = p.at(2)?;
+            let adj = photo_settings(p, path)?;
+            let opts = photo::ExportOpts {
+                quality: p.num::<u8>("quality")?.unwrap_or(photo::ExportOpts::default().quality),
+                width: p.num("width")?.unwrap_or(0),
+                height: p.num("height")?.unwrap_or(0),
+            };
+            let done = photo::export(path, &adj, opts, out)?;
+            Ok(Output::new(
+                format!("Wrote {out} ({}×{})", done.width, done.height),
+                serde_json::json!({ "out": out, "width": done.width, "height": done.height, "adjust": adj }),
+            ))
+        }
+        "preset-list" => {
+            let all = photo::read_presets();
+            let text = all.keys().cloned().collect::<Vec<_>>().join("\n");
+            Ok(Output::new(text, serde_json::json!({ "presets": all })))
+        }
+        "preset-save" => {
+            let name = p.at(1)?;
+            let adj = photo_settings(p, image(2)?)?;
+            photo::save_preset(name, &adj)?;
+            Ok(shown(&adj, format!("Saved preset {name:?}.")))
+        }
+        "preset-delete" => {
+            let name = p.at(1)?;
+            if !photo::delete_preset(name)? {
+                bail!("no preset called {name:?}");
+            }
+            Ok(Output::new(format!("Deleted preset {name:?}."), serde_json::json!({ "deleted": name })))
+        }
+        other => bail!("unknown photo action {other:?}. See `reel photo --help`"),
+    }
+}
+

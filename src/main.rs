@@ -27,6 +27,7 @@ mod macos;
 mod lut;
 mod media;
 mod perf;
+mod photo;
 #[cfg(target_os = "linux")]
 mod portal;
 mod plugins;
@@ -148,7 +149,10 @@ impl ApplicationHandler<UserEvent> for Reel {
         let response = egui.handle_event(&window, &event);
 
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.app.flush_photo();
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => gpu.resize(size.width, size.height),
             WindowEvent::RedrawRequested => {
                 // 1) advance playback and push any new frame to the GPU + egui.
@@ -209,6 +213,7 @@ impl ApplicationHandler<UserEvent> for Reel {
                 }
                 self.sync_tray();
                 if self.app.quit_requested {
+                    self.app.flush_photo();
                     event_loop.exit();
                 }
             }

@@ -3,6 +3,7 @@
 //! instant-loading image document (video/audio live in `video::Player`).
 
 use anyhow::{anyhow, Result};
+use image::ImageDecoder;
 use std::path::Path;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -45,7 +46,15 @@ impl ImageDoc {
         if is_svg_path(path) {
             return Self::open_svg(path);
         }
-        let img = image::open(path).map_err(|e| anyhow!("could not read image {path}: {e}"))?;
+        let read_err = |e: image::ImageError| anyhow!("could not read image {path}: {e}");
+        let mut decoder = image::ImageReader::open(path)?
+            .with_guessed_format()?
+            .into_decoder()
+            .map_err(read_err)?;
+        // Phones store sideways pixels plus an EXIF tag; stand them up.
+        let orientation = decoder.orientation().map_err(read_err)?;
+        let mut img = image::DynamicImage::from_decoder(decoder).map_err(read_err)?;
+        img.apply_orientation(orientation);
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
         Ok(Self { path: path.to_string(), width, height, data: rgba.into_raw() })
@@ -155,6 +164,26 @@ mod tests {
         // Center pixel is the cyan fill, straight alpha.
         let mid = ((512 * 2048 + 1024) * 4) as usize;
         assert_eq!(&doc.data[mid..mid + 4], &[0x22, 0xd3, 0xee, 0xff]);
+        let _ = std::fs::remove_file(&p);
+    }
+
+    /// A sideways phone photo: pixels stored lying down, EXIF says "rotate".
+    #[test]
+    fn exif_orientation_stands_a_photo_up() {
+        let p = std::env::temp_dir().join(format!("reel-exif-test-{}.jpg", std::process::id()));
+        image::RgbImage::from_pixel(32, 16, image::Rgb([200, 40, 40])).save(&p).expect("write jpeg");
+        let jpeg = std::fs::read(&p).unwrap();
+        // APP1: "Exif", little-endian TIFF, one IFD entry: Orientation = 6.
+        let tiff: &[u8] = &[
+            b'I', b'I', 42, 0, 8, 0, 0, 0, 1, 0, 0x12, 0x01, 3, 0, 1, 0, 0, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+        ];
+        let mut out = vec![0xFF, 0xD8, 0xFF, 0xE1, 0, (2 + 6 + tiff.len()) as u8];
+        out.extend(b"Exif\0\0");
+        out.extend(tiff);
+        out.extend(&jpeg[2..]);
+        std::fs::write(&p, out).unwrap();
+        let doc = ImageDoc::open(&p.to_string_lossy()).expect("open");
+        assert_eq!((doc.width, doc.height), (16, 32));
         let _ = std::fs::remove_file(&p);
     }
 

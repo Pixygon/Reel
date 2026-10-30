@@ -88,3 +88,89 @@ fn side_panel_resize_sticks() {
         "panel snapped back after release: {while_dragging} → {after}"
     );
 }
+
+/// One frame of a lone adjust slider; returns where it sits.
+fn slider_frame(ctx: &Context, input: RawInput, value: &mut f32) -> Pos2 {
+    let mut at = Pos2::ZERO;
+    ctx.run(input, |ctx| {
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.spacing_mut().slider_width = 200.0;
+            at = ui.next_widget_position();
+            crate::ui::adjust_slider(ui, "Exposure", value, -5.0..=5.0, 2);
+        });
+    });
+    at
+}
+
+#[test]
+fn double_click_sends_a_photo_slider_home() {
+    let ctx = Context::default();
+    let mut value = 2.5f32;
+    let start = slider_frame(&ctx, pointer_input(Pos2::ZERO, None), &mut value);
+    let on = Pos2::new(start.x + 60.0, start.y + 2.0);
+    for _ in 0..2 {
+        for down in [true, false] {
+            slider_frame(&ctx, pointer_input(on, Some(down)), &mut value);
+        }
+    }
+    slider_frame(&ctx, pointer_input(on, None), &mut value);
+    assert_eq!(value, 0.0, "a double-click resets the slider");
+}
+
+/// One frame of the real UI; returns where the text `label` was drawn.
+fn app_frame(ctx: &Context, app: &mut crate::app::ReelApp, input: RawInput, label: &str) -> Option<egui::Rect> {
+    let out = ctx.run(input, |ctx| crate::ui::draw(ctx, app));
+    fn find(shape: &egui::epaint::Shape, label: &str) -> Option<egui::Rect> {
+        match shape {
+            egui::epaint::Shape::Text(t) if t.galley.job.text == label => Some(t.visual_bounding_rect()),
+            egui::epaint::Shape::Vec(v) => v.iter().find_map(|s| find(s, label)),
+            _ => None,
+        }
+    }
+    out.shapes.iter().find_map(|c| find(&c.shape, label))
+}
+
+/// The whole loop through the real UI: a still opens with the panel, a
+/// slider moves, the picture re-renders and the settings reach the document
+/// while the original's bytes stay as they were.
+#[test]
+fn opening_a_still_gives_a_working_adjust_panel() {
+    let dir = std::env::temp_dir().join(format!("reel-panel-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("p.png");
+    image::RgbaImage::from_pixel(64, 48, image::Rgba([90, 120, 150, 255])).save(&path).unwrap();
+    let before = std::fs::read(&path).unwrap();
+    let path_s = path.to_string_lossy().into_owned();
+
+    let ctx = Context::default();
+    let mut app = crate::app::ReelApp::new();
+    app.open(&path_s);
+    assert!(app.photo.is_some(), "a raster still opens with the panel");
+    assert!(app.image.is_some());
+
+    let pointer = |pos, down| pointer_input(pos, down);
+    let mut label = None;
+    for _ in 0..4 {
+        label = app_frame(&ctx, &mut app, RawInput::default(), "Exposure");
+    }
+    let label = label.expect("the panel draws an Exposure slider");
+    let on = Pos2::new(label.left() - 90.0, label.center().y); // on the rail
+    for down in [Some(true), Some(false)] {
+        app_frame(&ctx, &mut app, pointer(on, down), "Exposure");
+    }
+    let moved = app.photo.as_ref().unwrap().adjust.exposure;
+    assert!(moved > 0.5, "the click reached the slider: {moved}");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while app.photo.as_ref().unwrap().busy() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        app_frame(&ctx, &mut app, RawInput::default(), "Exposure");
+    }
+    let photo = app.photo.as_ref().unwrap();
+    assert_ne!(photo.developed, photo.base.data, "the preview re-rendered");
+    app.flush_photo();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert_eq!(crate::photo::load_settings(&path_s).exposure, moved, "settings saved themselves");
+    assert_eq!(std::fs::read(&path).unwrap(), before, "the original is untouched");
+    let _ = std::fs::remove_dir_all(&dir);
+}

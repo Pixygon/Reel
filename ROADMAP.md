@@ -306,6 +306,11 @@ Ordered by leverage; each lands with measured tests like everything above.
       in both engines, verified in the live preview. Power windows stay
       screen-space through a flip, as they should. Quarter-turn rotation
       (aspect swap) still open.
+- [x] Reel photo: a non-destructive **Adjust panel** for stills (Light,
+      Colour with 8-band HSL, Presence, tone curve), before/after, presets,
+      copy/paste, JPEG/PNG/WebP export and `reel photo`. One CPU renderer is
+      both preview and export. Selections, RAW, crop and retouch still open;
+      timeline renders of a still do not read these settings.
 
 A still is a one-frame composition; the compositor, grade stack, masks,
 titles and adjustment layers already work on one. The plan (unchanged from

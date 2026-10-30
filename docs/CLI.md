@@ -408,6 +408,75 @@ Add an adjustment layer — a span whose colour grade applies to everything bene
 | `--duration` | `SECONDS` | How long it lasts (default 4) |
 | `--json` | — | Print the result as JSON |
 
+### `reel photo ACTION [IMAGE] [OUT]`
+
+Non-destructive photo edits. The original is only ever read: settings live in `photo.jpg.reel`, the same document the Adjust panel saves, and reopen as they were. Preview and export are one renderer, so what the panel shows is what the file holds.
+
+| Action | Does |
+| --- | --- |
+| `show IMAGE` | Print the settings (flags apply to the printout only) |
+| `set IMAGE` | Change the saved settings: `reel photo set a.jpg --exposure 0.5 --shadows 30` |
+| `reset IMAGE` | Back to the untouched original |
+| `copy IMAGE` | Copy its settings; the panel's Paste sees them too |
+| `paste IMAGE` | Save the copied settings onto this photo |
+| `export IMAGE OUT` | Write `.jpg`, `.png` or `.webp`; flags here affect this export only |
+| `preset-list` | List saved presets |
+| `preset-save NAME IMAGE` | Save this photo's settings as a preset |
+| `preset-delete NAME` | Delete a preset |
+
+Flags layer in this order: saved settings (or `--reset`), `--from`, `--preset`, then the operators. Each still is developed at 8 bits; exports do not carry EXIF or ICC metadata.
+
+| Flag | Value | Meaning |
+| --- | --- | --- |
+| `--exposure` | `STOPS` | Exposure in stops, -5..5 |
+| `--contrast` | `N` | Contrast, -100..100 |
+| `--highlights` | `N` | Highlights, -100..100 |
+| `--shadows` | `N` | Shadows, -100..100 |
+| `--whites` | `N` | White end of the range, -100..100 |
+| `--blacks` | `N` | Black end of the range, -100..100 |
+| `--temperature` | `N` | Warm (+) or cool (-), -100..100 |
+| `--tint` | `N` | Magenta (+) or green (-), -100..100 |
+| `--vibrance` | `N` | Saturation that spares saturated colours, -100..100 |
+| `--saturation` | `N` | Saturation, -100..100 (-100 = monochrome) |
+| `--clarity` | `N` | Mid-tone local contrast, -100..100 |
+| `--dehaze` | `N` | Remove (+) or add (-) haze, -100..100 |
+| `--vignette` | `N` | Darken (-) or lighten (+) the corners, -100..100 |
+| `--red-hue` | `N` | Hue of the red band, -100..100 |
+| `--red-sat` | `N` | Saturation of the red band, -100..100 |
+| `--red-lum` | `N` | Luminance of the red band, -100..100 |
+| `--orange-hue` | `N` | Hue of the orange band, -100..100 |
+| `--orange-sat` | `N` | Saturation of the orange band, -100..100 |
+| `--orange-lum` | `N` | Luminance of the orange band, -100..100 |
+| `--yellow-hue` | `N` | Hue of the yellow band, -100..100 |
+| `--yellow-sat` | `N` | Saturation of the yellow band, -100..100 |
+| `--yellow-lum` | `N` | Luminance of the yellow band, -100..100 |
+| `--green-hue` | `N` | Hue of the green band, -100..100 |
+| `--green-sat` | `N` | Saturation of the green band, -100..100 |
+| `--green-lum` | `N` | Luminance of the green band, -100..100 |
+| `--aqua-hue` | `N` | Hue of the aqua band, -100..100 |
+| `--aqua-sat` | `N` | Saturation of the aqua band, -100..100 |
+| `--aqua-lum` | `N` | Luminance of the aqua band, -100..100 |
+| `--blue-hue` | `N` | Hue of the blue band, -100..100 |
+| `--blue-sat` | `N` | Saturation of the blue band, -100..100 |
+| `--blue-lum` | `N` | Luminance of the blue band, -100..100 |
+| `--purple-hue` | `N` | Hue of the purple band, -100..100 |
+| `--purple-sat` | `N` | Saturation of the purple band, -100..100 |
+| `--purple-lum` | `N` | Luminance of the purple band, -100..100 |
+| `--magenta-hue` | `N` | Hue of the magenta band, -100..100 |
+| `--magenta-sat` | `N` | Saturation of the magenta band, -100..100 |
+| `--magenta-lum` | `N` | Luminance of the magenta band, -100..100 |
+| `--curve` | `A,B,C,D,E` | Master tone curve: outputs (0..1) at inputs 0, ¼, ½, ¾, 1 |
+| `--curve-r` | `A,B,C,D,E` | Red tone curve |
+| `--curve-g` | `A,B,C,D,E` | Green tone curve |
+| `--curve-b` | `A,B,C,D,E` | Blue tone curve |
+| `--reset` | — | Start from the untouched original |
+| `--from` | `IMAGE` | Start from another photo's settings |
+| `--preset` | `NAME` | Start from a saved preset |
+| `--quality` | `1-100` | export: JPEG/WebP quality (default 92; WebP 100 is lossless) |
+| `--width` | `PX` | export: fit within this width; never enlarges |
+| `--height` | `PX` | export: fit within this height; never enlarges |
+| `--json` | — | Print the result as JSON |
+
 ### `reel pool PROJECT`
 
 The media pool: gather, bin and list this project's media (offline files are flagged)

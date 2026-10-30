@@ -1,0 +1,846 @@
+
+running 184 tests
+test audio::tests::clips_sound_in_their_windows_and_nowhere_else ... ok
+test audio::tests::fade_curves_shape_the_ramp ... ok
+test audio::tests::fades_ramp_at_the_edges ... ok
+test audio::tests::music_ducks_live_under_the_cut ... ok
+test audio::tests::pan_moves_the_sound_without_touching_the_centre ... ok
+test audio::tests::the_compressor_reduces_loud_and_ignores_quiet ... ok
+test audio::tests::the_fft_finds_the_tone ... ok
+test audio::tests::the_low_shelf_cuts_lows_and_spares_highs ... ok
+test audio::tests::the_lufs_meter_is_calibrated ... ok
+test audio::tests::the_wav_writer_writes_real_wavs ... ok
+test beats::tests::a_real_metronome_reads_back_at_its_tempo ... ok
+test beats::tests::clicks_at_120_bpm_are_each_found_once ... ok
+test captions::tests::parses_what_whisper_actually_emits ... ok
+test captions::tests::srt_round_trips ... ok
+test captions::tests::the_burned_caption_matches_the_previewed_formula ... ok
+test captions::tests::the_caption_look_is_legible_over_video ... ok
+test captions::tests::transcribes_speech_locally ... ok
+test capture::live_tests::a_detached_session_outlives_the_call_that_started_it ... ok
+test capture::live_tests::a_timed_recording_lands_as_a_playable_file ... ok
+test capture::live_tests::an_area_screenshot_comes_back_at_that_exact_size ... ok
+test capture::live_tests::streamer_project_assembles_from_two_files ... ok
+test capture::live_tests::webcam_records_a_real_clip ... ok
+test capture::tests::an_exact_area_reaches_each_backend_in_its_own_dialect ... ok
+test capture::tests::audio_sources_parse_the_words_people_use ... ok
+test capture::tests::recording_options_reach_the_backend_or_fail_loudly ... ok
+test capture::tests::rectangles_parse_in_every_spelling ... ok
+test capture::tests::stamped_names_are_sane ... ok
+test capture::tests::the_planner_only_offers_tools_that_exist ... ok
+test cli::tests::an_existing_file_always_wins_over_a_verb_name ... ok
+test cli::tests::bad_input_is_refused_rather_than_guessed ... ok
+test cli::tests::colours_are_read_as_hex ... ok
+test cli::tests::every_command_appears_in_the_written_docs ... ok
+test cli::tests::every_documented_command_is_implemented ... ok
+test cli::tests::every_photo_operator_is_a_documented_flag ... ok
+test cli::tests::flags_parse_in_both_spellings ... ok
+test cli::tests::nothing_here_can_fall_through_to_a_window ... ok
+test cli::tests::presets_and_codecs_resolve_by_the_names_people_type ... ok
+test cli::tests::the_schema_covers_the_whole_document ... ok
+test compound::tests::a_nested_edit_renders_flat_and_refreshes_when_stale ... ok
+test edit::tests::annotations_ride_ripples_and_die_with_their_material ... ok
+test edit::tests::atomic_write_replaces_cleanly_and_leaves_no_temp ... ok
+test edit::tests::bezier_keys_ease_and_integrate_consistently ... ok
+test edit::tests::caption_windows_survive_cuts_gaps_and_reuse ... ok
+test edit::tests::dragging_a_clip_carries_its_annotations ... ok
+test edit::tests::duplicate_lands_immediately_after_the_original ... ok
+test edit::tests::export_range_cuts_clips_at_the_markers ... ok
+test edit::tests::fillers_cut_only_the_umms_and_close_up ... ok
+test edit::tests::gaps_close_before_a_clip_and_across_the_timeline ... ok
+test edit::tests::keyframes_interpolate_the_way_the_curve_says ... ok
+test edit::tests::move_range_respects_neighbours ... ok
+test edit::tests::multicam_cuts_to_the_angle_at_the_same_moment ... ok
+test edit::tests::pasting_makes_room_instead_of_overwriting ... ok
+test edit::tests::pasting_mid_clip_splits_it_rather_than_leaving_a_hole ... ok
+test edit::tests::project_saves_and_loads ... ok
+test edit::tests::relink_moves_files_and_directories ... ok
+test edit::tests::ripple_delete_closes_the_hole_on_every_track ... ok
+test edit::tests::ripple_trim_pulls_the_edit_to_the_playhead ... ok
+test edit::tests::roll_slip_and_slide_hold_their_invariants ... ok
+test edit::tests::set_and_clear_keys_keep_tracks_sorted_and_tidy ... ok
+test edit::tests::snapping_picks_nearest_within_tolerance ... ok
+test edit::tests::source_timeline_mapping_follows_trims ... ok
+test edit::tests::split_divides_both_tracks_and_preserves_source_mapping ... ok
+test edit::tests::the_speed_integral_is_exact_for_every_curve_shape ... ok
+test edit::tests::the_timebase_maps_both_ways_and_agrees_with_the_render ... ok
+test edit::tests::tighten_removes_the_quiet_air_and_closes_up ... ok
+test edit::tests::track_gain_mute_and_solo_route_the_mix ... ok
+test edit::tests::undo_redo_roundtrip ... ok
+test effects::curve_tests::curves_pass_identity_through_and_bend_where_told ... ok
+test effects::grade_tests::grade_reference_moves_in_the_stated_directions ... ok
+test effects::grade_tests::hsl_round_trips_and_matches_known_colours ... ok
+test effects::grade_tests::the_baked_lattice_matches_the_direct_formula ... ok
+test effects::tests::fades_ramp_and_are_scoped_to_the_clip ... ok
+test effects::tests::ffmpeg_matches_the_reference_formula ... ok
+test effects::tests::identity_effects_emit_no_filters ... ok
+test effects::tests::reframe_pans_to_the_expected_window ... ok
+test engine::compositor::tests::a_layer_lands_exactly_where_its_rect_says ... ok
+test engine::compositor::tests::a_mask_limits_the_grade_to_its_window ... ok
+test engine::compositor::tests::compositor_effects_match_the_reference_formula ... ok
+test engine::compositor::tests::curves_grade_through_the_baked_lattice ... ok
+test engine::compositor::tests::layers_stack_and_opacity_blends ... ok
+test engine::compositor::tests::the_gpu_lut_matches_the_reference_lattice ... ok
+test engine::render::tests::crossfade_opacity_ramps_the_incoming_layer_only ... ok
+test engine::render::tests::the_plan_agrees_with_render_duration ... ok
+test engine::render::tests::to_black_fades_land_their_midpoints ... ok
+test engine::render::tests::transition_mods_do_what_their_names_say ... ok
+test export::tests::a_green_screen_overlay_composites_over_the_cut ... ok
+test export::tests::a_keyframed_ramp_lands_its_midpoints_in_the_render ... ok
+test export::tests::a_speed_ramp_accelerates_through_the_source_exactly ... ok
+test export::tests::a_still_composes_the_wipe_and_burns_the_caption ... ok
+test export::tests::a_wipe_reveals_geometrically_in_the_render ... ok
+test export::tests::an_adjustment_layer_grades_only_its_window ... ok
+test export::tests::an_overlay_lands_where_it_was_placed_and_only_when_it_should ... ok
+test export::tests::args_for_audio_extraction ... ok
+test export::tests::args_for_h264_balanced_720p ... ok
+test export::tests::args_for_image_jpeg ... ok
+test export::tests::args_for_remux_copy_everything ... ok
+test export::tests::audio_track_clips_sound_in_the_export ... FAILED
+test export::tests::both_render_paths_agree_on_a_real_cut ... ok
+test export::tests::captions_and_titles_burn_in_the_same_render ... ok
+test export::tests::captions_are_burned_into_the_render ... ok
+test export::tests::codec_lists_per_kind ... ok
+test export::tests::crossfade_overlaps_and_shortens_the_render ... ok
+test export::tests::delivered_loudness_hits_the_target ... FAILED
+test export::tests::exports_fixture_to_h264 ... ok
+test export::tests::fit_modes_produce_the_right_filter_shapes ... ok
+test export::tests::flips_mirror_identically_in_both_engines ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-flip-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:01.00, start: 0.000000, bitrate: 18 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 9 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+Stream mapping:
+  Stream #0:0 (h264) -> trim:default
+  concat:out:v0 -> Stream #0:0 (libx264)
+Press [q] to stop, [?] for help
+[libx264 @ 0x55f9a1b05a80] using SAR=1/1
+[libx264 @ 0x55f9a1b05a80] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[libx264 @ 0x55f9a1b05a80] profile High, level 1.3, 4:2:0, 8-bit
+[libx264 @ 0x55f9a1b05a80] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=3 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=7 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=7 lookahead_threads=1 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=2 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=40 rc=crf mbtree=1 crf=26.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/tmp/reel-flip-graph-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 320x240 [SAR 1:1 DAR 4:3], q=2-31, 25 fps, 12800 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 libx264
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[mp4 @ 0x55f9a1b05380] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0x55f9a1ad9b00] video:1KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 102.532751%
+frame=   25 fps=0.0 q=-1.0 Lsize=       2KiB time=00:00:00.92 bitrate=  20.2kbits/s speed=39.7x elapsed=0:00:00.02    
+[libx264 @ 0x55f9a1b05a80] frame I:1     Avg QP:12.00  size:    86
+[libx264 @ 0x55f9a1b05a80] frame P:6     Avg QP:13.17  size:    21
+[libx264 @ 0x55f9a1b05a80] frame B:18    Avg QP:15.67  size:    14
+[libx264 @ 0x55f9a1b05a80] consecutive B-frames:  4.0%  0.0%  0.0% 96.0%
+[libx264 @ 0x55f9a1b05a80] mb I  I16..4: 100.0%  0.0%  0.0%
+[libx264 @ 0x55f9a1b05a80] mb P  I16..4:  0.0%  0.0%  0.0%  P16..4:  0.0%  0.0%  0.0%  0.0%  0.0%    skip:100.0%
+[libx264 @ 0x55f9a1b05a80] mb B  I16..4:  0.0%  0.0%  0.0%  B16..8:  0.0%  0.0%  0.0%  direct: 0.0%  skip:100.0%
+[libx264 @ 0x55f9a1b05a80] 8x8 transform intra:0.0%
+[libx264 @ 0x55f9a1b05a80] coded y,uvDC,uvAC intra: 0.0% 0.7% 0.0% inter: 0.0% 0.0% 0.0%
+[libx264 @ 0x55f9a1b05a80] i16 v,h,dc,p: 93%  0%  7%  0%
+[libx264 @ 0x55f9a1b05a80] i8c dc,h,v,p: 95%  0%  5%  0%
+[libx264 @ 0x55f9a1b05a80] Weighted P-Frames: Y:0.0% UV:0.0%
+[libx264 @ 0x55f9a1b05a80] kb/s:3.65
+ok
+test export::tests::hardware_export_produces_a_valid_file ... ok
+test export::tests::hardware_falls_back_to_software_for_vp9 ... ok
+test export::tests::hdr_passthrough_keeps_the_transfer_and_ten_bits ... ok
+test export::tests::hdr_sources_are_tone_mapped_not_washed_out ... ok
+test export::tests::music_ducks_under_speech_and_returns ... ok
+test export::tests::music_fit_stretches_the_bed_to_the_edit ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-fit-vid-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 293 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 283 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 2 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+[aist#1:0/pcm_s16le @ 0x5579f1864b80] Guessed Channel Layout: mono
+Input #1, wav, from '/tmp/reel-fit-bed-4120643.wav':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Duration: 00:00:02.00, bitrate: 705 kb/s
+  Stream #1:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 44100 Hz, mono, s16, 705 kb/s
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  Stream #1:0 (pcm_s16le) -> aformat:default
+  amix:default -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, mp4, to '/tmp/reel-fit-out-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le (ipcm / 0x6D637069), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/mp4 @ 0x5579f1863fc0] video:0KiB audio:750KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.097135%
+size=     751KiB time=00:00:04.00 bitrate=1537.5kbits/s speed=35.3x elapsed=0:00:00.11    
+ok
+test export::tests::pan_lands_in_the_export ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-pan-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:02.00, start: 0.000000, bitrate: 865 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 781 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 70 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+[Parsed_pan_3 @ 0x7fb758004b80] Pure channel mapping detected: M 1
+Output #0, wav, to '/tmp/reel-pan-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x561b67d431c0] video:0KiB audio:281KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.027083%
+size=     281KiB time=00:00:01.50 bitrate=1536.4kbits/s speed= 521x elapsed=0:00:00.00    
+ok
+test export::tests::plugin_params_animate_in_the_render ... ok
+test export::tests::presets_describe_real_platform_frames ... ok
+test export::tests::quarter_turns_rotate_identically_in_both_engines ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-rot-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:01.00, start: 0.000000, bitrate: 18 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 9 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+Stream mapping:
+  Stream #0:0 (h264) -> trim:default
+  concat:out:v0 -> Stream #0:0 (libx264)
+Press [q] to stop, [?] for help
+[libx264 @ 0x561f9cbf0fc0] using SAR=1/1
+[libx264 @ 0x561f9cbf0fc0] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[libx264 @ 0x561f9cbf0fc0] profile High, level 1.3, 4:2:0, 8-bit
+[libx264 @ 0x561f9cbf0fc0] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=3 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=7 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=7 lookahead_threads=1 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=2 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=40 rc=crf mbtree=1 crf=26.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/tmp/reel-rot-g-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 320x240 [SAR 1:1 DAR 4:3], q=2-31, 25 fps, 12800 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 libx264
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[mp4 @ 0x561f9cbfa300] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0x561f9cbcea80] video:1KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 87.286245%
+frame=   25 fps=0.0 q=-1.0 Lsize=       2KiB time=00:00:00.92 bitrate=  21.9kbits/s speed=33.7x elapsed=0:00:00.02    
+[libx264 @ 0x561f9cbf0fc0] frame I:1     Avg QP:20.78  size:   250
+[libx264 @ 0x561f9cbf0fc0] frame P:6     Avg QP:13.17  size:    26
+[libx264 @ 0x561f9cbf0fc0] frame B:18    Avg QP:15.67  size:    14
+[libx264 @ 0x561f9cbf0fc0] consecutive B-frames:  4.0%  0.0%  0.0% 96.0%
+[libx264 @ 0x561f9cbf0fc0] mb I  I16..4: 52.0% 46.7%  1.3%
+[libx264 @ 0x561f9cbf0fc0] mb P  I16..4:  0.0%  0.0%  0.0%  P16..4:  2.3%  0.0%  0.0%  0.0%  0.0%    skip:97.7%
+[libx264 @ 0x561f9cbf0fc0] mb B  I16..4:  0.0%  0.0%  0.0%  B16..8:  0.0%  0.0%  0.0%  direct: 0.0%  skip:100.0%  L0: 0.0% L1:100.0% BI: 0.0%
+[libx264 @ 0x561f9cbf0fc0] 8x8 transform intra:46.7%
+[libx264 @ 0x561f9cbf0fc0] coded y,uvDC,uvAC intra: 0.4% 2.3% 1.3% inter: 0.0% 0.0% 0.0%
+[libx264 @ 0x561f9cbf0fc0] i16 v,h,dc,p: 82%  6% 12%  0%
+[libx264 @ 0x561f9cbf0fc0] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu:  3%  0% 97%  0%  0%  0%  0%  0%  0%
+[libx264 @ 0x561f9cbf0fc0] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 48% 11% 41%  0%  0%  0%  0%  0%  0%
+[libx264 @ 0x561f9cbf0fc0] i8c dc,h,v,p: 76%  6% 17%  0%
+[libx264 @ 0x561f9cbf0fc0] Weighted P-Frames: Y:0.0% UV:0.0%
+[libx264 @ 0x561f9cbf0fc0] kb/s:5.25
+ok
+test export::tests::queue_runs_every_job_in_order ... ok
+test export::tests::renders_a_cut_across_two_different_sources ... ok
+test export::tests::renders_a_real_cut_from_the_fixture ... ok
+test export::tests::roomtone_loops_under_the_whole_edit ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-rt-vid-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 293 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 283 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 2 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+[aist#1:0/pcm_s16le @ 0x563996e80600] Guessed Channel Layout: stereo
+Input #1, wav, from '/tmp/reel-rt-tone-4120643.wav':
+  Metadata:
+    encoder         : Lavf63.1.102
+  Duration: 00:00:00.80, bitrate: 1411 kb/s
+  Stream #1:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 44100 Hz, stereo, s16, 1411 kb/s
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  Stream #1:0 (pcm_s16le) -> aformat:default
+  amix:default -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-rt-out-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x563996e7fb00] video:0KiB audio:750KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.010156%
+size=     750KiB time=00:00:04.00 bitrate=1536.2kbits/s speed= 707x elapsed=0:00:00.00    
+ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-rt-vid-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 293 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 283 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 2 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-rt-ctrl-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x55aa93b62f00] video:0KiB audio:750KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.010156%
+size=     750KiB time=00:00:04.00 bitrate=1536.2kbits/s speed=1.3e+03x elapsed=0:00:00.00    
+ok
+test export::tests::slow_motion_chains_atempo_because_one_filter_cannot_go_below_half ... ok
+test export::tests::speed_consumes_more_source_and_keeps_the_timeline_length ... ok
+test export::tests::stabilisation_measurably_reduces_shake ... ok
+test export::tests::the_deesser_tames_sibilance_and_keeps_the_body ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-ds-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:03.00, start: 0.000000, bitrate: 352 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 271 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 71 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-ds-0-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x562f70d65ec0] video:0KiB audio:469KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.016250%
+size=     469KiB time=00:00:02.50 bitrate=1536.2kbits/s speed= 677x elapsed=0:00:00.00    
+ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-ds-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:03.00, start: 0.000000, bitrate: 352 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 271 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 71 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-ds-0.9-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x564d4203a240] video:0KiB audio:469KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.016250%
+size=     469KiB time=00:00:02.50 bitrate=1536.2kbits/s speed= 386x elapsed=0:00:00.00    
+ok
+test export::tests::the_graph_fallback_applies_the_baked_grade ... ok
+test export::tests::the_raw_filter_escape_hatch_reaches_the_render ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-raw-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:02.00, start: 0.000000, bitrate: 12 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 6 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+Stream mapping:
+  Stream #0:0 (h264) -> trim:default
+  concat:out:v0 -> Stream #0:0 (libx264)
+Press [q] to stop, [?] for help
+[libx264 @ 0x561f8f628a40] using SAR=1/1
+[libx264 @ 0x561f8f628a40] using cpu capabilities: MMX2 SSE2Fast SSSE3 SSE4.2 AVX FMA3 BMI2 AVX2
+[libx264 @ 0x561f8f628a40] profile High, level 1.3, 4:2:0, 8-bit
+[libx264 @ 0x561f8f628a40] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=3 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=7 psy=1 psy_rd=1.00:0.00 mixed_ref=1 me_range=16 chroma_me=1 trellis=1 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=-2 threads=7 lookahead_threads=1 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=2 keyint=250 keyint_min=25 scenecut=40 intra_refresh=0 rc_lookahead=40 rc=crf mbtree=1 crf=26.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/tmp/reel-raw-graph-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p(tv, progressive), 320x240 [SAR 1:1 DAR 4:3], q=2-31, 25 fps, 12800 tbn
+    Metadata:
+      encoder         : Lavc63.1.102 libx264
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+[mp4 @ 0x561f8f628340] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0x561f8f5fac00] video:1KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 104.170364%
+frame=   25 fps=0.0 q=-1.0 Lsize=       2KiB time=00:00:00.92 bitrate=  20.0kbits/s speed=40.7x elapsed=0:00:00.02    
+[libx264 @ 0x561f8f628a40] frame I:1     Avg QP:12.00  size:    68
+[libx264 @ 0x561f8f628a40] frame P:6     Avg QP:13.17  size:    21
+[libx264 @ 0x561f8f628a40] frame B:18    Avg QP:15.67  size:    14
+[libx264 @ 0x561f8f628a40] consecutive B-frames:  4.0%  0.0%  0.0% 96.0%
+[libx264 @ 0x561f8f628a40] mb I  I16..4: 100.0%  0.0%  0.0%
+[libx264 @ 0x561f8f628a40] mb P  I16..4:  0.0%  0.0%  0.0%  P16..4:  0.0%  0.0%  0.0%  0.0%  0.0%    skip:100.0%
+[libx264 @ 0x561f8f628a40] mb B  I16..4:  0.0%  0.0%  0.0%  B16..8:  0.0%  0.0%  0.0%  direct: 0.0%  skip:100.0%
+[libx264 @ 0x561f8f628a40] 8x8 transform intra:0.0%
+[libx264 @ 0x561f8f628a40] coded y,uvDC,uvAC intra: 0.0% 0.3% 0.0% inter: 0.0% 0.0% 0.0%
+[libx264 @ 0x561f8f628a40] i16 v,h,dc,p: 93%  0%  7%  0%
+[libx264 @ 0x561f8f628a40] i8c dc,h,v,p: 100%  0%  0%  0%
+[libx264 @ 0x561f8f628a40] Weighted P-Frames: Y:0.0% UV:0.0%
+[libx264 @ 0x561f8f628a40] kb/s:3.50
+ok
+test export::tests::tiktok_preset_renders_a_vertical_file ... ok
+test export::tests::time_parsing ... ok
+test export::tests::timeline_graph_trims_and_concats_in_order ... ok
+test export::tests::timeline_graph_without_audio_or_with_scale ... ok
+test export::tests::title_slides_burn_where_the_preview_says ... ok
+test export::tests::video_fades_dip_the_exported_audio ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-afade-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 361 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 283 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 69 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-afade-Linear-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x56047d2c52c0] video:0KiB audio:750KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.010156%
+size=     750KiB time=00:00:04.00 bitrate=1536.2kbits/s speed= 890x elapsed=0:00:00.00    
+ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-afade-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 361 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 160x120 [SAR 1:1 DAR 4:3], 283 kb/s, 25 fps, 25 tbr, 12800 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 69 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-afade-Smooth-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x5595236cc3c0] video:0KiB audio:750KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.010156%
+size=     750KiB time=00:00:04.00 bitrate=1536.2kbits/s speed= 563x elapsed=0:00:00.00    
+ok
+test export::tests::voice_fix_removes_hum_and_keeps_the_voice ... ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-fix-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 887 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 808 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 69 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-fixraw-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[out#0/wav @ 0x55d371aef280] video:0KiB audio:656KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.011607%
+size=     656KiB time=00:00:03.50 bitrate=1536.2kbits/s speed= 810x elapsed=0:00:00.00    
+ffmpeg version n9.0.2 Copyright (c) 2000-2026 the FFmpeg developers
+  built with gcc 16 (GCC)
+  configuration: --prefix=/usr --disable-debug --disable-static --disable-stripping --enable-amf --enable-avisynth --enable-cuda-llvm --enable-lto --enable-fontconfig --enable-frei0r --enable-gmp --enable-gnutls --enable-gpl --enable-ladspa --enable-lcms2 --enable-libaom --enable-libass --enable-libbluray --enable-libbs2b --enable-libdav1d --enable-libdrm --enable-libdvdnav --enable-libdvdread --enable-libfreetype --enable-libfribidi --enable-libgsm --enable-libharfbuzz --enable-libiec61883 --enable-libjack --enable-libjxl --enable-libmodplug --enable-libmp3lame --enable-libopencore_amrnb --enable-libopencore_amrwb --enable-libopenjpeg --enable-libopenmpt --enable-libopus --enable-libplacebo --enable-libpulse --enable-librav1e --enable-librsvg --enable-librubberband --enable-libsnappy --enable-libsoxr --enable-libspeex --enable-libsrt --enable-libssh --enable-libsvtav1 --enable-libtheora --enable-libv4l2 --enable-libvidstab --enable-libvmaf --enable-libvorbis --enable-libvpl --enable-libvpx --enable-libwebp --enable-libx264 --enable-libx265 --enable-libxcb --enable-libxml2 --enable-libxvid --enable-libzimg --enable-libzmq --enable-nvdec --enable-nvenc --enable-opencl --enable-opengl --enable-shared --enable-vapoursynth --enable-version3 --enable-vulkan --disable-decoder=magicyuv
+  libavutil      61.  1.102 / 61.  1.102
+  libavcodec     63.  1.102 / 63.  1.102
+  libavformat    63.  1.102 / 63.  1.102
+  libavdevice    63.  1.102 / 63.  1.102
+  libavfilter    12.  1.102 / 12.  1.102
+  libswscale     10.  1.102 / 10.  1.102
+  libswresample   7.  1.102 /  7.  1.102
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/tmp/reel-fix-src-4120643.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    encoder         : Lavf63.1.102
+  Duration: 00:00:04.00, start: 0.000000, bitrate: 887 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Constrained Baseline) (avc1 / 0x31637661), yuv420p(progressive), 320x240 [SAR 1:1 DAR 4:3], 808 kb/s, 30 fps, 30 tbr, 15360 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+      encoder         : Lavc63.1.102 libx264
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, mono, fltp, 69 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 (aac) -> atrim:default
+  concat:out:a0 -> Stream #0:0 (pcm_s16le)
+Press [q] to stop, [?] for help
+Output #0, wav, to '/tmp/reel-fix-4120643.wav':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    ISFT            : Lavf63.1.102
+  Stream #0:0: Audio: pcm_s16le ([1][0][0][0] / 0x0001), 48000 Hz, stereo, s16, 1536 kb/s
+    Metadata:
+      encoder         : Lavc63.1.102 pcm_s16le
+[Parsed_adeclick_6 @ 0x7f8c14005ec0] Detected clicks in 582 of 336000 samples (0.173214%).
+[out#0/wav @ 0x55ee11ab4540] video:0KiB audio:656KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.011607%
+size=     656KiB time=00:00:03.50 bitrate=1536.2kbits/s speed=47.8x elapsed=0:00:00.07    
+ok
+test export::tests::wgsl_plugins_run_in_the_frame_server ... ok
+test integration::tests::desktop_entry_lands_in_a_fake_home ... ok
+test lut::tests::a_non_unit_domain_is_normalised ... ok
+test lut::tests::parses_and_applies_the_lattice_it_was_given ... ok
+test media::tests::exif_orientation_stands_a_photo_up ... ok
+test media::tests::image_extensions_are_routed ... ok
+test media::tests::loads_a_generated_png ... ok
+test media::tests::rasterizes_svg_upscaled_for_crispness ... ok
+test photo::tests::before_after_splits_original_from_result ... ok
+test photo::tests::colour_bands_reach_their_colour_and_spare_the_rest ... ok
+test photo::tests::each_operator_moves_the_picture_the_way_it_says ... ok
+test photo::tests::every_operator_exports_exactly_what_the_preview_shows ... ok
+test photo::tests::identity_changes_nothing ... ok
+test photo::tests::local_measurement_is_blind_to_resolution ... ok
+test photo::tests::lossy_formats_stay_close_to_the_preview ... ok
+test photo::tests::old_documents_and_partial_settings_load ... ok
+test photo::tests::presets_save_list_and_delete ... ok
+test photo::tests::quality_and_resize_reach_the_file ... ok
+test photo::tests::the_original_is_never_touched_and_settings_reopen ... ok
+test photo::tests::the_tone_sliders_never_invert_the_ramp ... ok
+test photo::tests::transparency_survives_png_and_flattens_on_white_in_jpeg ... ok
+test plugins::tests::headers_parse_and_contracts_are_enforced ... ok
+test portal::tests::encoder_turns_raw_frames_into_mp4 ... ok
+test proxy::tests::a_proxy_preserves_duration_at_a_fraction_of_the_size ... ok
+test proxy::tests::only_heavy_sources_want_proxies ... ok
+test proxy::tests::the_key_tracks_the_file_not_the_name_alone ... ok
+test serve::tests::mcp_serves_the_command_table_as_tools ... ok
+test serve::tests::serve_speaks_jsonrpc_with_the_cli_verbs ... ok
+test thumbs::tests::a_file_with_no_video_bakes_nothing_rather_than_hanging ... ok
+test thumbs::tests::a_sheet_is_baked_from_a_real_video ... ok
+test thumbs::tests::source_time_lands_on_the_right_cell ... ok
+test titles::tests::a_title_lands_where_it_was_placed_at_any_resolution ... ok
+test titles::tests::a_title_only_shows_inside_its_window ... ok
+test titles::tests::colours_are_written_the_way_ass_reads_them ... ok
+test titles::tests::markup_in_the_users_text_cannot_break_the_document ... ok
+test track::tests::a_lost_subject_ends_the_track ... ok
+test track::tests::the_tracker_follows_a_moving_square ... ok
+test track::tests::tracks_a_real_rendered_square ... ok
+test ui_tests::double_click_sends_a_photo_slider_home ... ok
+test ui_tests::opening_a_still_gives_a_working_adjust_panel ... ok
+test ui_tests::side_panel_resize_sticks ... ok
+test video::decoder::tests::decodes_rgba_frames_of_the_right_size ... ok
+test video::decoder::tests::probe_reads_dimensions_fps_and_duration ... ok
+test video::mpv::tests::mpv_backend_opens_and_renders_frames ... ok
+test video::player::tests::audio_file_opens_and_plays ... ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+Cannot connect to server socket err = No such file or directory
+Cannot connect to server request channel
+jack server is not running or cannot be started
+JackShmReadWritePtr::~JackShmReadWritePtr - Init not done for -1, skipping unlock
+JackShmReadWritePtr::~JackShmReadWritePtr - Init not done for -1, skipping unlock
+[ALSOFT] (EE) Failed to connect PipeWire event context (errno: 112)
+ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+ALSA lib confmisc.c:165:(snd_config_get_card) [error.core] Cannot get card index for 0
+couldn't open play stream: No such file or directory
+ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+Cannot connect to server socket err = No such file or directory
+Cannot connect to server request channel
+jack server is not running or cannot be started
+JackShmReadWritePtr::~JackShmReadWritePtr - Init not done for -1, skipping unlock
+JackShmReadWritePtr::~JackShmReadWritePtr - Init not done for -1, skipping unlock
+ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+ALSA lib confmisc.c:855:(parse_card) [error.core] cannot find card '0'
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_card_inum returned error: No such file or directory
+ALSA lib confmisc.c:422:(snd_func_concat) [error.core] error evaluating strings
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_concat returned error: No such file or directory
+ALSA lib confmisc.c:1342:(snd_func_refer) [error.core] error evaluating name
+ALSA lib conf.c:5211:(_snd_config_evaluate) [error.core] function snd_func_refer returned error: No such file or directory
+ALSA lib conf.c:5734:(snd_config_expand) [error.core] Evaluate error: No such file or directory
+ALSA lib pcm.c:2722:(snd_pcm_open_noupdate) [error.pcm] Unknown PCM default
+ALSA lib confmisc.c:165:(snd_config_get_card) [error.core] Cannot get card index for 0
+couldn't open play stream: No such file or directory
+ok
+test video::player::tests::shuttle_runs_the_picture_backwards ... ok
+test waveform::tests::a_window_always_fills_exactly_the_slots_asked_for ... ok
+test waveform::tests::best_lag_finds_a_known_offset ... ok
+test waveform::tests::peaks_follow_the_sound ... ok
+test waveform::tests::peaks_persist_on_disk_across_computes ... ok
+test waveform::tests::quietest_span_finds_the_silence ... ok
+
+failures:
+
+---- export::tests::audio_track_clips_sound_in_the_export stdout ----
+
+thread 'export::tests::audio_track_clips_sound_in_the_export' (4124616) panicked at src/export.rs:3048:9:
+the audio-track beep is missing from the export: -69.6 dB → -69.6 dB
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- export::tests::delivered_loudness_hits_the_target stdout ----
+
+thread 'export::tests::delivered_loudness_hits_the_target' (4125759) panicked at src/export.rs:3115:9:
+asked for −16 LUFS, delivered -39.9
+
+
+failures:
+    export::tests::audio_track_clips_sound_in_the_export
+    export::tests::delivered_loudness_hits_the_target
+
+test result: FAILED. 182 passed; 2 failed; 0 ignored; 0 measured; 0 filtered out; finished in 66.14s
+

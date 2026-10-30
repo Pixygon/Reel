@@ -82,6 +82,57 @@ const RENDER_WATCH_FLAGS: &[Flag] = &[
     F_JSON,
 ];
 
+const PHOTO_FLAGS: &[Flag] = &[
+    Flag { name: "exposure", value: Some("STOPS"), help: "Exposure in stops, -5..5" },
+    Flag { name: "contrast", value: Some("N"), help: "Contrast, -100..100" },
+    Flag { name: "highlights", value: Some("N"), help: "Highlights, -100..100" },
+    Flag { name: "shadows", value: Some("N"), help: "Shadows, -100..100" },
+    Flag { name: "whites", value: Some("N"), help: "White end of the range, -100..100" },
+    Flag { name: "blacks", value: Some("N"), help: "Black end of the range, -100..100" },
+    Flag { name: "temperature", value: Some("N"), help: "Warm (+) or cool (-), -100..100" },
+    Flag { name: "tint", value: Some("N"), help: "Magenta (+) or green (-), -100..100" },
+    Flag { name: "vibrance", value: Some("N"), help: "Saturation that spares saturated colours, -100..100" },
+    Flag { name: "saturation", value: Some("N"), help: "Saturation, -100..100 (-100 = monochrome)" },
+    Flag { name: "clarity", value: Some("N"), help: "Mid-tone local contrast, -100..100" },
+    Flag { name: "dehaze", value: Some("N"), help: "Remove (+) or add (-) haze, -100..100" },
+    Flag { name: "vignette", value: Some("N"), help: "Darken (-) or lighten (+) the corners, -100..100" },
+    Flag { name: "red-hue", value: Some("N"), help: "Hue of the red band, -100..100" },
+    Flag { name: "red-sat", value: Some("N"), help: "Saturation of the red band, -100..100" },
+    Flag { name: "red-lum", value: Some("N"), help: "Luminance of the red band, -100..100" },
+    Flag { name: "orange-hue", value: Some("N"), help: "Hue of the orange band, -100..100" },
+    Flag { name: "orange-sat", value: Some("N"), help: "Saturation of the orange band, -100..100" },
+    Flag { name: "orange-lum", value: Some("N"), help: "Luminance of the orange band, -100..100" },
+    Flag { name: "yellow-hue", value: Some("N"), help: "Hue of the yellow band, -100..100" },
+    Flag { name: "yellow-sat", value: Some("N"), help: "Saturation of the yellow band, -100..100" },
+    Flag { name: "yellow-lum", value: Some("N"), help: "Luminance of the yellow band, -100..100" },
+    Flag { name: "green-hue", value: Some("N"), help: "Hue of the green band, -100..100" },
+    Flag { name: "green-sat", value: Some("N"), help: "Saturation of the green band, -100..100" },
+    Flag { name: "green-lum", value: Some("N"), help: "Luminance of the green band, -100..100" },
+    Flag { name: "aqua-hue", value: Some("N"), help: "Hue of the aqua band, -100..100" },
+    Flag { name: "aqua-sat", value: Some("N"), help: "Saturation of the aqua band, -100..100" },
+    Flag { name: "aqua-lum", value: Some("N"), help: "Luminance of the aqua band, -100..100" },
+    Flag { name: "blue-hue", value: Some("N"), help: "Hue of the blue band, -100..100" },
+    Flag { name: "blue-sat", value: Some("N"), help: "Saturation of the blue band, -100..100" },
+    Flag { name: "blue-lum", value: Some("N"), help: "Luminance of the blue band, -100..100" },
+    Flag { name: "purple-hue", value: Some("N"), help: "Hue of the purple band, -100..100" },
+    Flag { name: "purple-sat", value: Some("N"), help: "Saturation of the purple band, -100..100" },
+    Flag { name: "purple-lum", value: Some("N"), help: "Luminance of the purple band, -100..100" },
+    Flag { name: "magenta-hue", value: Some("N"), help: "Hue of the magenta band, -100..100" },
+    Flag { name: "magenta-sat", value: Some("N"), help: "Saturation of the magenta band, -100..100" },
+    Flag { name: "magenta-lum", value: Some("N"), help: "Luminance of the magenta band, -100..100" },
+    Flag { name: "curve", value: Some("A,B,C,D,E"), help: "Master tone curve: outputs (0..1) at inputs 0, ¼, ½, ¾, 1" },
+    Flag { name: "curve-r", value: Some("A,B,C,D,E"), help: "Red tone curve" },
+    Flag { name: "curve-g", value: Some("A,B,C,D,E"), help: "Green tone curve" },
+    Flag { name: "curve-b", value: Some("A,B,C,D,E"), help: "Blue tone curve" },
+    Flag { name: "reset", value: None, help: "Start from the untouched original" },
+    Flag { name: "from", value: Some("IMAGE"), help: "Start from another photo's settings" },
+    Flag { name: "preset", value: Some("NAME"), help: "Start from a saved preset" },
+    Flag { name: "quality", value: Some("1-100"), help: "export: JPEG/WebP quality (default 92; WebP 100 is lossless)" },
+    Flag { name: "width", value: Some("PX"), help: "export: fit within this width; never enlarges" },
+    Flag { name: "height", value: Some("PX"), help: "export: fit within this height; never enlarges" },
+    F_JSON,
+];
+
 pub static COMMANDS: &[Cmd] = &[
     Cmd {
         name: "schema",
@@ -467,6 +518,12 @@ pub static COMMANDS: &[Cmd] = &[
         help: "Add an adjustment layer — a span whose colour grade applies to everything beneath it (set the grade with `reel effects --clip`)",
     },
     Cmd {
+        name: "photo",
+        args: &["ACTION", "IMAGE?", "OUT?"],
+        flags: PHOTO_FLAGS,
+        help: "Non-destructive photo edits. ACTION: show, set, reset, copy, paste, export (IMAGE OUT), preset-list, preset-save (NAME IMAGE), preset-delete (NAME)",
+    },
+    Cmd {
         name: "pool",
         args: &["PROJECT"],
         flags: &[
@@ -846,6 +903,7 @@ pub(crate) fn dispatch(name: &str, p: &Parsed) -> Result<Output> {
         "roomtone" => cmd_roomtone(p),
         "snapshot" => cmd_snapshot(p),
         "adjust" => cmd_adjust(p),
+        "photo" => cmd_photo(p),
         "pool" => cmd_pool(p),
         "relink" => cmd_relink(p),
         "multicam" => cmd_multicam(p),
@@ -3488,6 +3546,137 @@ fn cmd_devices(_p: &Parsed) -> Result<Output> {
     Ok(Output::new(text, report))
 }
 
+/// The settings this command starts from, then its operator flags on top.
+fn photo_settings(p: &Parsed, image: &str) -> Result<crate::photo::Adjust> {
+    use crate::photo;
+    let mut adj = if p.on("reset") { Default::default() } else { photo::load_settings(image) };
+    if let Some(other) = p.str("from") {
+        if !std::path::Path::new(other).is_file() {
+            bail!("no such image: {other}");
+        }
+        adj = photo::load_settings(other);
+    }
+    if let Some(name) = p.str("preset") {
+        adj = *photo::read_presets()
+            .get(name)
+            .ok_or_else(|| anyhow!("no preset called {name:?}. See `reel photo preset-list`"))?;
+    }
+    for (name, lo, hi) in photo::SCALARS {
+        if let Some(v) = p.num::<f32>(name)? {
+            if !(lo..=hi).contains(&v) {
+                bail!("--{name} must be {lo}..{hi}, got {v}");
+            }
+            *adj.scalar_mut(name).expect("SCALARS names real fields") = v;
+        }
+    }
+    for (b, (band, _)) in photo::BANDS.iter().enumerate() {
+        let target = &mut adj.hsl[b];
+        for (suffix, slot) in [("hue", &mut target.hue), ("sat", &mut target.sat), ("lum", &mut target.lum)] {
+            let flag = format!("{band}-{suffix}");
+            if let Some(v) = p.num::<f32>(&flag)? {
+                if !(-100.0..=100.0).contains(&v) {
+                    bail!("--{flag} must be -100..100, got {v}");
+                }
+                *slot = v;
+            }
+        }
+    }
+    let curve = &mut adj.curve;
+    for (flag, slot) in [
+        ("curve", &mut curve.master),
+        ("curve-r", &mut curve.r),
+        ("curve-g", &mut curve.g),
+        ("curve-b", &mut curve.b),
+    ] {
+        if let Some(s) = p.str(flag) {
+            let pts: Vec<f32> = s.split(',').map(|v| v.trim().parse()).collect::<Result<_, _>>()
+                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
+            *slot = <[f32; 5]>::try_from(pts)
+                .map_err(|_| anyhow!("--{flag} expects five numbers, got {s:?}"))?;
+            if slot.iter().any(|v| !(0.0..=1.0).contains(v)) {
+                bail!("--{flag} values must be 0..1, got {s:?}");
+            }
+        }
+    }
+    Ok(adj)
+}
+
+fn cmd_photo(p: &Parsed) -> Result<Output> {
+    use crate::photo;
+    let action = p.at(0)?;
+    let shown = |adj: &photo::Adjust, note: String| {
+        Output::new(note, serde_json::json!({ "adjust": adj }))
+    };
+    // A still that isn't there should fail here, not write a stray document.
+    let image = |i: usize| -> Result<&str> {
+        let path = p.at(i)?;
+        if !std::path::Path::new(path).is_file() {
+            bail!("no such image: {path}");
+        }
+        Ok(path)
+    };
+    match action {
+        "show" => {
+            let path = image(1)?;
+            let adj = photo_settings(p, path)?;
+            Ok(shown(&adj, serde_json::to_string_pretty(&adj)?))
+        }
+        "set" | "reset" => {
+            let path = image(1)?;
+            let adj = if action == "reset" { Default::default() } else { photo_settings(p, path)? };
+            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
+            photo::save_settings(&abs, &adj)?;
+            Ok(shown(&adj, format!("Saved settings to {}", photo::sidecar(&abs))))
+        }
+        "copy" => {
+            let adj = photo_settings(p, image(1)?)?;
+            photo::copy_settings(&adj)?;
+            Ok(shown(&adj, "Settings copied.".into()))
+        }
+        "paste" => {
+            let path = image(1)?;
+            let adj = photo::pasted_settings().ok_or_else(|| anyhow!("nothing copied yet"))?;
+            let abs = std::fs::canonicalize(path)?.to_string_lossy().into_owned();
+            photo::save_settings(&abs, &adj)?;
+            Ok(shown(&adj, format!("Pasted settings onto {path}")))
+        }
+        "export" => {
+            let path = image(1)?;
+            let out = p.at(2)?;
+            let adj = photo_settings(p, path)?;
+            let opts = photo::ExportOpts {
+                quality: p.num::<u8>("quality")?.unwrap_or(photo::ExportOpts::default().quality),
+                width: p.num("width")?.unwrap_or(0),
+                height: p.num("height")?.unwrap_or(0),
+            };
+            let done = photo::export(path, &adj, opts, out)?;
+            Ok(Output::new(
+                format!("Wrote {out} ({}×{})", done.width, done.height),
+                serde_json::json!({ "out": out, "width": done.width, "height": done.height, "adjust": adj }),
+            ))
+        }
+        "preset-list" => {
+            let all = photo::read_presets();
+            let text = all.keys().cloned().collect::<Vec<_>>().join("\n");
+            Ok(Output::new(text, serde_json::json!({ "presets": all })))
+        }
+        "preset-save" => {
+            let name = p.at(1)?;
+            let adj = photo_settings(p, image(2)?)?;
+            photo::save_preset(name, &adj)?;
+            Ok(shown(&adj, format!("Saved preset {name:?}.")))
+        }
+        "preset-delete" => {
+            let name = p.at(1)?;
+            if !photo::delete_preset(name)? {
+                bail!("no preset called {name:?}");
+            }
+            Ok(Output::new(format!("Deleted preset {name:?}."), serde_json::json!({ "deleted": name })))
+        }
+        other => bail!("unknown photo action {other:?}. See `reel photo --help`"),
+    }
+}
+
 fn cmd_presets() -> Result<Output> {
     let text = export::Preset::ALL
         .iter()
@@ -3655,6 +3844,23 @@ mod tests {
                 "`reel {}` is missing from docs/CLI.md — regenerate it",
                 c.name
             );
+        }
+    }
+
+    /// Every operator of the panel is a flag, and the reference says so.
+    #[test]
+    fn every_photo_operator_is_a_documented_flag() {
+        let docs = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/docs/CLI.md")).unwrap();
+        let mut names: Vec<String> = crate::photo::SCALARS.iter().map(|s| s.0.to_string()).collect();
+        for (band, _) in crate::photo::BANDS {
+            for c in ["hue", "sat", "lum"] {
+                names.push(format!("{band}-{c}"));
+            }
+        }
+        names.extend(["curve", "curve-r", "curve-g", "curve-b"].map(String::from));
+        for n in names {
+            assert!(PHOTO_FLAGS.iter().any(|f| f.name == n), "--{n} is not a flag");
+            assert!(docs.contains(&format!("`--{n}`")), "--{n} is not in docs/CLI.md");
         }
     }
 

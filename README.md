@@ -25,6 +25,11 @@ not the finished tool, but real, honest software you can build and run today.
   open instantly through the same GPU path — ultrawide screenshots, 8K
   stills, **and SVG, rasterized crisply via resvg**. Everything lands on the
   editor timeline (video/stills on V1, audio on A1).
+- **Develops photos.** A JPEG, PNG or WebP opens with a non-destructive Adjust
+  panel: Light, Colour (with an 8-band HSL mixer), Presence and the tone curve,
+  a before/after split, copy/paste, named presets, and export to JPEG, PNG or
+  WebP with quality and resize. The original is never written; settings save
+  themselves to `photo.jpg.reel`. Everything is also `reel photo`.
 - **An editor that finishes the job.** Trim by dragging clip edges, split at
   the playhead, move with snapping, undo/redo, set in/out markers, drop in
   more source files, give clips a **look** (exposure/contrast/saturation and
@@ -229,6 +234,7 @@ src/
 │   ├── mpv.rs      libmpv backend (dlopen'd): hw decode, A/V sync, audio, exact seek
 │   └── decoder.rs  fallback: ffmpeg subprocess → raw RGBA frames over a bounded channel
 ├── media.rs        media kinds + instant still-image documents (image crate, resvg for SVG)
+├── photo.rs        the Adjust panel's one renderer: develop, settings document, presets, export
 ├── capture.rs      screenshots + recording dispatch (modes, tool tiers)
 ├── portal.rs       built-in Linux capture: xdg-desktop-portal + PipeWire → ffmpeg encode
 ├── edit/           the NLE model — Project / Track / Clip (serde-serializable → a .reel doc)

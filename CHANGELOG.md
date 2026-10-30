@@ -4,6 +4,17 @@ All notable changes to **Reel**. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); this file is
 materialized from the Pixygon Changelog API — edit there, not here.
 
+## [Unreleased]
+
+### Added
+- Reel photo: JPEG, PNG and WebP stills now open with a Lightroom-style Adjust panel — Light (exposure, contrast, highlights, shadows, whites, blacks), Colour (temperature, tint, vibrance, saturation, an 8-band HSL mixer), Presence (clarity, dehaze, vignette) and the tone curve. Double-click resets a slider; Reset all, a before/after split, copy/paste settings and named presets are in the panel.
+- Photo edits are non-destructive: the original is never written, settings save themselves to `photo.jpg.reel` and reopen as they were, and the preview and the export are one renderer.
+- Photo export to JPEG, PNG or WebP with quality and resize, from the panel or `reel photo export`; every operator is a `reel photo` flag.
+
+### Fixed
+- Stills with an EXIF orientation now open upright.
+
+
 ## [2.0.0] — 2026-10-22
 
 ### Added
