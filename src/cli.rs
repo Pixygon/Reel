@@ -3774,7 +3774,10 @@ fn cmd_devices(_p: &Parsed) -> Result<Output> {
             .as_array()
             .map(|a| a.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>().join(" → "))
             .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "the desktop portal".into()),
+            .unwrap_or_else(|| {
+                let headless = report["session"].as_str() == Some("headless");
+                if headless { "nothing, no display answers".into() } else { "the desktop portal".into() }
+            }),
         report["recording_backend"].as_str().unwrap_or("?"),
         list("displays", &|v| format!("{} {}", v["name"].as_str().unwrap_or(""), v["geometry"].as_str().unwrap_or(""))),
         list("cameras", &|v| format!("{} — {}", v["path"].as_str().unwrap_or(""), v["name"].as_str().unwrap_or(""))),

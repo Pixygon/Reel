@@ -42,10 +42,10 @@ fn save_token(token: &str) {
 // runtimes break every call after the first.
 use crate::runtime::rt;
 
-/// Is a portal likely reachable at all (a Wayland/X11 desktop session)?
+/// Is a portal likely reachable at all (a Wayland/X11 desktop session)? With
+/// no display nobody can answer its dialog, and a job would wait forever.
 pub fn available() -> bool {
-    std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok()
-        && (std::env::var("WAYLAND_DISPLAY").is_ok() || std::env::var("DISPLAY").is_ok())
+    std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() && crate::capture::no_display().is_none()
 }
 
 /// Interactive screenshot through the portal — the system dialog offers

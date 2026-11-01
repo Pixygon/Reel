@@ -57,6 +57,14 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   from a worker thread. The Linux-only deps (ashpd/pipewire/tokio) MUST stay
   under `[target.'cfg(target_os = "linux")'.dependencies]` or the Windows
   cross-build breaks.
+- HEADLESS capture: `Env::probe` CONNECTS to the display sockets, because jobs
+  inherit `DISPLAY`/`WAYLAND_DISPLAY` without being able to reach them. X gets
+  the real connection setup with the Xauthority cookie (`x11_answers`): a job
+  with its own HOME reaches Xwayland's socket and is then refused. Set but
+  dead or refused = headless: `Env.headless` plans no tool and is the error text, and
+  `portal::available()` goes false. Never start spectacle without a display:
+  it aborts, and each abort wakes KDE's crash reporter. Wayland is probed first
+  and X only if it fails, since an X connect can launch Xwayland.
 - Audio visualizers are mpv `lavfi-complex` graphs (`Visualizer` in
   player.rs); mpv renders them as the video track — no separate DSP/draw
   path. The viewport sizes off `app.tex_dims()`, never `Player::info`.

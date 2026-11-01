@@ -27,6 +27,14 @@
 //!   Windows:       ffmpeg gdigrab            macOS: ffmpeg avfoundation
 //! Stopped with SIGINT (or 'q' on ffmpeg's stdin) so the file finalizes.
 //!
+//! No display, no capture: [`Env::probe`] CONNECTS to the display sockets and
+//! runs the X connection setup, so a job that inherited `DISPLAY=:1` and
+//! `WAYLAND_DISPLAY=wayland-0` without being able to use either counts as
+//! headless. Screen capture then fails
+//! with a sentence naming both, and no tool is started: spectacle aborts
+//! without a display, and every abort wakes the desktop's crash reporter.
+//! Camera recording needs no display and still runs.
+//!
 //! A CLI recording outlives the process that started it: the child is
 //! spawned detached and described in `~/.cache/reel/recording.json`, so
 //! `reel record --stop` from any later process finishes it cleanly.
@@ -49,8 +57,184 @@ fn have(tool: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn is_wayland() -> bool {
-    std::env::var("WAYLAND_DISPLAY").is_ok()
+/// Does a compositor answer at this `WAYLAND_DISPLAY`? A relative name lives
+/// in the runtime dir, exactly as libwayland resolves it.
+#[cfg(target_os = "linux")]
+fn wayland_answers(name: &str, runtime_dir: Option<&str>) -> bool {
+    let path = match runtime_dir {
+        _ if name.starts_with('/') => PathBuf::from(name),
+        Some(dir) => Path::new(dir).join(name),
+        None => return false,
+    };
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
+/// A connection to an X server, over whichever transport `DISPLAY` names.
+#[cfg(target_os = "linux")]
+trait XSocket: std::io::Read + std::io::Write {}
+#[cfg(target_os = "linux")]
+impl<T: std::io::Read + std::io::Write> XSocket for T {}
+
+/// How long an X server gets to answer. Generous: KWin can start Xwayland on
+/// the first connect, and this only runs once Wayland has already failed.
+#[cfg(target_os = "linux")]
+const X_REPLY: Duration = Duration::from_secs(2);
+
+/// Open the socket a `DISPLAY` value names, in libxcb's order: the abstract
+/// name survives a private /tmp.
+#[cfg(target_os = "linux")]
+fn x11_connect(display: &str) -> Option<Box<dyn XSocket>> {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::os::linux::net::SocketAddrExt;
+    use std::os::unix::net::{SocketAddr, UnixStream};
+
+    let unix = |s: UnixStream| -> Option<Box<dyn XSocket>> {
+        s.set_read_timeout(Some(X_REPLY)).ok()?;
+        s.set_write_timeout(Some(X_REPLY)).ok()?;
+        Some(Box::new(s))
+    };
+    if display.starts_with('/') {
+        return unix(UnixStream::connect(display).ok()?);
+    }
+    let n = x11_number(display)?;
+    let (host, _) = display.rsplit_once(':')?;
+    // `tcp/host:0` and `unix/:0` name the transport in front of the host.
+    let host = host.rsplit('/').next().unwrap_or(host);
+    if host.is_empty() || host == "unix" {
+        let path = format!("/tmp/.X11-unix/X{n}");
+        let stream = SocketAddr::from_abstract_name(&path)
+            .ok()
+            .and_then(|a| UnixStream::connect_addr(&a).ok())
+            .or_else(|| UnixStream::connect(&path).ok())?;
+        return unix(stream);
+    }
+    let tcp = (host, 6000u16.saturating_add(n))
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|a| TcpStream::connect_timeout(&a, Duration::from_millis(500)).ok())?;
+    tcp.set_read_timeout(Some(X_REPLY)).ok()?;
+    tcp.set_write_timeout(Some(X_REPLY)).ok()?;
+    Some(Box::new(tcp))
+}
+
+/// The display number in `:1`, `:1.0`, `host:1`.
+#[cfg(target_os = "linux")]
+fn x11_number(display: &str) -> Option<u16> {
+    display.rsplit_once(':')?.1.split('.').next()?.parse().ok()
+}
+
+/// The `MIT-MAGIC-COOKIE-1` cookies an Xauthority file holds for this display
+/// (an empty number matches any). Entries are a big-endian u16 family, then
+/// four u16-length strings: address, number, name, data. libxcb speaks no
+/// other scheme Reel's tools would use, so neither does this.
+#[cfg(target_os = "linux")]
+fn xauth_cookies(file: &[u8], display: Option<u16>) -> Vec<Vec<u8>> {
+    fn field<'a>(file: &'a [u8], at: &mut usize) -> Option<&'a [u8]> {
+        let len = u16::from_be_bytes(file.get(*at..*at + 2)?.try_into().ok()?) as usize;
+        let value = file.get(*at + 2..*at + 2 + len)?;
+        *at += 2 + len;
+        Some(value)
+    }
+    let wanted = display.map(|n| n.to_string());
+    let mut cookies = Vec::new();
+    let mut at = 2;
+    while let (Some(_), Some(number), Some(name), Some(data)) =
+        (field(file, &mut at), field(file, &mut at), field(file, &mut at), field(file, &mut at))
+    {
+        let for_us = number.is_empty() || wanted.as_deref().is_some_and(|w| w.as_bytes() == number);
+        if for_us && name == b"MIT-MAGIC-COOKIE-1" {
+            cookies.push(data.to_vec());
+        }
+        at += 2;
+    }
+    cookies
+}
+
+/// Send the X11 connection setup and read the verdict: byte 0 of the reply is
+/// 1 for success, 0 for refused, 2 for "authenticate further".
+#[cfg(target_os = "linux")]
+fn x11_setup(socket: &mut dyn XSocket, cookie: &[u8]) -> bool {
+    const NAME: &[u8] = b"MIT-MAGIC-COOKIE-1";
+    let (name, data): (&[u8], &[u8]) = if cookie.is_empty() { (&[], &[]) } else { (NAME, cookie) };
+    let mut request = vec![b'l', 0];
+    for field in [11u16, 0, name.len() as u16, data.len() as u16, 0] {
+        request.extend(field.to_le_bytes());
+    }
+    for bytes in [name, data] {
+        request.extend(bytes);
+        request.resize(request.len().next_multiple_of(4), 0);
+    }
+    let mut verdict = [0u8; 1];
+    socket.write_all(&request).is_ok() && socket.read_exact(&mut verdict).is_ok() && verdict[0] == 1
+}
+
+/// Would an X server let THIS process in at this `DISPLAY`? A connect is not
+/// enough: a job with its own HOME reaches KDE's Xwayland socket, is refused
+/// for want of a cookie, and spectacle aborts on exactly that. So this runs
+/// the real connection setup, first bare (a server may trust the local user)
+/// and then with each cookie `xauthority` holds for the display. Probe Wayland
+/// first: on KDE the connect itself can launch Xwayland.
+#[cfg(target_os = "linux")]
+fn x11_answers(display: &str, xauthority: Option<&Path>) -> bool {
+    let file = xauthority.and_then(|p| std::fs::read(p).ok()).unwrap_or_default();
+    let cookies = xauth_cookies(&file, x11_number(display));
+    std::iter::once(&[][..])
+        .chain(cookies.iter().map(Vec::as_slice))
+        .any(|cookie| x11_connect(display).is_some_and(|mut s| x11_setup(s.as_mut(), cookie)))
+}
+
+/// Where Xlib looks for cookies: `$XAUTHORITY`, else `~/.Xauthority`.
+#[cfg(target_os = "linux")]
+fn xauthority_file() -> Option<PathBuf> {
+    let var = |name| std::env::var(name).ok().filter(|v| !v.is_empty());
+    var("XAUTHORITY").map(PathBuf::from).or_else(|| Some(Path::new(&var("HOME")?).join(".Xauthority")))
+}
+
+/// One display variable: `Ok` when it answers, else the reason it can't be
+/// used, spelled for a job log.
+#[cfg(target_os = "linux")]
+fn display_var(var: &str, value: Option<&str>, answers: impl Fn(&str) -> bool) -> Result<(), String> {
+    match value.filter(|v| !v.is_empty()) {
+        None => Err(format!("{var} is not set")),
+        Some(v) if answers(v) => Ok(()),
+        Some(v) => Err(format!("{var}={v} is set but unusable from here (no answer, or access refused)")),
+    }
+}
+
+/// The headless error, naming what is missing and why.
+#[cfg(target_os = "linux")]
+fn headless_error(wayland: &str, x11: &str) -> String {
+    format!(
+        "headless: no reachable display ({wayland}; {x11}), so no capture tool was started. \
+         Run this inside a desktop session, or point DISPLAY at a live X server such as Xvfb"
+    )
+}
+
+/// `(is this a Wayland session, why capture can't run here)`.
+#[cfg(target_os = "linux")]
+fn probe_display() -> (bool, Option<String>) {
+    let var = |name| std::env::var(name).ok();
+    let runtime_dir = var("XDG_RUNTIME_DIR");
+    let wayland = display_var("WAYLAND_DISPLAY", var("WAYLAND_DISPLAY").as_deref(), |v| {
+        wayland_answers(v, runtime_dir.as_deref())
+    });
+    let Err(wayland) = wayland else { return (true, None) };
+    let xauthority = xauthority_file();
+    let headless = display_var("DISPLAY", var("DISPLAY").as_deref(), |v| x11_answers(v, xauthority.as_deref()))
+        .err()
+        .map(|x11| headless_error(&wayland, &x11));
+    (false, headless)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn probe_display() -> (bool, Option<String>) {
+    (false, None)
+}
+
+/// Why no display answers here, or `None` when one does.
+#[cfg(target_os = "linux")]
+pub fn no_display() -> Option<String> {
+    probe_display().1
 }
 
 /// `~/Pictures` / `~/Videos` (or the profile dir on Windows), with a `Reel`
@@ -155,6 +339,8 @@ pub struct Env {
     pub tools: Vec<String>,
     /// The X display to grab (`:0`), used by the x11grab paths.
     pub display: String,
+    /// Set when no display answers: the error screen capture must return.
+    pub headless: Option<String>,
 }
 
 /// Every capture tool Reel knows how to drive.
@@ -181,11 +367,13 @@ impl Env {
         } else {
             Os::Linux
         };
+        let (wayland, headless) = probe_display();
         Env {
             os,
-            wayland: is_wayland(),
+            wayland,
             tools: KNOWN_TOOLS.iter().filter(|t| have(t)).map(|t| t.to_string()).collect(),
             display: std::env::var("DISPLAY").unwrap_or_else(|_| ":0".into()),
+            headless,
         }
     }
 
@@ -250,6 +438,9 @@ fn attempt(tool: &str, args: Vec<String>) -> Attempt {
 /// Build the ordered list of screenshot attempts for this machine. Pure —
 /// the whole backend matrix is unit-tested through this function.
 pub fn plan_shot(opts: &ShotOpts, out: &Path, env: &Env) -> Vec<Attempt> {
+    if env.headless.is_some() {
+        return Vec::new();
+    }
     let o = out.to_string_lossy().to_string();
     let mut v: Vec<Attempt> = Vec::new();
     match env.os {
@@ -425,6 +616,10 @@ fn crop_in_place(file: &Path, r: Rect) -> Result<()> {
 /// Take a screenshot. Region/Window modes wait for the user's selection —
 /// call from a worker thread. Returns the saved file.
 pub fn screenshot_with(opts: &ShotOpts) -> Result<PathBuf> {
+    let env = Env::probe();
+    if let Some(why) = &env.headless {
+        bail!("{why}");
+    }
     let out = opts
         .out
         .clone()
@@ -437,7 +632,6 @@ pub fn screenshot_with(opts: &ShotOpts) -> Result<PathBuf> {
     if opts.delay > 0.0 {
         std::thread::sleep(Duration::from_secs_f32(opts.delay));
     }
-    let env = Env::probe();
     let attempts = plan_shot(opts, &out, &env);
     let _ = std::fs::remove_file(&out);
 
@@ -657,6 +851,10 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
         a.extend(dur);
         a.push(o);
         return Ok(RecPlan { tool: "ffmpeg".into(), args: a, stop: StopMethod::QuitKey, interactive: false });
+    }
+
+    if let Some(why) = &env.headless {
+        bail!("{why}");
     }
 
     match env.os {
@@ -1449,7 +1647,8 @@ pub fn devices_report() -> serde_json::Value {
         .map(|a| a.tool)
         .collect();
     serde_json::json!({
-        "session": if env.wayland { "wayland" } else { "x11" },
+        "session": if env.headless.is_some() { "headless" } else if env.wayland { "wayland" } else { "x11" },
+        "headless": env.headless,
         "display": env.display,
         "tools": env.tools,
         "screenshot_backends": shot,
@@ -1472,6 +1671,7 @@ mod tests {
             wayland: false,
             tools: tools.iter().map(|s| s.to_string()).collect(),
             display: ":0".into(),
+            headless: None,
         }
     }
 
@@ -1524,7 +1724,7 @@ mod tests {
 
         // Wayland: grim's "x,y wxh". spectacle can't do rectangles, so it
         // must not be first in line for one.
-        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["grim".into(), "spectacle".into()], display: ":0".into() };
+        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["grim".into(), "spectacle".into()], display: ":0".into(), headless: None };
         let plan = plan_shot(&opts, out, &wl);
         assert_eq!(plan[0].tool, "grim");
         assert!(plan[0].args.join(" ").contains("100,50 640x480"));
@@ -1542,9 +1742,9 @@ mod tests {
         assert_eq!(plan[0].crop, Some(r));
 
         // macOS and Windows speak their own geometry.
-        let mac = Env { os: Os::Mac, wayland: false, tools: vec!["screencapture".into()], display: String::new() };
+        let mac = Env { os: Os::Mac, wayland: false, tools: vec!["screencapture".into()], display: String::new(), headless: None };
         assert!(plan_shot(&opts, out, &mac)[0].args.join(" ").contains("-R 100,50,640,480"));
-        let win = Env { os: Os::Windows, wayland: false, tools: vec!["ffmpeg".into()], display: String::new() };
+        let win = Env { os: Os::Windows, wayland: false, tools: vec!["ffmpeg".into()], display: String::new(), headless: None };
         let j = plan_shot(&opts, out, &win)[0].args.join(" ");
         assert!(j.contains("-offset_x 100") && j.contains("-offset_y 50") && j.contains("-video_size 640x480"), "{j}");
     }
@@ -1570,7 +1770,7 @@ mod tests {
         let order: Vec<&str> = plan.iter().map(|a| a.tool.as_str()).collect();
         assert_eq!(*order.last().unwrap(), "spectacle", "{order:?}");
         // …but on Wayland it is the one that knows how, so it leads.
-        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["spectacle".into(), "grim".into()], display: ":0".into() };
+        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["spectacle".into(), "grim".into()], display: ":0".into(), headless: None };
         assert_eq!(plan_shot(&opts, Path::new("/tmp/a.png"), &wl)[0].tool, "spectacle");
     }
 
@@ -1609,7 +1809,7 @@ mod tests {
         assert!(!one.args.join(" ").contains("amix"));
 
         // Wayland with wf-recorder: its own geometry spelling.
-        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["wf-recorder".into()], display: ":0".into() };
+        let wl = Env { os: Os::Linux, wayland: true, tools: vec!["wf-recorder".into()], display: ":0".into(), headless: None };
         let plan = plan_recording(&opts, out, &wl, Some("sink.monitor")).unwrap();
         assert_eq!(plan.tool, "wf-recorder");
         assert_eq!(plan.stop, StopMethod::Interrupt);
@@ -1617,14 +1817,14 @@ mod tests {
 
         // gpu-screen-recorder has no rectangle — that is an error naming
         // the tools that do, not a full-screen recording nobody asked for.
-        let gsr = Env { os: Os::Linux, wayland: true, tools: vec!["gpu-screen-recorder".into()], display: ":0".into() };
+        let gsr = Env { os: Os::Linux, wayland: true, tools: vec!["gpu-screen-recorder".into()], display: ":0".into(), headless: None };
         let err = plan_recording(&opts, out, &gsr, None).unwrap_err().to_string();
         assert!(err.contains("wf-recorder"), "{err}");
         // …and without an area it plans fine.
         assert!(plan_recording(&RecordOpts::default(), out, &gsr, None).is_ok());
 
         // A Wayland session with no headless recorder says which to install.
-        let bare = Env { os: Os::Linux, wayland: true, tools: vec![], display: ":0".into() };
+        let bare = Env { os: Os::Linux, wayland: true, tools: vec![], display: ":0".into(), headless: None };
         let err = plan_recording(&RecordOpts::default(), out, &bare, None).unwrap_err().to_string();
         assert!(err.contains("wf-recorder") && err.contains("wl-screenrec"), "{err}");
 
@@ -1709,6 +1909,7 @@ mod live_tests {
             wayland: false,
             tools: KNOWN_TOOLS.iter().filter(|t| have(t)).map(|t| t.to_string()).collect(),
             display: display.to_string(),
+            headless: None,
         }
     }
 
@@ -1720,6 +1921,8 @@ mod live_tests {
             eprintln!("no Xvfb/ffmpeg — skipping");
             return;
         };
+        assert!(x11_answers(&x.display, None), "a live X server must answer");
+        assert!(x11_answers(&format!("unix{}.0", x.display), None), "the same server, spelled in full");
         let out = std::env::temp_dir().join(format!("reel-shot-area-{}.png", std::process::id()));
         let _ = std::fs::remove_file(&out);
         let r = Rect { x: 40, y: 20, w: 320, h: 240 };
@@ -1737,6 +1940,207 @@ mod live_tests {
         let info = crate::video::decoder::probe(&out.to_string_lossy()).expect("probe png");
         assert_eq!((info.width, info.height), (320, 240), "the rectangle, exactly");
         let _ = std::fs::remove_file(&out);
+    }
+
+    /// A display variable that is set proves nothing: the crash this guards
+    /// against came from jobs that inherited both and could reach neither.
+    #[test]
+    fn a_display_only_counts_when_its_socket_answers() {
+        use std::os::unix::net::UnixListener;
+        let dir = std::env::temp_dir().join(format!("reel-display-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let runtime = dir.to_string_lossy().to_string();
+
+        assert!(!wayland_answers("wayland-0", Some(&runtime)), "no socket yet");
+        let _live = UnixListener::bind(dir.join("wayland-0")).unwrap();
+        assert!(wayland_answers("wayland-0", Some(&runtime)));
+        // No runtime dir: libwayland has nowhere to look either.
+        assert!(!wayland_answers("wayland-0", None));
+        assert!(wayland_answers(&dir.join("wayland-0").to_string_lossy(), None), "absolute name");
+
+        // Abandoned socket: the file is there, nobody is listening.
+        drop(UnixListener::bind(dir.join("stale")).unwrap());
+        assert!(!wayland_answers("stale", Some(&runtime)));
+        assert!(!x11_answers(&dir.join("stale").to_string_lossy(), None));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in X server: reads each connection setup and answers with
+    /// `verdict`, or with 1 when the setup carries `cookie`. `None` for
+    /// `verdict` never answers at all.
+    fn fake_x<S: std::io::Read + std::io::Write + Send + 'static>(
+        accept: impl Fn() -> Option<S> + Send + 'static,
+        verdict: Option<u8>,
+        cookie: &'static [u8],
+    ) {
+        std::thread::spawn(move || {
+            while let Some(mut s) = accept() {
+                let mut buf = [0u8; 256];
+                let n = std::io::Read::read(&mut s, &mut buf).unwrap_or(0);
+                let setup = &buf[..n];
+                let has_cookie = !cookie.is_empty() && setup.windows(cookie.len()).any(|w| w == cookie);
+                if let Some(v) = verdict {
+                    let _ = std::io::Write::write_all(&mut s, &[if has_cookie { 1 } else { v }]);
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        });
+    }
+
+    fn unix_x(n: u32) -> impl Fn() -> Option<std::os::unix::net::UnixStream> {
+        use std::os::linux::net::SocketAddrExt;
+        use std::os::unix::net::{SocketAddr, UnixListener};
+        let name = SocketAddr::from_abstract_name(format!("/tmp/.X11-unix/X{n}")).unwrap();
+        let listener = UnixListener::bind_addr(&name).unwrap();
+        move || listener.accept().ok().map(|(s, _)| s)
+    }
+
+    /// Every spelling of a LIVE display must answer: a false "headless" would
+    /// take screenshots away from a working desktop.
+    #[test]
+    fn every_spelling_of_a_live_x_display_answers() {
+        let n = 60_000 + std::process::id() % 1_000;
+        fake_x(unix_x(n), Some(1), b"");
+        for display in [format!(":{n}"), format!(":{n}.0"), format!("unix:{n}.0"), format!("unix/:{n}")] {
+            assert!(x11_answers(&display, None), "{display}");
+        }
+        assert!(!x11_answers(&format!(":{}", n + 2_000), None), "a neighbouring display is dead");
+
+        let tcp = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let n = tcp.local_addr().unwrap().port() - 6000;
+        fake_x(move || tcp.accept().ok().map(|(s, _)| s), Some(1), b"");
+        assert!(x11_answers(&format!("127.0.0.1:{n}.0"), None));
+        assert!(x11_answers(&format!("tcp/127.0.0.1:{n}"), None));
+    }
+
+    fn xauth_entry(number: &str, name: &str, data: &[u8]) -> Vec<u8> {
+        let mut e = vec![1, 0];
+        for f in [b"crucible".as_slice(), number.as_bytes(), name.as_bytes(), data] {
+            e.extend((f.len() as u16).to_be_bytes());
+            e.extend(f);
+        }
+        e
+    }
+
+    /// The evidence case: the socket is there, but the server refuses a job
+    /// with no cookie, so the display is NOT usable and spectacle stays down.
+    #[test]
+    fn a_live_x_server_that_refuses_this_job_does_not_count() {
+        const COOKIE: &[u8] = b"sixteen-byte-key";
+        for (offset, refusal) in [(1_000, 0u8), (1_001, 2u8)] {
+            let n = 60_000 + std::process::id() % 1_000 + offset;
+            fake_x(unix_x(n), Some(refusal), COOKIE);
+            let display = format!(":{n}");
+            assert!(!x11_answers(&display, None), "no cookie, refusal {refusal}");
+
+            let file = std::env::temp_dir().join(format!("reel-xauth-{}-{n}", std::process::id()));
+            std::fs::write(&file, xauth_entry(&(n + 1).to_string(), "MIT-MAGIC-COOKIE-1", COOKIE)).unwrap();
+            assert!(!x11_answers(&display, Some(&file)), "a cookie for another display");
+            std::fs::write(&file, xauth_entry(&n.to_string(), "MIT-MAGIC-COOKIE-1", COOKIE)).unwrap();
+            assert!(x11_answers(&display, Some(&file)), "the right cookie gets in");
+            let _ = std::fs::remove_file(&file);
+        }
+    }
+
+    /// A socket that accepts and then says nothing is not a display.
+    #[test]
+    fn a_silent_x_socket_does_not_count() {
+        let n = 60_000 + std::process::id() % 1_000 + 3_000;
+        fake_x(unix_x(n), None, b"");
+        assert!(!x11_answers(&format!(":{n}"), None));
+    }
+
+    #[test]
+    fn xauthority_files_yield_the_cookies_for_this_display() {
+        let file = [
+            xauth_entry("1", "MIT-MAGIC-COOKIE-1", b"one"),
+            xauth_entry("2", "MIT-MAGIC-COOKIE-1", b"two"),
+            xauth_entry("1", "XDM-AUTHORIZATION-1", b"xdm"),
+            xauth_entry("", "MIT-MAGIC-COOKIE-1", b"any"),
+        ]
+        .concat();
+        assert_eq!(xauth_cookies(&file, Some(1)), [b"one".to_vec(), b"any".to_vec()]);
+        assert_eq!(xauth_cookies(&file, Some(9)), [b"any".to_vec()]);
+        // A truncated file yields what is whole and never panics.
+        assert_eq!(xauth_cookies(&file[..file.len() - 1], Some(9)), Vec::<Vec<u8>>::new());
+        assert!(xauth_cookies(&[0], Some(1)).is_empty());
+    }
+
+    /// The setup is little-endian protocol 11.0, padded to four bytes.
+    #[test]
+    fn the_x_setup_request_is_well_formed() {
+        struct Tape(Vec<u8>);
+        impl std::io::Read for Tape {
+            fn read(&mut self, b: &mut [u8]) -> std::io::Result<usize> {
+                b[0] = 1;
+                Ok(1)
+            }
+        }
+        impl std::io::Write for Tape {
+            fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+                self.0.extend(b);
+                Ok(b.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut bare = Tape(vec![]);
+        assert!(x11_setup(&mut bare, b""));
+        assert_eq!(bare.0, [b'l', 0, 11, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+
+        let mut cookie = Tape(vec![]);
+        assert!(x11_setup(&mut cookie, &[7; 16]));
+        assert_eq!(cookie.0.len(), 12 + 20 + 16);
+        assert_eq!(cookie.0[6..10], [18, 0, 16, 0]);
+        assert_eq!(&cookie.0[12..30], b"MIT-MAGIC-COOKIE-1");
+        assert_eq!(cookie.0[30..32], [0, 0], "name padded to four");
+        assert_eq!(cookie.0[32..], [7; 16]);
+    }
+
+    /// Spellings of DISPLAY that can never connect fail here, not in Qt.
+    #[test]
+    fn nonsense_displays_do_not_answer() {
+        for bad in ["", "nonsense", ":", ":x", "127.0.0.1:not-a-number"] {
+            assert!(!x11_answers(bad, None), "{bad:?}");
+        }
+    }
+
+    /// The error must name BOTH variables and say what happened to each.
+    #[test]
+    fn the_headless_error_names_the_missing_display() {
+        let unset = display_var("WAYLAND_DISPLAY", None, |_| true).unwrap_err();
+        assert_eq!(unset, "WAYLAND_DISPLAY is not set");
+        assert_eq!(display_var("WAYLAND_DISPLAY", Some(""), |_| true).unwrap_err(), unset);
+        let dead = display_var("DISPLAY", Some(":1"), |_| false).unwrap_err();
+        assert_eq!(dead, "DISPLAY=:1 is set but unusable from here (no answer, or access refused)");
+        assert!(display_var("DISPLAY", Some(":1"), |_| true).is_ok());
+
+        let msg = headless_error(&unset, &dead);
+        assert!(msg.starts_with("headless: no reachable display"), "{msg}");
+        assert!(msg.contains("WAYLAND_DISPLAY is not set") && msg.contains("DISPLAY=:1"), "{msg}");
+    }
+
+    /// Headless plans nothing, spectacle included, on either session type.
+    #[test]
+    fn a_headless_machine_plans_no_capture_tool() {
+        let tools: Vec<String> = KNOWN_TOOLS.iter().map(|t| t.to_string()).collect();
+        let why = "headless: no reachable display (WAYLAND_DISPLAY is not set; DISPLAY is not set)";
+        let env = Env { os: Os::Linux, wayland: false, tools, display: ":0".into(), headless: Some(why.into()) };
+        let out = Path::new("/tmp/a.png");
+        for mode in [ShotMode::Full, ShotMode::Region, ShotMode::Window, ShotMode::Area(Rect { x: 0, y: 0, w: 64, h: 64 })] {
+            let opts = ShotOpts { mode, ..Default::default() };
+            assert!(plan_shot(&opts, out, &env).is_empty(), "{mode:?}");
+            assert!(plan_shot(&opts, out, &Env { wayland: true, ..env.clone() }).is_empty(), "{mode:?}");
+        }
+
+        let err = plan_recording(&RecordOpts::default(), Path::new("/tmp/a.mp4"), &env, None).unwrap_err();
+        assert_eq!(err.to_string(), why);
+        // A camera is not a display: it still records.
+        let cam = RecordOpts { webcam: Some("/dev/video0".into()), ..Default::default() };
+        assert_eq!(plan_recording(&cam, Path::new("/tmp/a.mp4"), &env, None).unwrap().tool, "ffmpeg");
     }
 
     /// A timed recording of a real screen: the planner's command, run, and

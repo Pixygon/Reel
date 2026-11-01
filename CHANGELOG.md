@@ -21,9 +21,23 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - PNG alpha on the overlay track now survives the render.
 - `reel frame` no longer loses a still that isn't at the very start of the timeline.
 
-## [2.1.0] — 2026-10-30
+## [2.1.1] — 2026-11-01
 
-_Reel adds live picture effects (blur, glitch, shake, logo build), reusable template slots, and multi-aspect-ratio variants._
+_Screenshot and recording now detect unreachable displays up front, avoiding failed launches and crash-reporter popups on headless machines._
+
+### Changed
+- The `reel devices` report now shows a "headless" session state with an explicit reason when no display is reachable, instead of misreporting the session type or defaulting to "the desktop portal".
+
+### Improved
+- The headless error message now names exactly which display variable was missing or unusable (e.g. "DISPLAY=:1 is set but unusable from here") instead of a generic failure, making it much easier to diagnose capture problems on remote or CI machines.
+
+### Fixed
+- Screenshot and screen recording no longer attempt to launch a capture tool when run in a job or session that has no real display connection (for example, a headless job that inherited DISPLAY/WAYLAND_DISPLAY but can't actually reach them). Previously this could launch spectacle and trigger a desktop crash reporter popup; now Reel detects the dead display up front and fails immediately with a clear error explaining why.
+- Webcam recording is unaffected by the new headless check and continues to work even when no display is available, since a camera doesn't need one.
+
+Codex impact: none
+
+## [2.1.0] — 2026-10-30
 
 ### Added
 - New picture effects for clips: free-angle rotation, Gaussian blur, RGB split, glitch (seeded tears and jittering split), screen shake, and a logo 'build' animation that assembles the picture from tiles. All run live in preview and in the final render.
