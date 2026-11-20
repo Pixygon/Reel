@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened-runtime exceptions for Reel.app — and only these.
+  scripts/mac.sh signs Contents/MacOS/reel and Contents/Resources/bin/ffmpeg
+  with this file (ffprobe and the dylibs get none).
+
+  Capture records the webcam and microphone through the bundled ffmpeg's
+  avfoundation input; the hardened runtime blocks both devices without these
+  two keys (Info.plist carries the matching usage strings).
+
+  Deliberately ABSENT: disable-library-validation (libmpv's dylibs are
+  re-signed by the same team, so they load under library validation),
+  allow-jit / allow-unsigned-executable-memory (this libmpv has no LuaJIT),
+  allow-dyld-environment-variables (rpaths, not DYLD_*, find Frameworks).
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.device.camera</key><true/>
+  <key>com.apple.security.device.audio-input</key><true/>
+</dict>
+</plist>

@@ -443,8 +443,22 @@ pearl ship                     # ship ritual: test → draft → ship → commit
 - Screenshots on a Mac without Screen Recording permission:
   `REEL_DEBUG_SHOT=out.png [REEL_DEBUG_SHOT_AFTER=4]` saves the window's
   own pixels (works under Xvfb too).
-- Ad-hoc signed only (no Developer ID on the M5): first launch needs
-  System Settings → Privacy & Security → Open Anyway.
+- SIGNING: `mac.sh` signs INSIDE-OUT (each dylib, ffmpeg/ffprobe, then the
+  app; no --deep) with `PIXYGON_MAC_SIGN_IDENTITY` (default the Developer ID
+  of team 78FMJHZ97T), `--options runtime --timestamp` and
+  `scripts/mac/reel.entitlements` (camera + audio-input for avfoundation
+  capture, nothing else). Library validation is REAL: every bundled dylib
+  must carry the app's Team ID, so never add disable-library-validation —
+  re-sign the dylib. With no identity in the keychain it falls back to
+  ad-hoc WITHOUT the runtime flag (ad-hoc has no Team ID, so hardened
+  ad-hoc refuses its own libmpv); first launch then needs Privacy &
+  Security → Open Anyway. `REEL_MAC_SELFTEST=1|team` dlopens the bundled
+  libmpv by absolute path and checks the signer; mac.sh runs it.
+- Updates: `macsign::verify_team` (codesign --strict --deep + a Developer
+  ID requirement on leaf OU 78FMJHZ97T) refuses any other build — call it
+  before swapping a downloaded Reel.app in. Notarize + staple runs only with
+  PIXYGON_NOTARY_KEY_ID + PIXYGON_NOTARY_ISSUER (AuthKey p8 from a standard
+  private_keys folder; never copied or printed).
 
 ## Verifying changes
 
