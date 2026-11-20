@@ -1,0 +1,26 @@
+• "Developer ID Application: Anders Horne (78FMJHZ97T)" not in the keychain: ad-hoc signing
+/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel/.pearl-artifacts/harness/Reel.app/Contents/Frameworks/libdep.dylib: replacing existing signature
+/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel/.pearl-artifacts/harness/Reel.app/Contents/Frameworks/libmpv.dylib: replacing existing signature
+/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel/.pearl-artifacts/harness/Reel.app/Contents/Resources/bin/ffmpeg: replacing existing signature
+/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel/.pearl-artifacts/harness/Reel.app/Contents/Resources/bin/ffprobe: replacing existing signature
+/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel/.pearl-artifacts/harness/Reel.app: replacing existing signature
+• signed: ad-hoc
+• smoke: bundled engine
+reel 2.1.1
+tool ok
+• libmpv loads under the app's signature (client API 2.5)
+• not signed by team 78FMJHZ97T (an updater would refuse this build)
+--- signatures
+Identifier=io.pixygon.reel
+CodeDirectory v=20400 size=50696 flags=0x2(adhoc) hashes=1574+7 location=embedded
+Signature=adhoc
+TeamIdentifier=not set
+{
+  "com.apple.security.device.audio-input" => true
+  "com.apple.security.device.camera" => true
+}
+CodeDirectory v=20400 size=296 flags=0x2(adhoc) hashes=3+2 location=embedded
+Signature=adhoc
+CodeDirectory v=20400 size=456 flags=0x2(adhoc) hashes=3+7 location=embedded
+Signature=adhoc
+harness ok

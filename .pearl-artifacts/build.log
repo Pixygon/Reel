@@ -1,0 +1,948 @@
+    Updating crates.io index
+ Downloading crates ...
+  Downloaded bit-set v0.8.0
+  Downloaded adler2 v2.0.1
+  Downloaded arg_enum_proc_macro v0.3.4
+  Downloaded as-slice v0.2.1
+  Downloaded equator v0.4.2
+  Downloaded byteorder-lite v0.1.0
+  Downloaded colorchoice v1.0.5
+  Downloaded defmt-parser v1.1.0
+  Downloaded form_urlencoded v1.2.2
+  Downloaded bit_field v0.10.3
+  Downloaded foreign-types v0.5.0
+  Downloaded bitflags v1.3.2
+  Downloaded block v0.1.6
+  Downloaded cfg_aliases v0.2.2
+  Downloaded core-graphics v0.23.2
+  Downloaded egui-wgpu v0.31.1
+  Downloaded smallvec v1.16.4
+  Downloaded ab_glyph v0.2.32
+  Downloaded block2 v0.5.1
+  Downloaded bytemuck_derive v1.12.1
+  Downloaded siphasher v1.0.4
+  Downloaded built v0.8.1
+  Downloaded cfg-if v1.0.5
+  Downloaded codespan-reporting v0.11.1
+  Downloaded emath v0.31.1
+  Downloaded fax v0.2.7
+  Downloaded ravif v0.13.0
+  Downloaded base64 v0.22.1
+  Downloaded bitflags v2.13.2
+  Downloaded block2 v0.6.2
+  Downloaded bytemuck v1.25.2
+  Downloaded bitstream-io v4.10.0
+  Downloaded bytes v1.12.1
+  Downloaded dpi v0.1.2
+  Downloaded env_filter v2.0.0
+  Downloaded rustversion v1.0.23
+  Downloaded simd_helpers v0.1.0
+  Downloaded aligned v0.4.3
+  Downloaded bumpalo v3.20.3
+  Downloaded core-graphics-types v0.1.3
+  Downloaded core_maths v0.1.1
+  Downloaded crossbeam-epoch v0.9.21
+  Downloaded document-features v0.2.12
+  Downloaded epaint v0.31.1
+  Downloaded getrandom v0.3.4
+  Downloaded rustc-hash v2.1.3
+  Downloaded slotmap v1.1.1
+  Downloaded aho-corasick v1.1.5
+  Downloaded aligned-vec v0.6.4
+  Downloaded cc v1.10.0
+  Downloaded color_quant v1.1.0
+  Downloaded crossbeam-channel v0.5.17
+  Downloaded dasp_sample v0.11.0
+  Downloaded ecolor v0.31.1
+  Downloaded fdeflate v0.3.7
+  Downloaded ffmpeg-sidecar v2.7.0
+  Downloaded find-msvc-tools v0.1.15
+  Downloaded rustc-hash v1.1.0
+  Downloaded objc2-io-surface v0.3.2
+  Downloaded strict-num v0.1.1
+  Downloaded arrayref v0.3.9
+  Downloaded dispatch v0.2.0
+  Downloaded equivalent v1.0.3
+  Downloaded quick-error v2.0.1
+  Downloaded subtle v2.6.1
+  Downloaded anstream v1.0.0
+  Downloaded core-foundation v0.9.4
+  Downloaded float-cmp v0.9.0
+  Downloaded bit-vec v0.8.0
+  Downloaded ab_glyph_rasterizer v0.1.10
+  Downloaded stable_deref_trait v1.2.1
+  Downloaded type-map v0.5.1
+  Downloaded utf8-zero v0.8.1
+  Downloaded foreign-types-shared v0.3.1
+  Downloaded unicode-xid v0.2.6
+  Downloaded wasm-bindgen-shared v0.2.130
+  Downloaded cursor-icon v1.2.0
+  Downloaded equator-macro v0.4.2
+  Downloaded foreign-types-macros v0.2.4
+  Downloaded potential_utf v0.1.6
+  Downloaded unicode-bidi-mirroring v0.4.0
+  Downloaded untrusted v0.9.0
+  Downloaded either v1.19.0
+  Downloaded pulp-wasm-simd-flag v0.1.1
+  Downloaded scopeguard v1.2.0
+  Downloaded utf8parse v0.2.2
+  Downloaded version_check v0.9.5
+  Downloaded accesskit_winit v0.23.1
+  Downloaded anstyle v1.0.14
+  Downloaded arrayvec v0.7.8
+  Downloaded avif-serialize v0.8.9
+  Downloaded defmt v1.2.0
+  Downloaded defmt-macros v1.2.0
+  Downloaded crossbeam-utils v0.8.23
+  Downloaded profiling-procmacros v1.0.18
+  Downloaded reborrow v0.5.5
+  Downloaded renderdoc-sys v1.1.0
+  Downloaded strum v0.26.3
+  Downloaded utf8_iter v1.1.0
+  Downloaded wasm-bindgen-macro v0.2.130
+  Downloaded pastey v0.1.1
+  Downloaded idna_adapter v1.2.2
+  Downloaded profiling v1.0.18
+  Downloaded shlex v2.0.1
+  Downloaded unicode-ccc v0.4.0
+  Downloaded crossbeam-deque v0.8.8
+  Downloaded displaydoc v0.2.7
+  Downloaded egui-winit v0.31.1
+  Downloaded env_logger v0.11.11
+  Downloaded foldhash v0.1.5
+  Downloaded simd-adler32 v0.3.10
+  Downloaded simplecss v0.2.2
+  Downloaded strum_macros v0.26.4
+  Downloaded synstructure v0.14.0
+  Downloaded thiserror v2.0.21
+  Downloaded thiserror-impl v1.0.69
+  Downloaded thiserror-impl v2.0.21
+  Downloaded unicode-vo v0.1.0
+  Downloaded utf_types v1.0.0
+  Downloaded v_frame v0.3.9
+  Downloaded web-time v1.1.0
+  Downloaded zerovec-derive v0.11.7
+  Downloaded xmlwriter v0.1.0
+  Downloaded yoke-derive v0.8.4
+  Downloaded nohash-hasher v0.2.0
+  Downloaded num-derive v0.4.2
+  Downloaded percent-encoding v2.3.2
+  Downloaded accesskit_macos v0.18.1
+  Downloaded anstyle-parse v1.0.0
+  Downloaded anstyle-query v1.1.5
+  Downloaded autocfg v1.5.1
+  Downloaded core-foundation-sys v0.8.7
+  Downloaded data-url v0.3.2
+  Downloaded dispatch2 v0.3.1
+  Downloaded quote v1.0.47
+  Downloaded raw-window-handle v0.6.2
+  Downloaded rgb v0.8.53
+  Downloaded rustls-pki-types v1.15.1
+  Downloaded smol_str v0.2.2
+  Downloaded spirv v0.3.0+sdk-1.3.268.0
+  Downloaded static_assertions v1.1.0
+  Downloaded tiny-skia-path v0.11.4
+  Downloaded tinystr v0.8.5
+  Downloaded unicode-script v0.5.8
+  Downloaded pollster v0.4.0
+  Downloaded weezl v0.1.12
+  Downloaded y4m v0.8.0
+  Downloaded coreaudio-rs v0.13.0
+  Downloaded jobserver v0.1.35
+  Downloaded maybe-rayon v0.1.1
+  Downloaded objc2-encode v4.1.0
+  Downloaded thiserror v1.0.69
+  Downloaded tracing-attributes v0.1.31
+  Downloaded unicode-ident v1.0.27
+  Downloaded gpu-alloc v0.6.2
+  Downloaded lock_api v0.4.14
+  Downloaded objc v0.2.7
+  Downloaded pico-args v0.5.0
+  Downloaded svgtypes v0.15.3
+  Downloaded termcolor v1.4.1
+  Downloaded serde_derive v1.0.229
+  Downloaded unicode-properties v0.1.4
+  Downloaded gpu-descriptor v0.3.2
+  Downloaded lebe v0.5.3
+  Downloaded loop9 v0.1.5
+  Downloaded malloc_buf v0.0.6
+  Downloaded new_debug_unreachable v1.0.6
+  Downloaded gif v0.13.3
+  Downloaded objc2-core-audio v0.3.2
+  Downloaded ordered-float v4.6.0
+  Downloaded owned_ttf_parser v0.25.1
+  Downloaded zerofrom v0.1.8
+  Downloaded zerofrom-derive v0.1.8
+  Downloaded hexf-parse v0.2.1
+  Downloaded accesskit v0.17.1
+  Downloaded ahash v0.8.12
+  Downloaded anyhow v1.0.104
+  Downloaded av1-grain v0.2.5
+  Downloaded getrandom v0.2.17
+  Downloaded imgref v1.12.3
+  Downloaded serde_core v1.0.229
+  Downloaded gif v0.14.2
+  Downloaded objc2-core-image v0.2.2
+  Downloaded objc2-core-data v0.2.2
+  Downloaded objc2-quartz-core v0.2.2
+  Downloaded litrs v1.0.1
+  Downloaded rfd v0.15.4
+  Downloaded webbrowser v1.2.5
+  Downloaded proc-macro2 v1.0.107
+  Downloaded writeable v0.6.4
+  Downloaded imagesize v0.13.0
+  Downloaded khronos-egl v6.0.0
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded rayon-core v1.13.0
+  Downloaded libloading v0.8.9
+  Downloaded mach2 v0.4.3
+  Downloaded crc32fast v1.5.3
+  Downloaded zune-core v0.4.12
+  Downloaded resvg v0.45.1
+  Downloaded roxmltree v0.20.0
+  Downloaded tinyvec v1.13.3
+  Downloaded unicode-bidi v0.3.18
+  Downloaded ureq-proto v0.6.5
+  Downloaded itoa v1.0.18
+  Downloaded arboard v3.7.0
+  Downloaded paste v1.0.15
+  Downloaded rustls-webpki v0.103.16
+  Downloaded serde v1.0.229
+  Downloaded noop_proc_macro v0.3.0
+  Downloaded gpu-alloc-types v0.3.1
+  Downloaded tracing-core v0.1.36
+  Downloaded memmap2 v0.9.12
+  Downloaded objc2-core-audio-types v0.3.2
+  Downloaded once_cell v1.21.4
+  Downloaded log v0.4.34
+  Downloaded num-rational v0.4.2
+  Downloaded qoi v0.4.1
+  Downloaded url v2.5.8
+  Downloaded flate2 v1.1.10
+  Downloaded wasm-bindgen v0.2.130
+  Downloaded yoke v0.8.4
+  Downloaded num-integer v0.1.47
+  Downloaded zeroize v1.9.1
+  Downloaded gpu-descriptor-types v0.2.0
+  Downloaded zmij v1.0.23
+  Downloaded tiff v0.11.3
+  Downloaded parking_lot v0.12.5
+  Downloaded parking_lot_core v0.9.12
+  Downloaded image-webp v0.2.4
+  Downloaded zopfli v0.8.4
+  Downloaded zune-core v0.5.3
+  Downloaded euclid v0.22.14
+  Downloaded num-complex v0.4.6
+  Downloaded icu_normalizer_data v2.4.0
+  Downloaded icu_provider v2.4.0
+  Downloaded miniz_oxide v0.8.9
+  Downloaded typed-path v0.13.0
+  Downloaded objc2-metal v0.2.2
+  Downloaded pkg-config v0.3.34
+  Downloaded base64 v0.23.1
+  Downloaded getrandom v0.4.3
+  Downloaded zune-inflate v0.2.54
+  Downloaded half v2.7.1
+  Downloaded objc-sys v0.3.5
+  Downloaded wasm-bindgen-macro-support v0.2.130
+  Downloaded pin-project-lite v0.2.17
+  Downloaded zune-jpeg v0.5.15
+  Downloaded wgpu-types v24.0.0
+  Downloaded num-bigint v0.4.8
+  Downloaded regex v1.13.1
+  Downloaded icu_locale_core v2.4.0
+  Downloaded pulp v0.22.3
+  Downloaded usvg v0.45.1
+  Downloaded cpal v0.16.0
+  Downloaded zerotrie v0.2.5
+  Downloaded objc2-core-graphics v0.3.2
+  Downloaded num-traits v0.2.19
+  Downloaded heck v0.5.0
+  Downloaded serde_json v1.0.154
+  Downloaded zune-jpeg v0.4.21
+  Downloaded rayon v1.12.0
+  Downloaded no_std_io2 v0.9.4
+  Downloaded memchr v2.8.3
+  Downloaded miniz_oxide v0.9.1
+  Downloaded litemap v0.8.3
+  Downloaded png v0.17.16
+  Downloaded kurbo v0.11.3
+  Downloaded libm v0.2.16
+  Downloaded httparse v1.10.1
+  Downloaded ttf-parser v0.25.1
+  Downloaded fontdb v0.23.0
+  Downloaded objc2-audio-toolbox v0.3.2
+  Downloaded tiny-skia v0.11.4
+  Downloaded hashbrown v0.15.5
+  Downloaded ureq v3.5.0
+  Downloaded png v0.18.1
+  Downloaded objc2 v0.5.3
+  Downloaded immutable-chunkmap v2.1.5
+  Downloaded webpki-roots v1.0.11
+  Downloaded zerovec v0.11.9
+  Downloaded jiff-core v0.1.1
+  Downloaded rustybuzz v0.20.1
+  Downloaded icu_collections v2.4.0
+  Downloaded unicode-width v0.1.14
+  Downloaded icu_properties v2.4.0
+  Downloaded idna v1.1.0
+  Downloaded indexmap v2.14.2
+  Downloaded zlib-rs v0.6.8
+  Downloaded zip v9.1.3
+  Downloaded rustls v0.23.46
+  Downloaded syn v2.0.119
+  Downloaded syn v3.0.9
+  Downloaded zerocopy v0.8.63
+  Downloaded objc2-core-foundation v0.3.2
+  Downloaded glow v0.16.0
+  Downloaded objc2-app-kit v0.2.2
+  Downloaded regex-syntax v0.8.11
+  Downloaded zerocopy-derive v0.8.63
+  Downloaded http v1.5.0
+  Downloaded itertools v0.14.0
+  Downloaded wgpu-hal v24.0.4
+  Downloaded icu_properties_data v2.4.0
+  Downloaded tracing v0.1.44
+  Downloaded moxcms v0.8.1
+  Downloaded wgpu v24.0.5
+  Downloaded nom v8.0.0
+  Downloaded hashbrown v0.17.1
+  Downloaded objc2-foundation v0.2.2
+  Downloaded regex-automata v0.4.18
+  Downloaded winit v0.30.13
+  Downloaded jiff v0.2.38
+  Downloaded pxfm v0.1.30
+  Downloaded libc v0.2.191
+  Downloaded exr v1.74.2
+  Downloaded wgpu-core v24.0.5
+  Downloaded objc2 v0.6.5
+  Downloaded egui v0.31.1
+  Downloaded image v0.25.10
+  Downloaded objc2-foundation v0.3.2
+  Downloaded rav1e v0.8.1
+  Downloaded ring v0.17.14
+  Downloaded nix v0.31.3
+  Downloaded ash v0.38.0+1.3.281
+  Downloaded av-scenechange v0.14.1
+  Downloaded icu_normalizer v2.4.0
+  Downloaded objc2-app-kit v0.3.2
+  Downloaded naga v24.0.0
+  Downloaded epaint_default_fonts v0.31.1
+  Downloaded metal v0.31.0
+  Downloaded accesskit_consumer v0.26.0
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.27
+   Compiling libc v0.2.191
+   Compiling serde_core v1.0.229
+   Compiling cfg-if v1.0.5
+   Compiling log v0.4.34
+   Compiling objc2-encode v4.1.0
+   Compiling cfg_aliases v0.2.2
+   Compiling stable_deref_trait v1.2.1
+   Compiling arrayvec v0.7.8
+   Compiling smallvec v1.16.4
+   Compiling simd-adler32 v0.3.10
+   Compiling version_check v0.9.5
+   Compiling libm v0.2.16
+   Compiling autocfg v1.5.1
+   Compiling objc2 v0.6.5
+   Compiling memchr v2.8.3
+   Compiling adler2 v2.0.1
+   Compiling crc32fast v1.5.3
+   Compiling crossbeam-utils v0.8.23
+   Compiling bitflags v1.3.2
+   Compiling paste v1.0.15
+   Compiling miniz_oxide v0.9.1
+   Compiling crossbeam-epoch v0.9.21
+   Compiling zlib-rs v0.6.8
+   Compiling thiserror v2.0.21
+   Compiling zerocopy v0.8.63
+   Compiling crossbeam-deque v0.8.8
+   Compiling num-traits v0.2.19
+   Compiling once_cell v1.21.4
+   Compiling rayon-core v1.13.0
+   Compiling core-foundation-sys v0.8.7
+   Compiling objc-sys v0.3.5
+   Compiling parking_lot_core v0.9.12
+   Compiling anyhow v1.0.104
+   Compiling foreign-types-shared v0.3.1
+   Compiling syn v3.0.9
+   Compiling syn v2.0.119
+   Compiling bitflags v2.13.2
+   Compiling core_maths v0.1.1
+   Compiling litemap v0.8.3
+   Compiling ttf-parser v0.25.1
+   Compiling flate2 v1.1.10
+   Compiling scopeguard v1.2.0
+   Compiling rustversion v1.0.23
+   Compiling core-foundation v0.9.4
+   Compiling synstructure v0.14.0
+   Compiling either v1.19.0
+   Compiling core-graphics-types v0.1.3
+   Compiling writeable v0.6.4
+   Compiling shlex v2.0.1
+   Compiling objc2-core-foundation v0.3.2
+   Compiling utf_types v1.0.0
+   Compiling find-msvc-tools v0.1.15
+   Compiling lock_api v0.4.14
+   Compiling utf8_iter v1.1.0
+   Compiling cc v1.10.0
+   Compiling miniz_oxide v0.8.9
+   Compiling equivalent v1.0.3
+   Compiling raw-window-handle v0.6.2
+   Compiling icu_normalizer_data v2.4.0
+   Compiling icu_properties_data v2.4.0
+   Compiling hashbrown v0.17.1
+   Compiling fdeflate v0.3.7
+   Compiling profiling-procmacros v1.0.18
+   Compiling bytemuck_derive v1.12.1
+   Compiling zerofrom-derive v0.1.8
+   Compiling yoke-derive v0.8.4
+   Compiling zerovec-derive v0.11.7
+   Compiling thiserror-impl v2.0.21
+   Compiling displaydoc v0.2.7
+   Compiling profiling v1.0.18
+   Compiling zerocopy-derive v0.8.63
+   Compiling foreign-types-macros v0.2.4
+   Compiling equator-macro v0.4.2
+   Compiling bytemuck v1.25.2
+   Compiling zerofrom v0.1.8
+   Compiling objc2-foundation v0.3.2
+   Compiling num-integer v0.1.47
+   Compiling ring v0.17.14
+   Compiling foreign-types v0.5.0
+   Compiling objc2 v0.5.3
+   Compiling parking_lot v0.12.5
+   Compiling indexmap v2.14.2
+   Compiling equator v0.4.2
+   Compiling num-bigint v0.4.8
+   Compiling rayon v1.12.0
+   Compiling as-slice v0.2.1
+   Compiling av-scenechange v0.14.1
+   Compiling quick-error v2.0.1
+   Compiling built v0.8.1
+   Compiling heck v0.5.0
+   Compiling weezl v0.1.12
+   Compiling block2 v0.5.1
+   Compiling aligned v0.4.3
+   Compiling strum_macros v0.26.4
+   Compiling arg_enum_proc_macro v0.3.4
+   Compiling block2 v0.6.2
+   Compiling malloc_buf v0.0.6
+   Compiling rav1e v0.8.1
+   Compiling no_std_io2 v0.9.4
+   Compiling nom v8.0.0
+   Compiling ahash v0.8.12
+   Compiling pulp v0.22.3
+   Compiling yoke v0.8.4
+   Compiling naga v24.0.0
+   Compiling termcolor v1.4.1
+   Compiling accesskit v0.17.1
+   Compiling bit-vec v0.8.0
+   Compiling num-rational v0.4.2
+   Compiling zeroize v1.9.1
+   Compiling y4m v0.8.0
+   Compiling color_quant v1.1.0
+   Compiling pastey v0.1.1
+   Compiling unicode-width v0.1.14
+   Compiling aligned-vec v0.6.4
+   Compiling dispatch v0.2.0
+   Compiling percent-encoding v2.3.2
+   Compiling objc2-foundation v0.2.2
+   Compiling codespan-reporting v0.11.1
+   Compiling rustls-pki-types v1.15.1
+   Compiling v_frame v0.3.9
+   Compiling bit-set v0.8.0
+   Compiling maybe-rayon v0.1.1
+   Compiling bitstream-io v4.10.0
+   Compiling num-complex v0.4.6
+   Compiling rgb v0.8.53
+   Compiling emath v0.31.1
+   Compiling objc v0.2.7
+   Compiling objc2-core-graphics v0.3.2
+   Compiling owned_ttf_parser v0.25.1
+   Compiling num-derive v0.4.2
+   Compiling itertools v0.14.0
+   Compiling getrandom v0.2.17
+   Compiling simd_helpers v0.1.0
+   Compiling slotmap v1.1.1
+   Compiling wgpu-hal v24.0.4
+   Compiling httparse v1.10.1
+   Compiling rustc-hash v1.1.0
+   Compiling imgref v1.12.3
+   Compiling hexf-parse v0.2.1
+   Compiling new_debug_unreachable v1.0.6
+   Compiling block v0.1.6
+   Compiling foldhash v0.1.5
+   Compiling unicode-xid v0.2.6
+   Compiling ab_glyph_rasterizer v0.1.10
+   Compiling untrusted v0.9.0
+   Compiling noop_proc_macro v0.3.0
+   Compiling reborrow v0.5.5
+   Compiling byteorder-lite v0.1.0
+   Compiling float-cmp v0.9.0
+   Compiling itoa v1.0.18
+   Compiling zune-core v0.5.3
+   Compiling zerovec v0.11.9
+   Compiling zerotrie v0.2.5
+   Compiling pulp-wasm-simd-flag v0.1.1
+   Compiling av1-grain v0.2.5
+   Compiling image-webp v0.2.4
+   Compiling strict-num v0.1.1
+   Compiling zune-jpeg v0.5.15
+   Compiling ab_glyph v0.2.32
+   Compiling hashbrown v0.15.5
+   Compiling metal v0.31.0
+   Compiling loop9 v0.1.5
+   Compiling objc2-app-kit v0.3.2
+   Compiling ecolor v0.31.1
+   Compiling strum v0.26.3
+   Compiling objc2-core-audio-types v0.3.2
+   Compiling objc2-app-kit v0.2.2
+   Compiling wgpu-types v24.0.0
+   Compiling aho-corasick v1.1.5
+   Compiling avif-serialize v0.8.9
+   Compiling immutable-chunkmap v2.1.5
+   Compiling zune-inflate v0.2.54
+   Compiling nix v0.31.3
+   Compiling tinystr v0.8.5
+   Compiling potential_utf v0.1.6
+   Compiling wgpu-core v24.0.5
+   Compiling winit v0.30.13
+   Compiling icu_locale_core v2.4.0
+   Compiling icu_collections v2.4.0
+   Compiling libloading v0.8.9
+   Compiling getrandom v0.4.3
+   Compiling bytes v1.12.1
+   Compiling fax v0.2.7
+   Compiling bit_field v0.10.3
+   Compiling arrayref v0.3.9
+   Compiling regex-syntax v0.8.11
+   Compiling litrs v1.0.1
+   Compiling nohash-hasher v0.2.0
+   Compiling half v2.7.1
+   Compiling tracing-core v0.1.36
+   Compiling pxfm v0.1.30
+   Compiling lebe v0.5.3
+   Compiling pin-project-lite v0.2.17
+   Compiling rustls v0.23.46
+   Compiling epaint_default_fonts v0.31.1
+   Compiling http v1.5.0
+   Compiling epaint v0.31.1
+   Compiling tiff v0.11.3
+   Compiling tracing v0.1.44
+   Compiling document-features v0.2.12
+   Compiling icu_provider v2.4.0
+   Compiling tiny-skia-path v0.11.4
+   Compiling icu_properties v2.4.0
+   Compiling icu_normalizer v2.4.0
+   Compiling regex-automata v0.4.18
+   Compiling accesskit_consumer v0.26.0
+   Compiling objc2-core-audio v0.3.2
+   Compiling form_urlencoded v1.2.2
+   Compiling gif v0.14.2
+   Compiling core-graphics v0.23.2
+   Compiling qoi v0.4.1
+   Compiling png v0.18.1
+   Compiling memmap2 v0.9.12
+   Compiling kurbo v0.11.3
+   Compiling wgpu v24.0.5
+   Compiling idna_adapter v1.2.2
+   Compiling bumpalo v3.20.3
+   Compiling idna v1.1.0
+   Compiling unicode-bidi-mirroring v0.4.0
+   Compiling tinyvec v1.13.3
+   Compiling smol_str v0.2.2
+   Compiling moxcms v0.8.1
+   Compiling rustls-webpki v0.103.16
+   Compiling utf8parse v0.2.2
+   Compiling unicode-script v0.5.8
+   Compiling dpi v0.1.2
+   Compiling thiserror v1.0.69
+   Compiling unicode-properties v0.1.4
+   Compiling cursor-icon v1.2.0
+   Compiling subtle v2.6.1
+   Compiling base64 v0.23.1
+   Compiling zmij v1.0.23
+   Compiling unicode-ccc v0.4.0
+   Compiling siphasher v1.0.4
+   Compiling rustybuzz v0.20.1
+   Compiling exr v1.74.2
+   Compiling ureq-proto v0.6.5
+   Compiling svgtypes v0.15.3
+   Compiling anstyle-parse v1.0.0
+   Compiling fontdb v0.23.0
+   Compiling url v2.5.8
+   Compiling zopfli v0.8.4
+   Compiling accesskit_macos v0.18.1
+   Compiling objc2-audio-toolbox v0.3.2
+   Compiling egui v0.31.1
+   Compiling regex v1.13.1
+   Compiling webpki-roots v1.0.11
+   Compiling png v0.17.16
+   Compiling thiserror-impl v1.0.69
+   Compiling simplecss v0.2.2
+   Compiling utf8-zero v0.8.1
+   Compiling rustc-hash v2.1.3
+   Compiling serde v1.0.229
+   Compiling rfd v0.15.4
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling unicode-vo v0.1.0
+   Compiling typed-path v0.13.0
+   Compiling roxmltree v0.20.0
+   Compiling jiff-core v0.1.1
+   Compiling zune-core v0.4.12
+   Compiling colorchoice v1.0.5
+   Compiling ravif v0.13.0
+   Compiling pico-args v0.5.0
+   Compiling unicode-bidi v0.3.18
+   Compiling anstyle v1.0.14
+   Compiling imagesize v0.13.0
+   Compiling data-url v0.3.2
+   Compiling serde_json v1.0.154
+   Compiling web-time v1.1.0
+   Compiling cpal v0.16.0
+   Compiling anstyle-query v1.1.5
+   Compiling base64 v0.22.1
+   Compiling static_assertions v1.1.0
+   Compiling xmlwriter v0.1.0
+   Compiling anstream v1.0.0
+   Compiling jiff v0.2.38
+   Compiling usvg v0.45.1
+   Compiling zip v9.1.3
+   Compiling accesskit_winit v0.23.1
+   Compiling zune-jpeg v0.4.21
+   Compiling tiny-skia v0.11.4
+   Compiling image v0.25.10
+   Compiling type-map v0.5.1
+   Compiling env_filter v2.0.0
+   Compiling coreaudio-rs v0.13.0
+   Compiling ureq v3.5.0
+   Compiling webbrowser v1.2.5
+   Compiling gif v0.13.3
+   Compiling dispatch2 v0.3.1
+   Compiling serde_derive v1.0.229
+   Compiling mach2 v0.4.3
+   Compiling dasp_sample v0.11.0
+   Compiling ffmpeg-sidecar v2.7.0
+   Compiling resvg v0.45.1
+   Compiling env_logger v0.11.11
+   Compiling crossbeam-channel v0.5.17
+   Compiling pollster v0.4.0
+   Compiling arboard v3.7.0
+   Compiling egui-winit v0.31.1
+   Compiling egui-wgpu v0.31.1
+   Compiling reel v2.1.1 (/Users/andershorne/.cache/dyson/pearl-decide-wt/decision-6b00acef50d994625efd79bf-a1/Reel)
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:23:54
+   |
+23 |     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, STAR);
+   |                                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+   = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:25:48
+   |
+25 |     v.widgets.inactive.fg_stroke = Stroke::new(1.0, STAR);
+   |                                                ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:27:47
+   |
+27 |     v.widgets.hovered.fg_stroke = Stroke::new(1.0, CYAN);
+   |                                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:29:46
+   |
+29 |     v.widgets.active.fg_stroke = Stroke::new(1.0, VOID);
+   |                                              ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:31:38
+   |
+31 |     v.selection.stroke = Stroke::new(1.0, CYAN);
+   |                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:1414:49
+     |
+1414 | ...                   Stroke::new(0.5, Color32::from_gray(70)),
+     |                                   ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2423:52
+     |
+2423 |             Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { theme::CYAN }),
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2505:29
+     |
+2505 |                 Stroke::new(1.0, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2563:21
+     |
+2563 |         Stroke::new(0.5, egui::Color32::from_gray(60)),
+     |                     ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2573:53
+     |
+2573 |     painter.add(egui::Shape::line(line, Stroke::new(1.5, colour)));
+     |                                                     ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2577:51
+     |
+2577 |         painter.circle_stroke(p, 4.0, Stroke::new(1.0, theme::VOID));
+     |                                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2639:25
+     |
+2639 |             Stroke::new(0.5, egui::Color32::from_gray(45)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2651:52
+     |
+2651 |     painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2659:25
+     |
+2659 |             Stroke::new(1.0, theme::EMBER),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2683:25
+     |
+2683 |             Stroke::new(1.0, theme::VOID),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2700:52
+     |
+2700 |         painter.line_segment([pa, h1], Stroke::new(1.0, Color32::from_gray(110)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2701:52
+     |
+2701 |         painter.line_segment([pb, h2], Stroke::new(1.0, Color32::from_gray(110)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2930:25
+     |
+2930 |             Stroke::new(1.2, theme::CYAN),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.2_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2976:50
+     |
+2976 |     vp.circle_stroke(centre, radius, Stroke::new(1.0, Color32::from_gray(60)));
+     |                                                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2977:56
+     |
+2977 |     vp.circle_stroke(centre, radius * 0.5, Stroke::new(0.5, Color32::from_gray(50)));
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2980:58
+     |
+2980 |     vp.line_segment([centre, centre + skin], Stroke::new(0.5, Color32::from_gray(70)));
+     |                                                          ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3938:25
+     |
+3938 |             Stroke::new(1.0, Color32::from_gray(80)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3951:29
+     |
+3951 |                 Stroke::new(1.0, Color32::from_gray(55)),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3984:56
+     |
+3984 |             painter.rect_stroke(band, 2.0, Stroke::new(1.0, theme::CYAN), egui::StrokeKind::Inside);
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4078:56
+     |
+4078 |                 Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { base }),
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4194:41
+     |
+4194 | ...                   Stroke::new(1.0, theme::VOID),
+     |                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4208:33
+     |
+4208 |                     Stroke::new(1.0, theme::STAR),
+     |                                 ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4437:29
+     |
+4437 |                 Stroke::new(1.5, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4449:29
+     |
+4449 |                 Stroke::new(1.5, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4491:64
+     |
+4491 |                 painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+     |                                                                ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4514:37
+     |
+4514 |                         Stroke::new(1.0, theme::VOID),
+     |                                     ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4597:25
+     |
+4597 |             Stroke::new(1.0, theme::STAR),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4609:25
+     |
+4609 |             Stroke::new(1.0, theme::STAR.linear_multiply(0.5)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4626:21
+     |
+4626 |         Stroke::new(1.5, theme::EMBER),
+     |                     ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: `reel` (bin "reel") generated 34 warnings (run `cargo fix --bin "reel" -p reel` to apply 34 suggestions)
+    Finished `release` profile [optimized] target(s) in 1m 06s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+cargo build --release  520.08s user 32.46s system 825% cpu 1:06.93 total

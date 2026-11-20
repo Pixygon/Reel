@@ -1,0 +1,313 @@
+• cargo build --release
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:23:54
+   |
+23 |     v.widgets.noninteractive.fg_stroke = Stroke::new(1.0, STAR);
+   |                                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+   = note: `#[warn(float_literal_f32_fallback)]` (part of `#[warn(future_incompatible)]`) on by default
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:25:48
+   |
+25 |     v.widgets.inactive.fg_stroke = Stroke::new(1.0, STAR);
+   |                                                ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:27:47
+   |
+27 |     v.widgets.hovered.fg_stroke = Stroke::new(1.0, CYAN);
+   |                                               ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:29:46
+   |
+29 |     v.widgets.active.fg_stroke = Stroke::new(1.0, VOID);
+   |                                              ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+  --> src/theme.rs:31:38
+   |
+31 |     v.selection.stroke = Stroke::new(1.0, CYAN);
+   |                                      ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+   |
+   = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+   = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:1414:49
+     |
+1414 | ...                   Stroke::new(0.5, Color32::from_gray(70)),
+     |                                   ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2423:52
+     |
+2423 |             Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { theme::CYAN }),
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2505:29
+     |
+2505 |                 Stroke::new(1.0, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2563:21
+     |
+2563 |         Stroke::new(0.5, egui::Color32::from_gray(60)),
+     |                     ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2573:53
+     |
+2573 |     painter.add(egui::Shape::line(line, Stroke::new(1.5, colour)));
+     |                                                     ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2577:51
+     |
+2577 |         painter.circle_stroke(p, 4.0, Stroke::new(1.0, theme::VOID));
+     |                                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2639:25
+     |
+2639 |             Stroke::new(0.5, egui::Color32::from_gray(45)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2651:52
+     |
+2651 |     painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2659:25
+     |
+2659 |             Stroke::new(1.0, theme::EMBER),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2683:25
+     |
+2683 |             Stroke::new(1.0, theme::VOID),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2700:52
+     |
+2700 |         painter.line_segment([pa, h1], Stroke::new(1.0, Color32::from_gray(110)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2701:52
+     |
+2701 |         painter.line_segment([pb, h2], Stroke::new(1.0, Color32::from_gray(110)));
+     |                                                    ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2930:25
+     |
+2930 |             Stroke::new(1.2, theme::CYAN),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.2_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2976:50
+     |
+2976 |     vp.circle_stroke(centre, radius, Stroke::new(1.0, Color32::from_gray(60)));
+     |                                                  ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2977:56
+     |
+2977 |     vp.circle_stroke(centre, radius * 0.5, Stroke::new(0.5, Color32::from_gray(50)));
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:2980:58
+     |
+2980 |     vp.line_segment([centre, centre + skin], Stroke::new(0.5, Color32::from_gray(70)));
+     |                                                          ^^^ help: explicitly specify the type as `f32`: `0.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3938:25
+     |
+3938 |             Stroke::new(1.0, Color32::from_gray(80)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3951:29
+     |
+3951 |                 Stroke::new(1.0, Color32::from_gray(55)),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:3984:56
+     |
+3984 |             painter.rect_stroke(band, 2.0, Stroke::new(1.0, theme::CYAN), egui::StrokeKind::Inside);
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4078:56
+     |
+4078 |                 Stroke::new(if selected { 2.0 } else { 1.0 }, if selected { theme::STAR } else { base }),
+     |                                                        ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4194:41
+     |
+4194 | ...                   Stroke::new(1.0, theme::VOID),
+     |                                   ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4208:33
+     |
+4208 |                     Stroke::new(1.0, theme::STAR),
+     |                                 ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4437:29
+     |
+4437 |                 Stroke::new(1.5, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4449:29
+     |
+4449 |                 Stroke::new(1.5, theme::CYAN),
+     |                             ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4491:64
+     |
+4491 |                 painter.add(egui::Shape::line(pts, Stroke::new(1.5, theme::CYAN)));
+     |                                                                ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4514:37
+     |
+4514 |                         Stroke::new(1.0, theme::VOID),
+     |                                     ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4597:25
+     |
+4597 |             Stroke::new(1.0, theme::STAR),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4609:25
+     |
+4609 |             Stroke::new(1.0, theme::STAR.linear_multiply(0.5)),
+     |                         ^^^ help: explicitly specify the type as `f32`: `1.0_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: falling back to `f32` as the trait bound `f32: From<f64>` is not satisfied
+    --> src/ui.rs:4626:21
+     |
+4626 |         Stroke::new(1.5, theme::EMBER),
+     |                     ^^^ help: explicitly specify the type as `f32`: `1.5_f32`
+     |
+     = warning: this was previously accepted by the compiler but is being phased out; it will become a hard error in a future release!
+     = note: for more information, see issue #154024 <https://github.com/rust-lang/rust/issues/154024>
+
+warning: `reel` (bin "reel") generated 34 warnings (run `cargo fix --bin "reel" -p reel` to apply 34 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.12s
+warning: the following packages contain code that will be rejected by a future version of Rust: block v0.1.6
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+curl: (22) The requested URL returned error: 403

@@ -1,0 +1,364 @@
+diff --git a/CLAUDE.md b/CLAUDE.md
+index 607411c..d96aa9f 100644
+--- a/CLAUDE.md
++++ b/CLAUDE.md
+@@ -443,8 +443,22 @@ pearl ship                     # ship ritual: test → draft → ship → commit
+ - Screenshots on a Mac without Screen Recording permission:
+   `REEL_DEBUG_SHOT=out.png [REEL_DEBUG_SHOT_AFTER=4]` saves the window's
+   own pixels (works under Xvfb too).
+-- Ad-hoc signed only (no Developer ID on the M5): first launch needs
+-  System Settings → Privacy & Security → Open Anyway.
++- SIGNING: `mac.sh` signs INSIDE-OUT (each dylib, ffmpeg/ffprobe, then the
++  app; no --deep) with `PIXYGON_MAC_SIGN_IDENTITY` (default the Developer ID
++  of team 78FMJHZ97T), `--options runtime --timestamp` and
++  `scripts/mac/reel.entitlements` (camera + audio-input for avfoundation
++  capture, nothing else). Library validation is REAL: every bundled dylib
++  must carry the app's Team ID, so never add disable-library-validation —
++  re-sign the dylib. With no identity in the keychain it falls back to
++  ad-hoc WITHOUT the runtime flag (ad-hoc has no Team ID, so hardened
++  ad-hoc refuses its own libmpv); first launch then needs Privacy &
++  Security → Open Anyway. `REEL_MAC_SELFTEST=1|team` dlopens the bundled
++  libmpv by absolute path and checks the signer; mac.sh runs it.
++- Updates: `macsign::verify_team` (codesign --strict --deep + a Developer
++  ID requirement on leaf OU 78FMJHZ97T) refuses any other build — call it
++  before swapping a downloaded Reel.app in. Notarize + staple runs only with
++  PIXYGON_NOTARY_KEY_ID + PIXYGON_NOTARY_ISSUER (AuthKey p8 from a standard
++  private_keys folder; never copied or printed).
+ 
+ ## Verifying changes
+ 
+diff --git a/ROADMAP.md b/ROADMAP.md
+index 212f914..9c600bd 100644
+--- a/ROADMAP.md
++++ b/ROADMAP.md
+@@ -205,8 +205,12 @@ read `10.00 / 8.00` at the end of a transitioned edit.
+       bundled libmpv (media-kit, no scripting) + static ffmpeg 9 (no
+       libplacebo, no rubberband: HDR plays untone-mapped, music fit uses
+       atempo). Finder open via `application:openURLs:` (macos.rs), Core
+-      Audio mixer through cpal. Ad-hoc signed only. Left: Developer ID
+-      signing + notarization, ScreenCaptureKit capture (ffmpeg avfoundation
++      Audio mixer through cpal. Developer ID signing with the hardened
++      runtime (`scripts/mac/reel.entitlements`: camera + mic only), ad-hoc
++      when the identity is absent; `macsign::verify_team` is the team gate an
++      updater must pass. Left: a Developer ID build verified on a keychain
++      that holds the identity, notarization (step written, needs the App
++      Store Connect key), ScreenCaptureKit capture (ffmpeg avfoundation
+       fallback untested), voice-over recorder, a caption engine (upstream
+       whisper.cpp ships no macOS CLI build).
+ - [ ] Windows capture backend (Windows.Graphics.Capture). Needs a Windows
+diff --git a/scripts/mac.sh b/scripts/mac.sh
+index cdc127b..6d7fb1a 100755
+--- a/scripts/mac.sh
++++ b/scripts/mac.sh
+@@ -12,6 +12,12 @@
+ # Usage: scripts/mac.sh [--no-install] [--zip]
+ #   --no-install  build target/mac/Reel.app only
+ #   --zip         also write target/mac/Reel-<version>-macos-arm64.zip
++#
++# Signing: PIXYGON_MAC_SIGN_IDENTITY (default "Developer ID Application:
++# Anders Horne (78FMJHZ97T)") with the hardened runtime and
++# scripts/mac/reel.entitlements; ad-hoc when that identity isn't in the
++# keychain. Set PIXYGON_NOTARY_KEY_ID + PIXYGON_NOTARY_ISSUER to also
++# notarize and staple (writes the zip).
+ set -euo pipefail
+ cd "$(dirname "$0")/.."
+ 
+@@ -33,6 +39,8 @@ CACHE="$HOME/.cache/reel-mac"
+ OUT=target/mac
+ APP="$OUT/Reel.app"
+ 
++SIGN_IDENTITY="${PIXYGON_MAC_SIGN_IDENTITY:-Developer ID Application: Anders Horne (78FMJHZ97T)}"
++
+ MPV_TAG=v0.7.3
+ MPV_ASSET="libmpv-libs_${MPV_TAG}_macos-arm64-video-full.tar.gz"
+ FF_BASE=https://ffmpeg.martin-riedl.de/download/macos/arm64/1789931890_9.0.2
+@@ -166,14 +174,72 @@ cat > "$APP/Contents/Info.plist" <<PLIST
+ </plist>
+ PLIST
+ 
+-# Ad-hoc signature (no Developer ID on this machine): install_name_tool
+-# broke the originals, and Apple silicon refuses to run unsigned code.
+-codesign --force --deep --sign - "$APP" >/dev/null
+-codesign --verify --deep "$APP"
++# Signing. install_name_tool broke every original signature, and Apple
++# silicon refuses to run unsigned code, so everything is (re)signed here,
++# INSIDE-OUT: each dylib, then ffmpeg/ffprobe, then the app itself (whose
++# seal covers the rest). No --deep: it signs nested code without the
++# runtime flag or entitlements and Apple discourages it for signing.
++#
++# Developer ID when the identity is in the keychain (hardened runtime +
++# secure timestamp, as notarization requires), else ad-hoc — Crucible and
++# CI have no certificate, and an ad-hoc app still runs on this Mac.
++ENT=scripts/mac/reel.entitlements
++# Match the identity by its quoted name or its SHA-1 (both are valid --sign
++# values). Captured first: `grep -q` closing the pipe early under pipefail
++# would look like "identity missing".
++IDENTITIES="$(security find-identity -v -p codesigning 2>/dev/null || true)"
++if grep -qF -e "\"$SIGN_IDENTITY\"" -e " $SIGN_IDENTITY " <<<"$IDENTITIES"; then
++  SIGN=(--force --sign "$SIGN_IDENTITY" --options runtime --timestamp)
++  SIGNED_BY="$SIGN_IDENTITY"
++else
++  echo "• \"$SIGN_IDENTITY\" not in the keychain: ad-hoc signing" >&2
++  # No --options runtime here: ad-hoc code has no Team ID, so library
++  # validation would refuse every bundled dylib ("different Team IDs").
++  SIGN=(--force --sign -)
++  SIGNED_BY=ad-hoc
++fi
++for d in "$APP"/Contents/Frameworks/*.dylib; do
++  [ -L "$d" ] && continue
++  codesign "${SIGN[@]}" "$d" >/dev/null
++done
++codesign "${SIGN[@]}" --entitlements "$ENT" "$APP/Contents/Resources/bin/ffmpeg" >/dev/null
++codesign "${SIGN[@]}" "$APP/Contents/Resources/bin/ffprobe" >/dev/null
++codesign "${SIGN[@]}" --entitlements "$ENT" "$APP" >/dev/null
++codesign --verify --strict --deep "$APP"
++echo "• signed: $SIGNED_BY"
+ 
+ echo "• smoke: bundled engine"
+ "$APP/Contents/MacOS/reel" --version
+ "$APP/Contents/Resources/bin/ffmpeg" -hide_banner -version | head -1
++# Library validation: under the hardened runtime, dlopen refuses a dylib not
++# signed by the app's own team. Load the bundled libmpv for real.
++if [ "$SIGNED_BY" = ad-hoc ]; then
++  REEL_MAC_SELFTEST=1 "$APP/Contents/MacOS/reel"
++else
++  REEL_MAC_SELFTEST=team "$APP/Contents/MacOS/reel"
++  spctl --assess --type execute -vv "$APP" 2>&1 | sed "s/^/  /" || true
++fi
++
++# Notarization — only when both PIXYGON_NOTARY_KEY_ID and
++# PIXYGON_NOTARY_ISSUER are set (an App Store Connect API key). notarytool
++# reads AuthKey_<id>.p8 from the standard private_keys folders; the key is
++# never copied, echoed or committed. A notarized run always writes the
++# stapled zip (the --zip block below), so Gatekeeper passes offline.
++if [ -n "${PIXYGON_NOTARY_KEY_ID:-}" ] && [ -n "${PIXYGON_NOTARY_ISSUER:-}" ]; then
++  [ "$SIGNED_BY" != ad-hoc ] || { echo "notarization needs a Developer ID signature, not ad-hoc" >&2; exit 1; }
++  KEY=""
++  for dir in ./private_keys "$HOME/private_keys" "$HOME/.private_keys" "$HOME/.appstoreconnect/private_keys"; do
++    [ -f "$dir/AuthKey_$PIXYGON_NOTARY_KEY_ID.p8" ] && { KEY="$dir/AuthKey_$PIXYGON_NOTARY_KEY_ID.p8"; break; }
++  done
++  [ -n "$KEY" ] || { echo "no AuthKey_<key id>.p8 in a private_keys folder" >&2; exit 1; }
++  echo "• notarizing (xcrun notarytool, waits for Apple)"
++  ditto -c -k --sequesterRsrc --keepParent "$APP" "$tmp/notarize.zip"
++  xcrun notarytool submit "$tmp/notarize.zip" \
++    --key "$KEY" --key-id "$PIXYGON_NOTARY_KEY_ID" --issuer "$PIXYGON_NOTARY_ISSUER" --wait
++  xcrun stapler staple "$APP"
++  xcrun stapler validate "$APP"
++  ZIP=1
++fi
+ 
+ if [ "$ZIP" = 1 ]; then
+   Z="$OUT/Reel-$VERSION-macos-arm64.zip"
+diff --git a/src/main.rs b/src/main.rs
+index 05ad830..9320673 100644
+--- a/src/main.rs
++++ b/src/main.rs
+@@ -24,6 +24,8 @@ mod gpu;
+ mod integration;
+ #[cfg(target_os = "macos")]
+ mod macos;
++#[cfg(target_os = "macos")]
++mod macsign;
+ mod lut;
+ mod media;
+ mod perf;
+@@ -379,6 +381,11 @@ fn main() {
+     // Reel.app and Homebrew's. Put them in front, once, before any thread.
+     #[cfg(target_os = "macos")]
+     mac_path();
++    // scripts/mac.sh: prove the signed bundle loads its engine (see macsign.rs).
++    #[cfg(target_os = "macos")]
++    if std::env::var_os("REEL_MAC_SELFTEST").is_some() {
++        std::process::exit(macsign::selftest());
++    }
+ 
+     // No ffmpeg on this machine? Fetch a static build in the background so
+     // export/convert and the fallback decoder Just Work (mainly Windows).
+diff --git a/scripts/mac/reel.entitlements b/scripts/mac/reel.entitlements
+new file mode 100644
+index 0000000..7062e6f
+--- /dev/null
++++ b/scripts/mac/reel.entitlements
+@@ -0,0 +1,22 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<!--
++  Hardened-runtime exceptions for Reel.app — and only these.
++  scripts/mac.sh signs Contents/MacOS/reel and Contents/Resources/bin/ffmpeg
++  with this file (ffprobe and the dylibs get none).
++
++  Capture records the webcam and microphone through the bundled ffmpeg's
++  avfoundation input; the hardened runtime blocks both devices without these
++  two keys (Info.plist carries the matching usage strings).
++
++  Deliberately ABSENT: disable-library-validation (libmpv's dylibs are
++  re-signed by the same team, so they load under library validation),
++  allow-jit / allow-unsigned-executable-memory (this libmpv has no LuaJIT),
++  allow-dyld-environment-variables (rpaths, not DYLD_*, find Frameworks).
++-->
++<plist version="1.0">
++<dict>
++  <key>com.apple.security.device.camera</key><true/>
++  <key>com.apple.security.device.audio-input</key><true/>
++</dict>
++</plist>
+diff --git a/src/macsign.rs b/src/macsign.rs
+new file mode 100644
+index 0000000..05f7c10
+--- /dev/null
++++ b/src/macsign.rs
+@@ -0,0 +1,154 @@
++//! macOS code-signature checks: who signed a Reel.app, and does the bundled
++//! engine load under the hardened runtime.
++//!
++//! `verify_team` is the gate any updater MUST pass before it swaps a
++//! downloaded Reel.app in: only a Developer ID build signed by Pixygon's
++//! team is accepted — an ad-hoc build, another team's, or a bundle whose
++//! seal is broken is refused. `scripts/mac.sh` runs `selftest` against the
++//! freshly signed bundle (`REEL_MAC_SELFTEST=1`, or `=team` to also demand
++//! the team signature).
++
++use anyhow::{bail, Context, Result};
++use std::path::{Path, PathBuf};
++use std::process::Command;
++
++/// Pixygon's Apple Developer team (the Developer ID Application certificate).
++pub const TEAM_ID: &str = "78FMJHZ97T";
++
++/// The code requirement a release must satisfy: an Apple-anchored Developer
++/// ID chain (intermediate marker 6.2.6, leaf marker 6.1.13 — the same
++/// shape as a Developer ID app's designated requirement) whose leaf belongs
++/// to `team`.
++pub fn requirement(team: &str) -> String {
++    format!(
++        "anchor apple generic \
++         and certificate 1[field.1.2.840.113635.100.6.2.6] exists \
++         and certificate leaf[field.1.2.840.113635.100.6.1.13] exists \
++         and certificate leaf[subject.OU] = \"{team}\""
++    )
++}
++
++/// Refuse anything not signed by Pixygon's Developer ID: the strict, deep
++/// verification must pass (every nested dylib and binary sealed) AND the
++/// signature must meet `requirement(TEAM_ID)`.
++pub fn verify_team(bundle: &Path) -> Result<()> {
++    if !bundle.exists() {
++        bail!("{} does not exist", bundle.display());
++    }
++    let out = Command::new("/usr/bin/codesign")
++        .args(["--verify", "--strict", "--deep"])
++        .arg(format!("-R={}", requirement(TEAM_ID)))
++        .arg(bundle)
++        .output()
++        .context("running codesign")?;
++    if out.status.success() {
++        return Ok(());
++    }
++    let why = String::from_utf8_lossy(&out.stderr);
++    bail!(
++        "{} is not a build signed by team {TEAM_ID}: {}",
++        bundle.display(),
++        why.trim()
++    )
++}
++
++/// Reel.app for the running binary (Contents/MacOS/reel → Reel.app).
++fn own_bundle() -> Option<PathBuf> {
++    let exe = std::env::current_exe().ok()?;
++    let app = exe.parent()?.parent()?.parent()?.to_path_buf();
++    (app.extension().and_then(|e| e.to_str()) == Some("app")).then_some(app)
++}
++
++/// Load the bundled libmpv for real (library validation refuses a dylib not
++/// signed by the app's own team under the hardened runtime) and report the
++/// bundle's signer. Returns the process exit code.
++pub fn selftest() -> i32 {
++    let Some(app) = own_bundle() else {
++        eprintln!("mac selftest: not running from inside a .app bundle");
++        return 1;
++    };
++    let lib = app.join("Contents/Frameworks/libmpv.2.dylib");
++    // Load by absolute path: the normal lookup would quietly fall through to
++    // Homebrew's copy and hide a refusal of the bundled one.
++    match unsafe { libloading::Library::new(&lib) } {
++        Ok(l) => {
++            let sym: Result<libloading::Symbol<unsafe extern "C" fn() -> u64>, _> =
++                unsafe { l.get(b"mpv_client_api_version\0") };
++            match sym {
++                Ok(f) => {
++                    let v = unsafe { f() };
++                    println!("• libmpv loads under the app's signature (client API {}.{})", v >> 16, v & 0xffff);
++                }
++                Err(e) => {
++                    eprintln!("mac selftest: {} has no mpv_client_api_version: {e}", lib.display());
++                    return 1;
++                }
++            }
++        }
++        Err(e) => {
++            eprintln!("mac selftest: the bundled libmpv was refused: {e}");
++            return 1;
++        }
++    }
++    let want_team = std::env::var("REEL_MAC_SELFTEST").as_deref() == Ok("team");
++    match verify_team(&app) {
++        Ok(()) => println!("• signed by team {TEAM_ID}"),
++        Err(e) if want_team => {
++            eprintln!("mac selftest: {e}");
++            return 1;
++        }
++        Err(_) => println!("• not signed by team {TEAM_ID} (an updater would refuse this build)"),
++    }
++    0
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn the_requirement_pins_the_team_and_a_developer_id_chain() {
++        let r = requirement(TEAM_ID);
++        assert!(r.contains("certificate leaf[subject.OU] = \"78FMJHZ97T\""));
++        assert!(r.starts_with("anchor apple generic"));
++        assert!(r.contains("1.2.840.113635.100.6.1.13"), "Developer ID Application leaf marker");
++        // codesign must accept the requirement's syntax: an unparseable one
++        // would make every build fail "verification" for the wrong reason.
++        let out = Command::new("/usr/bin/csreq")
++            .args(["-r", &format!("={r}"), "-t"])
++            .output()
++            .expect("csreq");
++        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
++    }
++
++    #[test]
++    fn apples_own_binaries_are_refused() {
++        // Validly signed — but by Apple, not by Pixygon's team.
++        assert!(verify_team(Path::new("/bin/ls")).is_err());
++    }
++
++    #[test]
++    fn an_ad_hoc_build_is_refused() {
++        let dir = std::env::temp_dir().join(format!("reel-macsign-{}", std::process::id()));
++        std::fs::create_dir_all(&dir).unwrap();
++        let bin = dir.join("adhoc");
++        std::fs::copy("/usr/bin/true", &bin).unwrap();
++        let signed = Command::new("/usr/bin/codesign")
++            .args(["--force", "--sign", "-"])
++            .arg(&bin)
++            .status()
++            .unwrap();
++        assert!(signed.success());
++        // It IS a valid signature, so only the team requirement refuses it.
++        let plain = Command::new("/usr/bin/codesign").args(["--verify", "--strict"]).arg(&bin).status().unwrap();
++        assert!(plain.success());
++        let err = verify_team(&bin).unwrap_err().to_string();
++        assert!(err.contains(TEAM_ID), "{err}");
++        std::fs::remove_dir_all(&dir).ok();
++    }
++
++    #[test]
++    fn a_missing_bundle_is_refused() {
++        assert!(verify_team(Path::new("/nonexistent/Reel.app")).is_err());
++    }
++}

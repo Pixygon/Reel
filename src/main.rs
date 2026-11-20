@@ -24,6 +24,8 @@ mod gpu;
 mod integration;
 #[cfg(target_os = "macos")]
 mod macos;
+#[cfg(target_os = "macos")]
+mod macsign;
 mod lut;
 mod media;
 mod perf;
@@ -379,6 +381,11 @@ fn main() {
     // Reel.app and Homebrew's. Put them in front, once, before any thread.
     #[cfg(target_os = "macos")]
     mac_path();
+    // scripts/mac.sh: prove the signed bundle loads its engine (see macsign.rs).
+    #[cfg(target_os = "macos")]
+    if std::env::var_os("REEL_MAC_SELFTEST").is_some() {
+        std::process::exit(macsign::selftest());
+    }
 
     // No ffmpeg on this machine? Fetch a static build in the background so
     // export/convert and the fallback decoder Just Work (mainly Windows).

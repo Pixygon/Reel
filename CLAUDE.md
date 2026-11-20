@@ -440,6 +440,7 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   tarball. Ship from a Linux node; publish the Mac zip with
   `dyson release mac-arm64:target/mac/Reel-<v>-macos-arm64.zip --version v<v>`
   (the manifest merges platforms per version).
+- SPLIT: the M5 only builds, signs and notarizes (`scripts/mac.sh --zip`: Developer ID from `PIXYGON_MAC_SIGN_IDENTITY`, inside-out, `--options runtime --timestamp`, `scripts/mac/reel.entitlements`, ad-hoc when the identity is absent; notarize + staple only with `PIXYGON_NOTARY_PROFILE`), then hands the signed zip over; ship and release run from Crucible, and `macsign::verify_team` refuses any build not signed by team 78FMJHZ97T.
 - Screenshots on a Mac without Screen Recording permission:
   `REEL_DEBUG_SHOT=out.png [REEL_DEBUG_SHOT_AFTER=4]` saves the window's
   own pixels (works under Xvfb too).

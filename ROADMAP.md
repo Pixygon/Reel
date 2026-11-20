@@ -205,9 +205,13 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       bundled libmpv (media-kit, no scripting) + static ffmpeg 9 (no
       libplacebo, no rubberband: HDR plays untone-mapped, music fit uses
       atempo). Finder open via `application:openURLs:` (macos.rs), Core
-      Audio mixer through cpal. Ad-hoc signed only. Left: Developer ID
-      signing + notarization, ScreenCaptureKit capture (ffmpeg avfoundation
-      fallback untested), voice-over recorder, a caption engine (upstream
+      Audio mixer through cpal. Developer ID signing with the hardened
+      runtime (`scripts/mac/reel.entitlements`: camera + mic only), ad-hoc
+      when the identity is absent; `macsign::verify_team` is the team gate an
+      updater must pass. Left: a Developer ID build verified on a keychain
+      that holds the identity, notarization (`PIXYGON_NOTARY_PROFILE`
+      keychain profile; step written, not yet run), ScreenCaptureKit
+      capture (ffmpeg avfoundation fallback untested), voice-over recorder, a caption engine (upstream
       whisper.cpp ships no macOS CLI build).
 - [ ] Windows capture backend (Windows.Graphics.Capture). Needs a Windows
       box to verify against.
