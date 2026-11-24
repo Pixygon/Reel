@@ -6,6 +6,9 @@
 //! editor timeline. The road to "better than VLC / Premiere-class" is in
 //! ROADMAP.md; this is the running foundation it builds on.
 
+// First, so `tr!`/`trn!` are in scope for every module below.
+#[macro_use]
+mod i18n;
 mod app;
 #[cfg_attr(not(any(target_os = "linux", target_os = "windows", target_os = "macos")), allow(dead_code))]
 mod audio;
@@ -66,6 +69,7 @@ mod track;
 mod titles;
 pub mod ui;
 mod ui_tests;
+mod i18n_ui_tests;
 mod thumbs;
 mod video;
 mod waveform;
@@ -92,6 +96,8 @@ struct Reel {
     tray: Option<ksni::Handle<tray::ReelTray>>,
     /// Last recording state mirrored into the tray label.
     tray_recording: bool,
+    /// The language the tray menu was last built in (☰ → Language can change it).
+    tray_lang: i18n::Lang,
     /// Loop proxy — AccessKit wakes the loop through it.
     proxy: winit::event_loop::EventLoopProxy<UserEvent>,
 }
@@ -102,6 +108,16 @@ impl Reel {
         let rec = self.app.recorder.is_some();
         if rec != self.tray_recording {
             self.tray_recording = rec;
+            #[cfg(target_os = "linux")]
+            if let Some(handle) = &self.tray {
+                tray::set_recording(handle, rec);
+            }
+        }
+        // ksni rebuilds the menu on any update, so a no-op update re-reads
+        // every label in the newly chosen language.
+        let lang = i18n::lang();
+        if lang != self.tray_lang {
+            self.tray_lang = lang;
             #[cfg(target_os = "linux")]
             if let Some(handle) = &self.tray {
                 tray::set_recording(handle, rec);
@@ -421,6 +437,11 @@ fn main() {
             _ => {}
         }
     }
+    // The window speaks the user's language (OS locale, or their saved pick).
+    // The CLI above stays English: it is a scripting interface and its
+    // reference (docs/CLI.md) is generated from it.
+    i18n::init();
+    log::info!("ui language: {}", i18n::lang().code());
     let initial_open = argv.into_iter().next();
     let event_loop = EventLoop::<UserEvent>::with_user_event().build().expect("event loop");
     #[cfg(target_os = "macos")]
@@ -442,6 +463,7 @@ fn main() {
         #[cfg(target_os = "linux")]
         tray,
         tray_recording: false,
+        tray_lang: i18n::lang(),
         proxy,
     };
     #[cfg(target_os = "linux")]

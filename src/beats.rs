@@ -20,7 +20,7 @@ const MIN_SPACING: f64 = 0.25;
 pub fn detect(source: &str) -> Result<Vec<f64>> {
     let env = envelope(source)?;
     if env.len() < 10 {
-        return Err(anyhow!("not enough audio to find beats in"));
+        return Err(anyhow!(tr!("engine.beats.err.too_short")));
     }
     Ok(onsets(&env, FRAMES_PER_SEC))
 }
@@ -69,14 +69,14 @@ fn envelope(source: &str) -> Result<Vec<f32>> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map_err(|e| anyhow!("could not start ffmpeg: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.beats.err.ffmpeg", e = e)))?;
     let mut raw = Vec::new();
     child
         .stdout
         .take()
-        .ok_or_else(|| anyhow!("no pipe"))?
+        .ok_or_else(|| anyhow!(tr!("engine.beats.err.no_pipe")))?
         .read_to_end(&mut raw)
-        .map_err(|e| anyhow!("decode read failed: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.beats.err.read", e = e)))?;
     let _ = child.wait();
     let per_frame = (RATE as f64 / FRAMES_PER_SEC) as usize; // 80 samples
     let mut env = Vec::with_capacity(raw.len() / 2 / per_frame + 1);

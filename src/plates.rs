@@ -17,7 +17,7 @@ pub fn spec_of(media: &str) -> Option<Result<String>> {
     Some(if ok {
         Ok(v)
     } else {
-        Err(anyhow!("a plate is color:RRGGBB or color:transparent, got {media:?}"))
+        Err(anyhow!(tr!("engine.plate.err.spec", media = format!("{media:?}"))))
     })
 }
 
@@ -42,14 +42,14 @@ fn path_for(spec: &str, w: u32, h: u32) -> PathBuf {
 pub fn ensure(spec: &str, w: u32, h: u32) -> Result<String> {
     let path = path_for(spec, w.max(2), h.max(2));
     if !path.exists() {
-        let dir = path.parent().ok_or_else(|| anyhow!("no cache folder"))?;
+        let dir = path.parent().ok_or_else(|| anyhow!(tr!("engine.plate.err.no_cache")))?;
         std::fs::create_dir_all(dir)?;
         let px = pixel(spec);
         let rgba: Vec<u8> = px.iter().copied().cycle().take((w * h * 4) as usize).collect();
         // Temp + rename: two renders may race to write the same plate.
         let tmp = path.with_extension(format!("{}.tmp.png", std::process::id()));
         image::save_buffer(&tmp, &rgba, w, h, image::ColorType::Rgba8)
-            .with_context(|| format!("could not write a plate to {}", tmp.display()))?;
+            .with_context(|| tr!("engine.plate.err.write", path = tmp.display()))?;
         std::fs::rename(&tmp, &path)?;
     }
     Ok(path.to_string_lossy().into_owned())

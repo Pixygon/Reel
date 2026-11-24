@@ -1,0 +1,93 @@
+# mixer — en
+
+# Mixer
+mixer.heading = Mixer
+mixer.gain_hover = {db} dB
+mixer.mute_short = M
+mixer.mute = Mute
+mixer.solo_short = S
+mixer.solo = Solo
+mixer.pan_hover = Pan {v}
+mixer.out = out
+mixer.lufs = {v} LUFS
+
+# Voice recording
+mixer.voice.recording = recording… {secs}s (from {at})
+mixer.voice.stop = Stop
+mixer.voice.record = ⏺ Record voice
+mixer.voice.record_hover = Punch in: the timeline rolls from the playhead and your microphone records over it — the take lands on A1 where you started. Press again to stop.
+
+# Tighten
+mixer.tighten = ✂ Tighten silence
+mixer.tighten_hover = Cut the quiet air out of the whole edit and close up — keeps 0.15s of breathing room around every cut. Undoable.
+mixer.tighten_none = Nothing to tighten — no silences found.
+mixer.tightened = Tightened: {cuts} cut(s), {removed}s of silence removed.
+
+# Frame export / snapshot
+mixer.frame_export = 📷 Export this frame
+mixer.frame_export_hover = The frame under the playhead — effects, overlays and animation included — as a PNG next to the project
+mixer.snapshot = ⏺ Snapshot
+mixer.snapshot_hover = Freeze the whole project as a named copy under <project>.snapshots/ — `reel snapshot --list` shows them, --restore rolls back
+mixer.snapshot_saved = Snapshot saved: {path}
+mixer.snapshot_failed = Snapshot failed: {e}
+mixer.snapshot_no_file = The project has no file yet — add media first.
+
+# Scopes
+mixer.scopes = Scopes
+mixer.hide = Hide
+mixer.show = Show
+
+# Captions
+mixer.captions.heading = Captions
+mixer.captions.cancel = Cancel
+mixer.captions.count.one = {n} caption · burned in on export
+mixer.captions.count.other = {n} captions · burned in on export
+mixer.captions.size = Size
+mixer.captions.cue_time = {t}s
+mixer.captions.jump_hover = Jump the playhead here
+mixer.captions.delete_cue = Delete this cue
+mixer.captions.redo = Redo captions
+mixer.captions.remove_all = Remove all
+mixer.captions.generate = Generate captions
+mixer.captions.generate_hover = Speech to captions, entirely on this machine — nothing is uploaded.\nThe engine and model are fetched once, automatically.
+
+# Music
+mixer.music.heading = Music
+mixer.music.add = ♪ Add music bed
+mixer.music.add_hover = A track under the whole edit — ducked under speech automatically
+mixer.music.level = Level (dB)
+mixer.music.duck = Duck under speech
+mixer.music.duck_hover = Pull the music down whenever the edit's own audio speaks
+mixer.music.fade = Fade (s)
+mixer.music.replace = Replace…
+mixer.music.remove = Remove
+
+# Titles
+mixer.titles.heading = Titles
+mixer.titles.add = + Add
+mixer.titles.add_hover = Text on the picture at the playhead
+mixer.titles.size = Size
+mixer.titles.bold = Bold
+mixer.titles.outline = Outline
+mixer.titles.fade_in_prefix = in\s
+mixer.titles.fade_out_prefix = out\s
+mixer.titles.seconds_suffix = s
+mixer.titles.slide_none = no slide
+mixer.titles.slide_left = from left
+mixer.titles.slide_right = from right
+mixer.titles.slide_top = from top
+mixer.titles.slide_bottom = from bottom
+mixer.titles.preset = Preset…
+mixer.titles.save_preset = save preset
+mixer.titles.save_preset_hover = Save this title's style + motion as a reusable preset (a JSON file — share it)
+mixer.titles.preset_saved = Preset saved: {path}
+mixer.titles.preset_failed = Could not save the preset.
+mixer.titles.start_here = Start here
+mixer.titles.start_here_hover = Begin at the playhead
+mixer.titles.end_here = End here
+mixer.titles.span = {start}s → {end}s · drag it on the picture
+mixer.titles.remove = 🗑 Remove
+
+# Shortcut cheat sheet
+mixer.shortcuts = J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\nDel delete · Shift+Del ripple delete · right-click to close gaps\nCtrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+Left/Right jump\nCtrl+drag an edge: roll · Alt+drag: slip · Ctrl+Alt+drag: slide
+mixer.titles.default_text = Title

@@ -80,7 +80,7 @@ impl Compositor {
             compatible_surface: None,
             force_fallback_adapter: false,
         }))
-        .ok_or_else(|| anyhow!("no GPU adapter for the compositor"))?;
+        .ok_or_else(|| anyhow!(tr!("engine.err.no_adapter_compositor")))?;
         let (device, queue) = pollster::block_on(adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: Some("reel-compositor"),

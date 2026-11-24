@@ -1,0 +1,93 @@
+# mixer — nb
+
+# Mikser
+mixer.heading = Mikser
+mixer.gain_hover = {db} dB
+mixer.mute_short = M
+mixer.mute = Lyd av
+mixer.solo_short = S
+mixer.solo = Solo
+mixer.pan_hover = Panorering {v}
+mixer.out = ut
+mixer.lufs = {v} LUFS
+
+# Taleopptak
+mixer.voice.recording = tar opp … {secs} s (fra {at})
+mixer.voice.stop = Stopp
+mixer.voice.record = ⏺ Ta opp tale
+mixer.voice.record_hover = Innspilling: tidslinjen spilles fra spillehodet mens mikrofonen tar opp over den — opptaket havner på A1 der du startet. Trykk igjen for å stoppe.
+
+# Stram inn
+mixer.tighten = ✂ Fjern stillhet
+mixer.tighten_hover = Klipp bort de stille partiene i hele redigeringen og lukk hullene — beholder 0,15 s pusterom rundt hvert kutt. Kan angres.
+mixer.tighten_none = Ingenting å stramme inn — fant ingen stillhet.
+mixer.tightened = Strammet inn: {cuts} kutt, {removed} s stillhet fjernet.
+
+# Bildeeksport / øyeblikksbilde
+mixer.frame_export = 📷 Eksporter dette bildet
+mixer.frame_export_hover = Bildet under spillehodet — med effekter, bilde-i-bilde og animasjon — som PNG ved siden av prosjektet
+mixer.snapshot = ⏺ Øyeblikksbilde
+mixer.snapshot_hover = Frys hele prosjektet som en navngitt kopi under <project>.snapshots/ — `reel snapshot --list` viser dem, --restore ruller tilbake
+mixer.snapshot_saved = Øyeblikksbilde lagret: {path}
+mixer.snapshot_failed = Øyeblikksbilde mislyktes: {e}
+mixer.snapshot_no_file = Prosjektet har ingen fil ennå — legg til media først.
+
+# Målere
+mixer.scopes = Målere
+mixer.hide = Skjul
+mixer.show = Vis
+
+# Teksting
+mixer.captions.heading = Teksting
+mixer.captions.cancel = Avbryt
+mixer.captions.count.one = {n} undertekst · brennes inn ved eksport
+mixer.captions.count.other = {n} undertekster · brennes inn ved eksport
+mixer.captions.size = Størrelse
+mixer.captions.cue_time = {t} s
+mixer.captions.jump_hover = Flytt spillehodet hit
+mixer.captions.delete_cue = Slett denne linjen
+mixer.captions.redo = Lag teksting på nytt
+mixer.captions.remove_all = Fjern alle
+mixer.captions.generate = Lag teksting
+mixer.captions.generate_hover = Tale til tekst, helt på denne maskinen — ingenting lastes opp.\nMotoren og modellen hentes automatisk én gang.
+
+# Musikk
+mixer.music.heading = Musikk
+mixer.music.add = ♪ Legg til bakgrunnsmusikk
+mixer.music.add_hover = Et spor under hele redigeringen — dempes automatisk under tale
+mixer.music.level = Nivå (dB)
+mixer.music.duck = Demp under tale
+mixer.music.duck_hover = Senk musikken når lyden i selve redigeringen har tale
+mixer.music.fade = Toning (s)
+mixer.music.replace = Bytt ut …
+mixer.music.remove = Fjern
+
+# Titler
+mixer.titles.heading = Titler
+mixer.titles.add = + Legg til
+mixer.titles.add_hover = Tekst på bildet ved spillehodet
+mixer.titles.size = Størrelse
+mixer.titles.bold = Fet
+mixer.titles.outline = Omriss
+mixer.titles.fade_in_prefix = inn\s
+mixer.titles.fade_out_prefix = ut\s
+mixer.titles.seconds_suffix = \ss
+mixer.titles.slide_none = ingen gli
+mixer.titles.slide_left = fra venstre
+mixer.titles.slide_right = fra høyre
+mixer.titles.slide_top = ovenfra
+mixer.titles.slide_bottom = nedenfra
+mixer.titles.preset = Forhåndsinnstilling …
+mixer.titles.save_preset = lagre forhåndsinnstilling
+mixer.titles.save_preset_hover = Lagre stilen og bevegelsen til denne tittelen som en gjenbrukbar forhåndsinnstilling (en JSON-fil — del den)
+mixer.titles.preset_saved = Forhåndsinnstilling lagret: {path}
+mixer.titles.preset_failed = Kunne ikke lagre forhåndsinnstillingen.
+mixer.titles.start_here = Start her
+mixer.titles.start_here_hover = Begynn ved spillehodet
+mixer.titles.end_here = Slutt her
+mixer.titles.span = {start} s → {end} s · dra den på bildet
+mixer.titles.remove = 🗑 Fjern
+
+# Snarveier
+mixer.shortcuts = J K L spol · S eller Ctrl+K del · Q W trim til spillehodet og lukk hullet\nDel slett · Shift+Del slett og lukk hullet · høyreklikk for å lukke hull\nCtrl+C/V/D kopier, lim inn, dupliser · Ctrl+M markør · Ctrl+Venstre/Høyre hopp\nCtrl+dra en kant: rull · Alt+dra: skli innhold · Ctrl+Alt+dra: skyv klipp
+mixer.titles.default_text = Tittel

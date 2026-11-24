@@ -1,0 +1,4 @@
+# Felles ord og språkvelgeren.
+common.language = Språk
+common.language_system = Følg systemet
+common.percent = {n} %

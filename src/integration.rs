@@ -52,17 +52,17 @@ pub fn install_desktop_entry() -> Result<()> {
     std::fs::create_dir_all(&icons)?;
     std::fs::write(icons.join("reel.svg"), include_str!("../assets/reel-icon.svg"))?;
 
+    // The file manager shows these in ITS language, so every translation is
+    // written as a `[lang]` key rather than picked at runtime.
+    const DESCRIPTION: &[&str] = &[
+        "GenericName=Media Player", // i18n-ok: .desktop field, translated by the [nb] line
+        "GenericName[nb]=Mediespiller",
+        "Comment=Play, edit, convert and capture media", // i18n-ok: .desktop field, translated by the [nb] line
+        "Comment[nb]=Spill av, rediger, konverter og ta opp media", // i18n-ok: already the nb translation
+    ];
     let entry = format!(
-        "[Desktop Entry]\n\
-         Type=Application\n\
-         Name=Reel\n\
-         GenericName=Media Player\n\
-         Comment=Play, edit, convert and capture media\n\
-         Exec={} %f\n\
-         Icon=reel\n\
-         Terminal=false\n\
-         Categories=AudioVideo;Player;Video;Audio;Graphics;\n\
-         MimeType={};\n",
+        "[Desktop Entry]\nType=Application\nName=Reel\n{}\nExec={} %f\nIcon=reel\nTerminal=false\nCategories=AudioVideo;Player;Video;Audio;Graphics;\nMimeType={};\n", // i18n-ok: .desktop syntax
+        DESCRIPTION.join("\n"),
         exe.to_string_lossy(),
         all_mimes().join(";"),
     );
@@ -80,9 +80,9 @@ pub fn set_default_for(mimes: &[&str]) -> Result<()> {
         .arg(DESKTOP_ID)
         .args(mimes)
         .output()
-        .map_err(|e| anyhow!("xdg-mime not available: {e}"))?;
+        .map_err(|e| anyhow!(tr!("player.integration.no_xdg_mime", e = e)))?;
     if !out.status.success() {
-        return Err(anyhow!("xdg-mime failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return Err(anyhow!(tr!("player.integration.xdg_mime_failed", e = String::from_utf8_lossy(&out.stderr))));
     }
     Ok(())
 }

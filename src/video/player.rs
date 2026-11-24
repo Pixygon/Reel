@@ -28,11 +28,11 @@ impl Visualizer {
 
     pub fn label(self) -> &'static str {
         match self {
-            Visualizer::Off => "Art / off",
-            Visualizer::Cqt => "Spectrum bars",
-            Visualizer::Spectrum => "Spectrogram",
-            Visualizer::Scope => "Vectorscope",
-            Visualizer::Waves => "Waveform",
+            Visualizer::Off => tr!("playback.visualizer.off"),
+            Visualizer::Cqt => tr!("playback.visualizer.cqt"),
+            Visualizer::Spectrum => tr!("playback.visualizer.spectrum"),
+            Visualizer::Scope => tr!("playback.visualizer.scope"),
+            Visualizer::Waves => tr!("playback.visualizer.waves"),
         }
     }
 

@@ -1,0 +1,116 @@
+# player — nb
+
+# Default-apps banner and window
+player.defaults.ask = Vil du åpne mediene dine med Reel som standard?
+player.defaults.video = Video
+player.defaults.music = Musikk
+player.defaults.images = Bilder
+player.defaults.make_default = Gjør til standard
+player.defaults.later = Senere
+player.defaults.later_status = Du kan når som helst velge standardprogrammer under ⚙ → Standardprogrammer.
+player.defaults.title = Standardprogrammer
+player.defaults.intro = Åpne disse med Reel når du dobbeltklikker på dem:
+player.defaults.current = \s\s(nå standard: Reel)
+player.defaults.video_kinds = Video — mp4, mkv, webm, …
+player.defaults.music_kinds = Musikk — mp3, flac, opus, …
+player.defaults.image_kinds = Bilder — png, jpg, svg, …
+player.defaults.apply = Bruk
+player.defaults.footer = Reel er uansett alltid tilgjengelig under «Åpne med».
+
+# Keyboard status messages
+player.shuttle.reverse = ◀◀ {n}× bakover
+player.shuttle.forward = {n}× forover
+player.shuttle.paused = pause
+player.status.cut_to_angle = Klippet til vinkel {n} ved {t} s.
+player.status.range_cleared = Eksportutsnittet er fjernet.
+player.status.range_in = Innpunkt ved {t} s (Shift+I/O fjerner).
+player.status.range_out = Utpunkt ved {t} s (Shift+I/O fjerner).
+
+# Keyboard reference window
+player.keys.title = Tastatur
+player.keys.playback = Avspilling
+player.keys.editing = Redigering
+player.keys.pointer = Mus på tidslinjen
+player.keys.source = Kildemonitor
+player.keys.space = Mellomrom
+player.keys.play_pause = Spill av / pause
+player.keys.shuttle = Spol bakover / stopp / forover (trykk J eller L igjen: raskere)
+player.keys.frame_step = Ett bilde tilbake / frem
+player.keys.seek = Hopp 5 s (Shift: 60 s)
+player.keys.volume = Volum
+player.keys.mute = Lyd av
+player.keys.speed_keys = [ · ] · Backspace
+player.keys.speed = Avspillingshastighet ned / opp / tilbakestill
+player.keys.loop = Gjenta
+player.keys.fullscreen = Fullskjerm
+player.keys.visualizer = Lydvisualisering (lydfiler)
+player.keys.editor_toggle = Redigering ↔ avspiller
+player.keys.split_keys = S (eller Ctrl+K)
+player.keys.split = Del ved spillehodet
+player.keys.trim = Trim start / slutt til spillehodet
+player.keys.delete_key = Delete
+player.keys.delete = Slett klipp (Shift: slett og lukk hullet)
+player.keys.undo = Angre / gjør om
+player.keys.copy = Kopier / lim inn (setter inn og skyver resten) / dupliser
+player.keys.range = Inn-/utpunkt for eksport (Shift+I/O fjerner)
+player.keys.marker = Sett en markør
+player.keys.jump_marker = Hopp mellom markører
+player.keys.multicam = Flerkamera: klipp til vinkel ved spillehodet
+player.keys.drag_clip = Dra klipp
+player.keys.move = Flytt (flere valgte flyttes sammen)
+player.keys.drag_edge = Dra kant
+player.keys.trim_drag = Trim
+player.keys.ctrl_edge = Ctrl+kant
+player.keys.roll = Rull kuttet (sluttkanten ruller starten på neste klipp)
+player.keys.alt_drag = Alt+dra midten
+player.keys.slip = Forskyv kildevinduet (slip)
+player.keys.ctrl_alt_drag = Ctrl+Alt+dra
+player.keys.slide = Skyv mellom naboene (slide)
+player.keys.shift_click = Shift+klikk
+player.keys.add_select = Legg til i utvalget
+player.keys.shift_drag = Shift+dra på tomt område
+player.keys.lasso = Velg klipp med lasso
+player.keys.ctrl_scroll = Ctrl+rull
+player.keys.zoom = Zoom tidslinjen
+player.keys.pool_item = ▶ (element i biblioteket)
+player.keys.preview_pool = Forhåndsvis et element fra mediebiblioteket over redigeringen
+player.keys.mark_piece = Marker biten du vil ha
+player.keys.enter = Enter
+player.keys.insert = Sett den inn ved spillehodet (trepunktsredigering)
+
+# ☰ REEL menu
+player.open = Åpne…
+player.menu.ui_scale = Skalering
+player.menu.default_apps = Standardprogrammer…
+player.menu.website = Nettsted — reel.pixygon.io
+player.menu.screenshot = 📷 Skjermbilde
+player.menu.stop_recording = ⏹ Stopp opptaket
+player.menu.record_starting = ⏺ starter…
+player.menu.record_screen = ⏺ Ta opp skjermen…
+player.menu.record_webcam = ⏺ Ta opp webkamera
+player.menu.record_webcam_hint = Ta opp kameraet (og standardmikrofonen hvis den svarer) til ~/Videos
+player.menu.stop_streamer = ⏹ Stopp strømmeroppsettet
+player.menu.streamer = ⏺ Strømmeroppsett (skjerm + kamera)
+player.menu.streamer_hint = Ta opp skjermen OG kameraet samtidig; når du stopper, får du et ferdig prosjekt — skjermen i fullt bilde, kameraet som bilde-i-bilde i et hjørne som du fortsatt kan flytte, endre størrelse på eller klippe om
+player.menu.quit = Avslutt
+
+# Screenshot choices (☰ menu and tray)
+player.shot.full = Hele skjermen
+player.shot.region = Område…
+player.shot.window = Vindu…
+player.shot.full_after = Hele skjermen om {n} s
+
+# Nothing open
+player.empty.open = \s\sÅpne en fil…\s\s
+player.empty.hint_drop = …eller slipp en her, eller dobbeltklikk på en video, sang eller et bilde i filbehandleren.
+player.empty.hint = …eller dobbeltklikk på en video, sang eller et bilde i filbehandleren — Reel åpner den direkte.
+
+# Desktop integration errors
+player.integration.no_xdg_mime = xdg-mime er ikke tilgjengelig: {e}
+player.integration.xdg_mime_failed = xdg-mime mislyktes: {e}
+
+# System tray
+tray.title_recording = Reel — tar opp
+tray.open = Åpne Reel
+tray.screenshot = Skjermbilde
+tray.quit = Avslutt Reel

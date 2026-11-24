@@ -57,12 +57,12 @@ pub fn probe(path: &str) -> Result<VideoInfo> {
             path,
         ])
         .output()
-        .map_err(|e| anyhow!("ffprobe failed to start ({e}); is ffmpeg installed?"))?;
+        .map_err(|e| anyhow!(tr!("playback.probe.no_ffprobe", e = e)))?;
     if !out.status.success() {
-        return Err(anyhow!("ffprobe error: {}", String::from_utf8_lossy(&out.stderr)));
+        return Err(anyhow!(tr!("playback.probe.error", e = String::from_utf8_lossy(&out.stderr))));
     }
     let v: serde_json::Value = serde_json::from_slice(&out.stdout)?;
-    let stream = v["streams"].get(0).ok_or_else(|| anyhow!("no video stream in {path}"))?;
+    let stream = v["streams"].get(0).ok_or_else(|| anyhow!(tr!("playback.probe.no_video", path = path)))?;
     let width = stream["width"].as_u64().unwrap_or(0) as u32;
     let height = stream["height"].as_u64().unwrap_or(0) as u32;
     let fps = parse_ratio(stream["avg_frame_rate"].as_str().unwrap_or("0/1")).unwrap_or(30.0);
@@ -71,7 +71,7 @@ pub fn probe(path: &str) -> Result<VideoInfo> {
         .and_then(|s| s.parse::<f64>().ok())
         .unwrap_or(0.0);
     if width == 0 || height == 0 {
-        return Err(anyhow!("could not read video dimensions for {path}"));
+        return Err(anyhow!(tr!("playback.probe.no_dims", path = path)));
     }
     Ok(VideoInfo { width, height, fps: if fps > 0.0 { fps } else { 30.0 }, duration })
 }

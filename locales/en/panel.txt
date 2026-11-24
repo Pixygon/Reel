@@ -1,0 +1,138 @@
+# panel — en
+# The editor's side panel: project, media pool, clips, multicam, selected clip.
+panel.project = Project
+panel.project_summary = {name} — {w}×{h} @ {fps}fps
+panel.pool = Media pool
+panel.pool.gather = + Gather
+panel.pool.gather_hover = Add media to the pool without opening it
+panel.pool.search = search…
+panel.pool.nest = nest
+panel.pool.nest_hover = Compound clip: render this edit flat and drop it at the playhead. It refreshes automatically when the nested edit changes.
+panel.pool.preview_hover = Source monitor: preview, set I/O, insert
+panel.pool.relink = relink…
+panel.pool.relink_hover = The file moved — point at where it is now
+panel.clips = Clips
+panel.clips.row = • {name} ({d}s)
+panel.multicam = Multicam
+panel.multicam.cut_hover = Cut to this angle at the playhead
+panel.multicam.keys_hint = Keys 1-9 cut to an angle at the playhead — live, while it plays.
+panel.selected = Selected clip
+panel.selected.summary = at {at}  ·  {d}s long\nsource in-point {inp}
+panel.reset = reset
+panel.cancel = cancel
+panel.off = off
+panel.across = Across
+panel.down = Down
+# Look
+panel.look = Look
+panel.look.exposure = Exposure
+panel.look.contrast = Contrast
+panel.look.saturation = Saturation
+panel.look.levels = Levels & balance
+panel.look.black_point = Black point
+panel.look.white_point = White point
+panel.look.gamma = Gamma
+panel.look.temperature = Temperature
+panel.look.tint = Tint
+panel.hsl = HSL qualifier
+panel.hsl.qualify = Qualify
+panel.hsl.qualify_hover = Select pixels by hue, saturation and lightness, then push only those — the make-the-sky-bluer tool.
+panel.hsl.hue = Hue centre
+panel.hsl.hue_width = Hue width
+panel.hsl.sat_min = Sat min
+panel.hsl.sat_max = Sat max
+panel.hsl.light_min = Light min
+panel.hsl.light_max = Light max
+panel.hsl.softness = Softness
+panel.hsl.push_hue = Push hue
+panel.hsl.push_sat = Push sat
+panel.hsl.push_light = Push light
+panel.fade_in = Fade in (s)
+panel.fade_out = Fade out (s)
+panel.flip_h = Flip ↔
+panel.flip_v = Flip ↕
+panel.rotate = Rotate 90°
+panel.rotate_hover = Quarter turn clockwise (click again for 180°, 270°, back). The render rotates before fitting, so a turned portrait letterboxes correctly.
+panel.zoom = Zoom
+panel.pan_h = Pan ↔
+panel.pan_v = Pan ↕
+# Picture-in-picture
+panel.pip = Picture-in-picture
+panel.pip.size = Size
+panel.pip.hint = Drag it on the preview to place it. The inset shows a still, not live video.
+# Keyframes
+panel.animate = Animate
+panel.key.add = + Key at playhead
+panel.key.add_hover = Capture this parameter's current value as a keyframe here
+panel.key.row = {param} @ {t}s = {v}
+# LUT / curves / mask
+panel.lut.name = LUT: {name}
+panel.lut.remove_hover = Remove the LUT
+panel.lut.pick = LUT…
+panel.lut.pick_hover = Grade through a .cube 3D LUT — applied before the sliders above
+panel.curves = Curves
+panel.curves.all = All
+panel.curves.reset = Reset
+panel.mask.none = No mask
+panel.mask.ellipse = Ellipse mask
+panel.mask.rect = Rectangle mask
+panel.mask.width = Width
+panel.mask.height = Height
+panel.mask.feather = Feather
+panel.mask.invert = Grade outside instead
+panel.mask.tracking = tracking the subject…
+panel.mask.track = Track subject
+panel.mask.track_hover = Follow what's under the window through the clip and keyframe the window onto its path (replaces mask-x/y keyframes)
+panel.mask.hint = The colour grade (LUT + sliders) applies only where the window says. Track subject follows what's under it.
+# Stabilise
+panel.stab = Stabilize on export
+panel.stab_hover = Two-pass camera-shake smoothing at render time. The preview shows the raw footage — the analysis costs a full decode.
+panel.audition.progress = auditioning… {pct}
+panel.audition = Audition stabilization
+panel.audition_hover = Render just this clip with stabilization (720p) and play it. The edit is untouched — press E to come back.
+# Green screen
+panel.green = Green screen
+panel.green.reach = Reach
+panel.green.soften = Soften
+panel.green.hint = Keys live in the preview and the render alike. Put the clip on the overlay track to composite it over the cut.
+# Speed / volume
+panel.speed = Speed
+panel.speed.value = {v}×
+panel.volume = Volume (dB)
+panel.volume.silent = silent
+panel.volume.value = {v} dB
+# Plugin / raw filter
+panel.plugin.pick = Effect plugin…
+panel.plugin.hover = A WGSL effect file — runs identically in the preview and the render. Drop files in ~/.config/reel/effects; see docs/PLUGINS.md
+panel.raw = ffmpeg: {raw}
+panel.raw.hint = Expert filter — applied at render; the live preview plays without it.
+# Audio
+panel.audio = Audio
+panel.audio.pan = Pan
+panel.audio.low = Low (dB)
+panel.audio.mid = Mid (dB)
+panel.audio.mid_freq = Mid freq (Hz)
+panel.audio.high = High (dB)
+panel.audio.comp = Compressor
+panel.audio.comp_hover = Even out the level: quiet parts stay, loud parts come down
+panel.audio.threshold = Threshold (dB)
+panel.audio.ratio = Ratio
+panel.audio.fade_shape = Fade shape
+panel.audio.fade_linear = linear
+panel.audio.fade_smooth = smooth
+panel.audio.fade_exp = exp
+panel.audio.deess = De-ess
+panel.audio.deess_hover = Tame harsh S sounds — render-time, like Fix voice
+panel.audio.voice_fix = Fix voice on export
+panel.audio.voice_fix_hover = Rumble/hum off, background noise down, clicks patched. A render-time FFT pass — the preview plays without it.
+panel.audio.reset = reset audio
+# Transition / grade
+panel.xfade = Crossfade in (s)
+panel.xfade.hint = Previewed live; the render overlaps the clips and the edit shortens by the transition.
+panel.reset_look = Reset look
+panel.applied = • applied on export
+panel.grade.copy = Copy grade
+panel.grade.copy_hover = Copy the colour work (trims, levels, balance, HSL, LUT, curves) — not fades or reframe
+panel.grade.paste = Paste grade
+panel.grade.paste_all = Paste to ALL clips
+panel.grade.paste_all_hover = Apply the copied grade to every video clip — the project look

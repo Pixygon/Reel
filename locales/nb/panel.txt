@@ -1,0 +1,138 @@
+# panel — nb
+# Redigeringens sidepanel: prosjekt, mediebibliotek, klipp, flerkamera, valgt klipp.
+panel.project = Prosjekt
+panel.project_summary = {name} — {w}×{h} @ {fps} fps
+panel.pool = Mediebibliotek
+panel.pool.gather = + Hent inn
+panel.pool.gather_hover = Legg til medier i biblioteket uten å åpne dem
+panel.pool.search = søk…
+panel.pool.nest = bygg inn
+panel.pool.nest_hover = Sammensatt klipp: gjengi denne redigeringen som ett klipp og slipp det ved spillehodet. Det oppdateres automatisk når den innebygde redigeringen endres.
+panel.pool.preview_hover = Kildemonitor: forhåndsvis, sett inn-/utpunkt, sett inn
+panel.pool.relink = koble på nytt…
+panel.pool.relink_hover = Filen er flyttet — vis hvor den ligger nå
+panel.clips = Klipp
+panel.clips.row = • {name} ({d} s)
+panel.multicam = Flerkamera
+panel.multicam.cut_hover = Klipp til denne vinkelen ved spillehodet
+panel.multicam.keys_hint = Tastene 1–9 klipper til en vinkel ved spillehodet — direkte, mens det spilles av.
+panel.selected = Valgt klipp
+panel.selected.summary = ved {at}  ·  {d} s langt\ninnpunkt i kilden {inp}
+panel.reset = tilbakestill
+panel.cancel = avbryt
+panel.off = av
+panel.across = Vannrett
+panel.down = Loddrett
+# Fargeuttrykk
+panel.look = Fargeuttrykk
+panel.look.exposure = Eksponering
+panel.look.contrast = Kontrast
+panel.look.saturation = Metning
+panel.look.levels = Nivåer og balanse
+panel.look.black_point = Svartpunkt
+panel.look.white_point = Hvitpunkt
+panel.look.gamma = Gamma
+panel.look.temperature = Temperatur
+panel.look.tint = Fargetone
+panel.hsl = HSL-utvalg
+panel.hsl.qualify = Avgrens
+panel.hsl.qualify_hover = Velg piksler etter kulør, metning og lyshet, og juster bare dem — verktøyet som gjør himmelen blåere.
+panel.hsl.hue = Kulørsentrum
+panel.hsl.hue_width = Kulørbredde
+panel.hsl.sat_min = Metning min
+panel.hsl.sat_max = Metning maks
+panel.hsl.light_min = Lyshet min
+panel.hsl.light_max = Lyshet maks
+panel.hsl.softness = Mykhet
+panel.hsl.push_hue = Skyv kulør
+panel.hsl.push_sat = Skyv metning
+panel.hsl.push_light = Skyv lyshet
+panel.fade_in = Ton inn (s)
+panel.fade_out = Ton ut (s)
+panel.flip_h = Speilvend ↔
+panel.flip_v = Speilvend ↕
+panel.rotate = Roter 90°
+panel.rotate_hover = Kvart omdreining med klokken (klikk igjen for 180°, 270° og tilbake). Eksporten roterer før bildet tilpasses, så et snudd portrettbilde får riktige kanter.
+panel.zoom = Zoom
+panel.pan_h = Panorer ↔
+panel.pan_v = Panorer ↕
+# Bilde-i-bilde
+panel.pip = Bilde-i-bilde
+panel.pip.size = Størrelse
+panel.pip.hint = Dra det i forhåndsvisningen for å plassere det. Innfellingen viser et stillbilde, ikke levende video.
+# Nøkkelbilder
+panel.animate = Animer
+panel.key.add = + Nøkkelbilde ved spillehodet
+panel.key.add_hover = Lagre parameterens nåværende verdi som et nøkkelbilde her
+panel.key.row = {param} @ {t} s = {v}
+# LUT / kurver / maske
+panel.lut.name = LUT: {name}
+panel.lut.remove_hover = Fjern LUT-en
+panel.lut.pick = LUT…
+panel.lut.pick_hover = Fargekorriger gjennom en .cube 3D-LUT — brukes før glidebryterne over
+panel.curves = Kurver
+panel.curves.all = Alle
+panel.curves.reset = Tilbakestill
+panel.mask.none = Ingen maske
+panel.mask.ellipse = Ellipsemaske
+panel.mask.rect = Rektangelmaske
+panel.mask.width = Bredde
+panel.mask.height = Høyde
+panel.mask.feather = Myk kant
+panel.mask.invert = Korriger utenfor i stedet
+panel.mask.tracking = følger motivet…
+panel.mask.track = Følg motivet
+panel.mask.track_hover = Følg det som er under vinduet gjennom klippet, og legg vinduet langs banen med nøkkelbilder (erstatter nøkkelbilder for maske-x/y)
+panel.mask.hint = Fargekorrigeringen (LUT + glidebrytere) gjelder bare innenfor vinduet. «Følg motivet» følger det som er under det.
+# Stabilisering
+panel.stab = Stabiliser ved eksport
+panel.stab_hover = Utjevning av kameraristing i to omganger ved eksport. Forhåndsvisningen viser råopptaket — analysen krever en full dekoding.
+panel.audition.progress = prøvespiller… {pct}
+panel.audition = Prøv stabilisering
+panel.audition_hover = Eksporter bare dette klippet med stabilisering (720p) og spill det av. Redigeringen er urørt — trykk E for å komme tilbake.
+# Grønnskjerm
+panel.green = Grønnskjerm
+panel.green.reach = Rekkevidde
+panel.green.soften = Myk opp
+panel.green.hint = Fargenøkkelen virker likt i forhåndsvisningen og eksporten. Legg klippet på bilde-i-bilde-sporet for å legge det over hovedsekvensen.
+# Hastighet / volum
+panel.speed = Hastighet
+panel.speed.value = {v}×
+panel.volume = Volum (dB)
+panel.volume.silent = stille
+panel.volume.value = {v} dB
+# Tillegg / råfilter
+panel.plugin.pick = Effekttillegg…
+panel.plugin.hover = En WGSL-effektfil — kjører likt i forhåndsvisningen og eksporten. Legg filer i ~/.config/reel/effects; se docs/PLUGINS.md
+panel.raw = ffmpeg: {raw}
+panel.raw.hint = Ekspertfilter — brukes ved eksport; forhåndsvisningen spilles av uten det.
+# Lyd
+panel.audio = Lyd
+panel.audio.pan = Panorering
+panel.audio.low = Bass (dB)
+panel.audio.mid = Mellomtone (dB)
+panel.audio.mid_freq = Mellomtonefrekvens (Hz)
+panel.audio.high = Diskant (dB)
+panel.audio.comp = Kompressor
+panel.audio.comp_hover = Jevner ut nivået: stille partier blir værende, høye partier dempes
+panel.audio.threshold = Terskel (dB)
+panel.audio.ratio = Forhold
+panel.audio.fade_shape = Toningsform
+panel.audio.fade_linear = lineær
+panel.audio.fade_smooth = myk
+panel.audio.fade_exp = eksp.
+panel.audio.deess = De-esser
+panel.audio.deess_hover = Demper skarpe s-lyder — ved eksport, som «Fiks stemme»
+panel.audio.voice_fix = Fiks stemme ved eksport
+panel.audio.voice_fix_hover = Rumling og brum fjernes, bakgrunnsstøy dempes, klikk repareres. Et FFT-pass ved eksport — forhåndsvisningen spilles av uten det.
+panel.audio.reset = tilbakestill lyd
+# Overgang / fargekorrigering
+panel.xfade = Krysstoning inn (s)
+panel.xfade.hint = Forhåndsvises direkte; eksporten legger klippene over hverandre, og redigeringen blir kortere med overgangens lengde.
+panel.reset_look = Tilbakestill fargeuttrykk
+panel.applied = • brukes ved eksport
+panel.grade.copy = Kopier fargekorrigering
+panel.grade.copy_hover = Kopier fargearbeidet (justeringer, nivåer, balanse, HSL, LUT, kurver) — ikke toninger eller beskjæring
+panel.grade.paste = Lim inn fargekorrigering
+panel.grade.paste_all = Lim inn på ALLE klipp
+panel.grade.paste_all_hover = Bruk den kopierte fargekorrigeringen på alle videoklipp — prosjektets fargeuttrykk

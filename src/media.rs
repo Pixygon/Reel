@@ -45,7 +45,7 @@ impl ImageDoc {
         if is_svg_path(path) {
             return Self::open_svg(path);
         }
-        let img = image::open(path).map_err(|e| anyhow!("could not read image {path}: {e}"))?;
+        let img = image::open(path).map_err(|e| anyhow!(tr!("engine.media.err.read_image", path = path, e = e)))?;
         let rgba = img.to_rgba8();
         let (width, height) = rgba.dimensions();
         Ok(Self { path: path.to_string(), width, height, data: rgba.into_raw() })
@@ -58,10 +58,10 @@ impl ImageDoc {
         let mut opt = resvg::usvg::Options::default();
         opt.fontdb_mut().load_system_fonts();
         let tree = resvg::usvg::Tree::from_data(&bytes, &opt)
-            .map_err(|e| anyhow!("could not parse SVG {path}: {e}"))?;
+            .map_err(|e| anyhow!(tr!("engine.media.err.parse_svg", path = path, e = e)))?;
         let size = tree.size();
         if size.width() <= 0.0 || size.height() <= 0.0 {
-            return Err(anyhow!("SVG {path} has no intrinsic size"));
+            return Err(anyhow!(tr!("engine.media.err.svg_size", path = path)));
         }
         let max_edge = size.width().max(size.height());
         let scale = if max_edge < 2048.0 { 2048.0 / max_edge } else { 1.0 };
@@ -70,7 +70,7 @@ impl ImageDoc {
             (size.height() * scale).round().max(1.0) as u32,
         );
         let mut pixmap = resvg::tiny_skia::Pixmap::new(w, h)
-            .ok_or_else(|| anyhow!("SVG raster target {w}×{h} is not allocatable"))?;
+            .ok_or_else(|| anyhow!(tr!("engine.media.err.svg_alloc", w = w, h = h)))?;
         resvg::render(
             &tree,
             resvg::tiny_skia::Transform::from_scale(scale, scale),
@@ -95,7 +95,7 @@ impl ImageDoc {
     pub fn write_temp_png(&self) -> Result<std::path::PathBuf> {
         let p = std::env::temp_dir().join(format!("reel-raster-{}.png", std::process::id()));
         let img = image::RgbaImage::from_raw(self.width, self.height, self.data.clone())
-            .ok_or_else(|| anyhow!("image buffer size mismatch"))?;
+            .ok_or_else(|| anyhow!(tr!("engine.media.err.buffer")))?;
         img.save(&p)?;
         Ok(p)
     }

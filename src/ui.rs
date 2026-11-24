@@ -106,16 +106,16 @@ fn defaults_banner(ctx: &egui::Context, app: &mut ReelApp) {
     }
     egui::TopBottomPanel::top("defaults_banner").show(ctx, |ui| {
         ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("Open your media with Reel by default?").color(theme::STAR));
-            ui.checkbox(&mut app.def_video, "Video");
-            ui.checkbox(&mut app.def_audio, "Music");
-            ui.checkbox(&mut app.def_images, "Images");
-            if ui.button(RichText::new("Make default").color(theme::CYAN)).clicked() {
+            ui.label(RichText::new(tr!("player.defaults.ask")).color(theme::STAR));
+            ui.checkbox(&mut app.def_video, tr!("player.defaults.video"));
+            ui.checkbox(&mut app.def_audio, tr!("player.defaults.music"));
+            ui.checkbox(&mut app.def_images, tr!("player.defaults.images"));
+            if ui.button(RichText::new(tr!("player.defaults.make_default")).color(theme::CYAN)).clicked() {
                 app.status = app.apply_defaults();
             }
-            if ui.button("Later").clicked() {
+            if ui.button(tr!("player.defaults.later")).clicked() {
                 app.finish_defaults_prompt();
-                app.status = "You can set defaults any time under ⚙ → Default apps.".into();
+                app.status = tr!("player.defaults.later_status").into();
             }
         });
     });
@@ -127,34 +127,35 @@ fn defaults_window(ctx: &egui::Context, app: &mut ReelApp) {
         return;
     }
     let mut keep_open = app.defaults_open;
-    egui::Window::new("Default apps")
+    egui::Window::new(tr!("player.defaults.title"))
+        .id(egui::Id::new("defaults_window"))
         .open(&mut keep_open)
         .collapsible(false)
         .resizable(false)
         .show(ctx, |ui| {
-            ui.label("Open these with Reel when you double-click them:");
+            ui.label(tr!("player.defaults.intro"));
             ui.add_space(6.0);
             #[cfg(target_os = "linux")]
             {
                 let current = |m: &str| {
-                    if crate::integration::is_default_for(m) { "  (current default: Reel)" } else { "" }
+                    if crate::integration::is_default_for(m) { tr!("player.defaults.current") } else { "" }
                 };
-                ui.checkbox(&mut app.def_video, format!("Video — mp4, mkv, webm, …{}", current("video/mp4")));
-                ui.checkbox(&mut app.def_audio, format!("Music — mp3, flac, opus, …{}", current("audio/mpeg")));
-                ui.checkbox(&mut app.def_images, format!("Images — png, jpg, svg, …{}", current("image/png")));
+                ui.checkbox(&mut app.def_video, format!("{}{}", tr!("player.defaults.video_kinds"), current("video/mp4")));
+                ui.checkbox(&mut app.def_audio, format!("{}{}", tr!("player.defaults.music_kinds"), current("audio/mpeg")));
+                ui.checkbox(&mut app.def_images, format!("{}{}", tr!("player.defaults.image_kinds"), current("image/png")));
             }
             #[cfg(not(target_os = "linux"))]
             {
-                ui.checkbox(&mut app.def_video, "Video — mp4, mkv, webm, …");
-                ui.checkbox(&mut app.def_audio, "Music — mp3, flac, opus, …");
-                ui.checkbox(&mut app.def_images, "Images — png, jpg, svg, …");
+                ui.checkbox(&mut app.def_video, tr!("player.defaults.video_kinds"));
+                ui.checkbox(&mut app.def_audio, tr!("player.defaults.music_kinds"));
+                ui.checkbox(&mut app.def_images, tr!("player.defaults.image_kinds"));
             }
             ui.add_space(8.0);
-            if ui.button(RichText::new("Apply").color(theme::CYAN)).clicked() {
+            if ui.button(RichText::new(tr!("player.defaults.apply")).color(theme::CYAN)).clicked() {
                 app.status = app.apply_defaults();
             }
             ui.label(
-                RichText::new("Reel always stays available under “Open with” either way.")
+                RichText::new(tr!("player.defaults.footer"))
                     .small()
                     .color(egui::Color32::from_gray(120)),
             );
@@ -261,14 +262,14 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if k.shuttle_back || k.shuttle_fwd {
             let rate = player.shuttle(k.shuttle_fwd);
             shuttle_note = Some(if rate < 0.0 {
-                format!("◀◀ {:.0}× reverse", -rate)
+                tr!("player.shuttle.reverse", n = format!("{:.0}", -rate))
             } else {
-                format!("{rate:.0}× forward")
+                tr!("player.shuttle.forward", n = format!("{rate:.0}"))
             });
         }
         if k.shuttle_stop {
             player.shuttle_stop();
-            shuttle_note = Some("paused".into());
+            shuttle_note = Some(tr!("player.shuttle.paused").into());
         }
         // In the editor the effective mpv rate is user_rate × the active
         // clip's own rate — so the keys drive the USER's dial, and a sped
@@ -403,7 +404,8 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
                     app.editor.push_undo(&app.project);
                     if app.project.cut_to_angle(t, a) {
                         app.editor.mark_changed();
-                        app.status = format!("Cut to angle {} at {t:.2}s.", a + 1);
+                        app.status =
+                            tr!("player.status.cut_to_angle", n = a + 1, t = crate::i18n::num(t, 2));
                     }
                 }
             }
@@ -425,21 +427,21 @@ fn shortcuts(ctx: &egui::Context, app: &mut ReelApp) {
         if clear {
             app.editor.range_in = None;
             app.editor.range_out = None;
-            app.status = "Export range cleared.".into();
+            app.status = tr!("player.status.range_cleared").into();
         } else if set_in {
             let t = app.editor.playhead;
             app.editor.range_in = Some(t);
             if app.editor.range_out.is_some_and(|o| o <= t) {
                 app.editor.range_out = None;
             }
-            app.status = format!("Range in at {t:.2}s (Shift+I/O clears).");
+            app.status = tr!("player.status.range_in", t = crate::i18n::num(t, 2));
         } else if set_out {
             let t = app.editor.playhead;
             app.editor.range_out = Some(t);
             if app.editor.range_in.is_some_and(|i| i >= t) {
                 app.editor.range_in = None;
             }
-            app.status = format!("Range out at {t:.2}s (Shift+I/O clears).");
+            app.status = tr!("player.status.range_out", t = crate::i18n::num(t, 2));
         }
     }
 }
@@ -451,55 +453,56 @@ fn keymap_window(ctx: &egui::Context, app: &mut ReelApp) {
         return;
     }
     let mut open = true;
-    egui::Window::new("Keyboard")
+    egui::Window::new(tr!("player.keys.title"))
+        .id(egui::Id::new("keymap_window"))
         .open(&mut open)
         .collapsible(false)
         .default_width(560.0)
         .show(ctx, |ui| {
             let sections: [(&str, &[(&str, &str)]); 4] = [
-                ("Playback", &[
-                    ("Space", "Play / pause"),
-                    ("J · K · L", "Shuttle back / stop / forward (tap J or L again: faster)"),
-                    (", · .", "Frame step back / forward"),
-                    ("← / →", "Seek 5 s (Shift: 60 s)"),
-                    ("↑ / ↓", "Volume"),
-                    ("M", "Mute"),
-                    ("[ · ] · Backspace", "Playback speed down / up / reset"),
-                    ("Shift+L", "Loop"),
-                    ("F / F11", "Fullscreen"),
-                    ("V", "Audio visualizer (audio files)"),
+                (tr!("player.keys.playback"), &[
+                    (tr!("player.keys.space"), tr!("player.keys.play_pause")),
+                    ("J · K · L", tr!("player.keys.shuttle")),
+                    (", · .", tr!("player.keys.frame_step")),
+                    ("← / →", tr!("player.keys.seek")),
+                    ("↑ / ↓", tr!("player.keys.volume")),
+                    ("M", tr!("player.keys.mute")),
+                    (tr!("player.keys.speed_keys"), tr!("player.keys.speed")),
+                    ("Shift+L", tr!("player.keys.loop")),
+                    ("F / F11", tr!("player.keys.fullscreen")),
+                    ("V", tr!("player.keys.visualizer")),
                 ]),
-                ("Editing", &[
-                    ("E", "Editor ↔ player"),
-                    ("S (or Ctrl+K)", "Split at playhead"),
-                    ("Q / W", "Trim head / tail to playhead"),
-                    ("Delete", "Delete clip (Shift: ripple delete)"),
-                    ("Ctrl+Z / Ctrl+Shift+Z", "Undo / redo"),
-                    ("Ctrl+C / V / D", "Copy / paste (inserts + ripples) / duplicate"),
-                    ("I / O", "Export range in / out (Shift+I/O clears)"),
-                    ("Ctrl+M", "Drop a marker"),
-                    ("Ctrl+← / →", "Jump between markers"),
-                    ("1-9", "Multicam: cut to angle at the playhead"),
+                (tr!("player.keys.editing"), &[
+                    ("E", tr!("player.keys.editor_toggle")),
+                    (tr!("player.keys.split_keys"), tr!("player.keys.split")),
+                    ("Q / W", tr!("player.keys.trim")),
+                    (tr!("player.keys.delete_key"), tr!("player.keys.delete")),
+                    ("Ctrl+Z / Ctrl+Shift+Z", tr!("player.keys.undo")),
+                    ("Ctrl+C / V / D", tr!("player.keys.copy")),
+                    ("I / O", tr!("player.keys.range")),
+                    ("Ctrl+M", tr!("player.keys.marker")),
+                    ("Ctrl+← / →", tr!("player.keys.jump_marker")),
+                    ("1-9", tr!("player.keys.multicam")),
                 ]),
-                ("Timeline pointer", &[
-                    ("Drag clip", "Move (multi-selection moves together)"),
-                    ("Drag edge", "Trim"),
-                    ("Ctrl+edge", "Roll the cut (tail edge rolls the next clip's head)"),
-                    ("Alt+drag body", "Slip the source window"),
-                    ("Ctrl+Alt+drag", "Slide between neighbours"),
-                    ("Shift+click", "Add to selection"),
-                    ("Shift+drag empty space", "Lasso-select clips"),
-                    ("Ctrl+scroll", "Zoom the timeline"),
+                (tr!("player.keys.pointer"), &[
+                    (tr!("player.keys.drag_clip"), tr!("player.keys.move")),
+                    (tr!("player.keys.drag_edge"), tr!("player.keys.trim_drag")),
+                    (tr!("player.keys.ctrl_edge"), tr!("player.keys.roll")),
+                    (tr!("player.keys.alt_drag"), tr!("player.keys.slip")),
+                    (tr!("player.keys.ctrl_alt_drag"), tr!("player.keys.slide")),
+                    (tr!("player.keys.shift_click"), tr!("player.keys.add_select")),
+                    (tr!("player.keys.shift_drag"), tr!("player.keys.lasso")),
+                    (tr!("player.keys.ctrl_scroll"), tr!("player.keys.zoom")),
                 ]),
-                ("Source monitor", &[
-                    ("▶ (pool item)", "Preview a pool item over the live edit"),
-                    ("I / O", "Mark the piece you want"),
-                    ("Enter", "Insert it at the playhead (three-point edit)"),
+                (tr!("player.keys.source"), &[
+                    (tr!("player.keys.pool_item"), tr!("player.keys.preview_pool")),
+                    ("I / O", tr!("player.keys.mark_piece")),
+                    (tr!("player.keys.enter"), tr!("player.keys.insert")),
                 ]),
             ];
-            for (title, rows) in sections {
+            for (i, (title, rows)) in sections.into_iter().enumerate() {
                 ui.label(RichText::new(title).color(theme::CYAN));
-                egui::Grid::new(title).num_columns(2).spacing([18.0, 2.0]).show(ui, |ui| {
+                egui::Grid::new(("keymap_section", i)).num_columns(2).spacing([18.0, 2.0]).show(ui, |ui| {
                     for (key, what) in rows {
                         ui.label(RichText::new(*key).monospace().color(theme::STAR));
                         ui.label(RichText::new(*what).small());
@@ -516,16 +519,35 @@ fn keymap_window(ctx: &egui::Context, app: &mut ReelApp) {
 
 /// ☰ REEL — the app menu, living in the bottom control bar. Capture appears
 /// here only as a fallback when no system tray is available (its real home).
+/// ☰ → Language: follow the OS, or pin one. Each language is listed by its
+/// OWN name, so someone stuck in the wrong one can still find theirs.
+fn language_menu(ui: &mut egui::Ui) {
+    use crate::i18n::{self, Lang};
+    ui.menu_button(tr!("common.language"), |ui| {
+        let saved = i18n::saved_override();
+        if ui.selectable_label(saved.is_none(), tr!("common.language_system")).clicked() {
+            i18n::choose(None);
+            ui.close_menu();
+        }
+        for l in Lang::ALL {
+            if ui.selectable_label(saved == Some(l), l.endonym()).clicked() {
+                i18n::choose(Some(l));
+                ui.close_menu();
+            }
+        }
+    });
+}
+
 fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
-    ui.menu_button(RichText::new("☰ REEL").strong().color(theme::STAR), |ui| {
-        if ui.button("Open…").clicked() {
+    ui.menu_button(RichText::new("☰ REEL").strong().color(theme::STAR), |ui| { // i18n-ok: brand
+        if ui.button(tr!("player.open")).clicked() {
             app.open_picker();
             ui.close_menu();
         }
-        ui.menu_button("UI scale", |ui| {
-            for (label, z) in [("90%", 0.9f32), ("100%", 1.0), ("115%", 1.15), ("130%", 1.3), ("150%", 1.5)] {
+        ui.menu_button(tr!("player.menu.ui_scale"), |ui| {
+            for (pct, z) in [(90, 0.9f32), (100, 1.0), (115, 1.15), (130, 1.3), (150, 1.5)] {
                 let current = (ui.ctx().zoom_factor() - z).abs() < 0.01;
-                if ui.selectable_label(current, label).clicked() {
+                if ui.selectable_label(current, tr!("common.percent", n = pct)).clicked() {
                     ui.ctx().set_zoom_factor(z);
                     // Persisted with the desktop-integration settings —
                     // which live in the Linux module today; elsewhere the
@@ -540,23 +562,24 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             }
         });
-        if ui.button("Default apps…").clicked() {
+        language_menu(ui);
+        if ui.button(tr!("player.menu.default_apps")).clicked() {
             app.defaults_open = true;
             ui.close_menu();
         }
-        if ui.button("Website — reel.pixygon.io").clicked() {
+        if ui.button(tr!("player.menu.website")).clicked() {
             ui.ctx().open_url(egui::OpenUrl::new_tab("https://reel.pixygon.io"));
             ui.close_menu();
         }
         if !app.tray_available {
             ui.separator();
-            ui.menu_button("📷 Screenshot", |ui| {
+            ui.menu_button(tr!("player.menu.screenshot"), |ui| {
                 for (label, mode, delay) in [
-                    ("Full screen", crate::capture::ShotMode::Full, 0.0),
-                    ("Region…", crate::capture::ShotMode::Region, 0.0),
-                    ("Window…", crate::capture::ShotMode::Window, 0.0),
-                    ("Full screen after 3s", crate::capture::ShotMode::Full, 3.0),
-                    ("Full screen after 10s", crate::capture::ShotMode::Full, 10.0),
+                    (tr!("player.shot.full").to_string(), crate::capture::ShotMode::Full, 0.0),
+                    (tr!("player.shot.region").to_string(), crate::capture::ShotMode::Region, 0.0),
+                    (tr!("player.shot.window").to_string(), crate::capture::ShotMode::Window, 0.0),
+                    (tr!("player.shot.full_after", n = 3), crate::capture::ShotMode::Full, 3.0),
+                    (tr!("player.shot.full_after", n = 10), crate::capture::ShotMode::Full, 10.0),
                 ] {
                     if ui.button(label).clicked() {
                         app.take_screenshot_after(mode, delay);
@@ -565,11 +588,11 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
                 }
             });
             let rec_label = if app.recorder.is_some() {
-                "⏹ Stop recording"
+                tr!("player.menu.stop_recording")
             } else if app.record_starting() {
-                "⏺ starting…"
+                tr!("player.menu.record_starting")
             } else {
-                "⏺ Record screen…"
+                tr!("player.menu.record_screen")
             };
             if ui.button(rec_label).clicked() {
                 if !app.record_starting() {
@@ -580,8 +603,8 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
             #[cfg(target_os = "linux")]
             if app.recorder.is_none()
                 && !app.record_starting()
-                && ui.button("⏺ Record webcam").on_hover_text(
-                    "Record the camera (plus the default mic when one answers) to ~/Videos",
+                && ui.button(tr!("player.menu.record_webcam")).on_hover_text(
+                    tr!("player.menu.record_webcam_hint"),
                 ).clicked()
             {
                 app.toggle_webcam_record();
@@ -590,22 +613,18 @@ fn reel_menu(ui: &mut egui::Ui, app: &mut ReelApp) {
             #[cfg(target_os = "linux")]
             {
                 let streamer_label = if app.streamer.is_some() {
-                    "⏹ Stop streamer layout"
+                    tr!("player.menu.stop_streamer")
                 } else {
-                    "⏺ Streamer layout (screen + cam)"
+                    tr!("player.menu.streamer")
                 };
-                if ui.button(streamer_label).on_hover_text(
-                    "Record the screen AND the camera together; stopping builds a \
-                     ready-made project — screen full-frame, camera as a corner \
-                     PiP you can still move, resize or recut",
-                ).clicked() {
+                if ui.button(streamer_label).on_hover_text(tr!("player.menu.streamer_hint")).clicked() {
                     app.toggle_streamer_record();
                     ui.close_menu();
                 }
             }
         }
         ui.separator();
-        if ui.button("Quit").clicked() {
+        if ui.button(tr!("player.menu.quit")).clicked() {
             app.quit_requested = true;
         }
     });
@@ -675,7 +694,7 @@ fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.label(RichText::new("𝄞").size(56.0).color(theme::CYAN));
         ui.add_space(12.0);
         if ui
-            .add(egui::Button::new(RichText::new("  Open a file…  ").size(18.0).color(theme::STAR)))
+            .add(egui::Button::new(RichText::new(tr!("player.empty.open")).size(18.0).color(theme::STAR)))
             .clicked()
         {
             app.open_picker();
@@ -683,9 +702,9 @@ fn empty_state(ui: &mut egui::Ui, app: &mut ReelApp) {
         ui.add_space(10.0);
         let dnd = !cfg!(target_os = "linux") || std::env::var("WAYLAND_DISPLAY").is_err();
         let hint = if dnd {
-            "…or drop one here, or double-click any video, song or image in your file manager."
+            tr!("player.empty.hint_drop")
         } else {
-            "…or double-click any video, song or image in your file manager — Reel opens it directly."
+            tr!("player.empty.hint")
         };
         ui.label(RichText::new(hint).color(egui::Color32::from_gray(120)));
     });
@@ -722,22 +741,28 @@ pub fn media_panel_frame(
 /// The media/inspector contents — drawn inside `media_panel_frame`.
 fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
     {
-        ui.heading("Project");
-        ui.label(format!("{} — {}×{} @ {:.0}fps", app.project.name, app.project.width, app.project.height, app.project.fps));
+        ui.heading(tr!("panel.project"));
+        ui.label(tr!(
+            "panel.project_summary",
+            name = app.project.name,
+            w = app.project.width,
+            h = app.project.height,
+            fps = format!("{:.0}", app.project.fps)
+        ));
         ui.separator();
         // ── Media pool ──────────────────────────────────────────────────
         // Everything gathered for the edit, on the timeline or not. Search
         // filters; offline files (moved out from under the project) get a
         // relink button instead of a broken render later.
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Media pool").color(theme::CYAN));
-            if ui.small_button("+ Gather").on_hover_text("Add media to the pool without opening it").clicked() {
+            ui.label(RichText::new(tr!("panel.pool")).color(theme::CYAN));
+            if ui.small_button(tr!("panel.pool.gather")).on_hover_text(tr!("panel.pool.gather_hover")).clicked() {
                 app.picker_target = crate::app::PickerTarget::Pool;
                 app.open_picker_inner_for_target();
             }
         });
         app.project.absorb_sources_into_pool();
-        ui.add(egui::TextEdit::singleline(&mut app.pool_search).hint_text("search…").desired_width(f32::INFINITY));
+        ui.add(egui::TextEdit::singleline(&mut app.pool_search).hint_text(tr!("panel.pool.search")).desired_width(f32::INFINITY));
         let filter = app.pool_search.to_lowercase();
         let mut items: Vec<(String, String, bool)> = app
             .project
@@ -762,19 +787,16 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             ui.horizontal(|ui| {
                 if online {
                     if path.ends_with(".reel") {
-                        if ui.small_button("nest").on_hover_text(
-                            "Compound clip: render this edit flat and drop it at the playhead. \
-                             It refreshes automatically when the nested edit changes.",
-                        ).clicked() {
+                        if ui.small_button(tr!("panel.pool.nest")).on_hover_text(tr!("panel.pool.nest_hover")).clicked() {
                             app.start_nesting(&path, true);
                         }
-                    } else if ui.small_button("▶").on_hover_text("Source monitor: preview, set I/O, insert").clicked() {
+                    } else if ui.small_button("▶").on_hover_text(tr!("panel.pool.preview_hover")).clicked() {
                         app.preview_source(&path);
                     }
                     ui.label(RichText::new(&name).small());
                 } else {
                     ui.label(RichText::new(&name).small().color(theme::EMBER).strikethrough());
-                    if ui.small_button("relink…").on_hover_text("The file moved — point at where it is now").clicked() {
+                    if ui.small_button(tr!("panel.pool.relink")).on_hover_text(tr!("panel.pool.relink_hover")).clicked() {
                         app.picker_target = crate::app::PickerTarget::Relink(path.clone());
                         app.open_picker_inner_for_target();
                     }
@@ -783,11 +805,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
 
         ui.add_space(4.0);
-        ui.label(RichText::new("Clips").color(theme::CYAN));
+        ui.label(RichText::new(tr!("panel.clips")).color(theme::CYAN));
         for track in &app.project.tracks {
             for clip in &track.clips {
                 let selected = app.editor.selected == Some(clip.id);
-                if ui.selectable_label(selected, format!("• {} ({:.1}s)", clip.name, clip.duration)).clicked() {
+                let row = tr!("panel.clips.row", name = clip.name, d = crate::i18n::num(clip.duration, 1));
+                if ui.selectable_label(selected, row).clicked() {
                     app.editor.selected = Some(clip.id);
                 }
             }
@@ -796,7 +819,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         // ── Multicam ────────────────────────────────────────────────────
         if !app.project.multicam.is_empty() {
             ui.add_space(4.0);
-            ui.label(RichText::new("Multicam").color(theme::CYAN));
+            ui.label(RichText::new(tr!("panel.multicam")).color(theme::CYAN));
             let angles: Vec<(usize, String)> = app
                 .project
                 .multicam
@@ -812,7 +835,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 .collect();
             for (i, n) in angles {
                 ui.horizontal(|ui| {
-                    if ui.small_button(format!("{}", i + 1)).on_hover_text("Cut to this angle at the playhead").clicked() {
+                    if ui.small_button(format!("{}", i + 1)).on_hover_text(tr!("panel.multicam.cut_hover")).clicked() {
                         let t = app.editor.playhead;
                         app.editor.push_undo(&app.project);
                         if app.project.cut_to_angle(t, i) {
@@ -823,7 +846,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 });
             }
             ui.label(
-                RichText::new("Keys 1-9 cut to an angle at the playhead — live, while it plays.")
+                RichText::new(tr!("panel.multicam.keys_hint"))
                     .small()
                     .color(egui::Color32::from_gray(140)),
             );
@@ -832,31 +855,33 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             let info = app.project.clip(id).map(|c| (c.name.clone(), c.start, c.duration, c.in_point, c.effects));
             if let Some((name, start, duration, in_point, before)) = info {
                 ui.separator();
-                ui.label(RichText::new("Selected clip").color(theme::CYAN));
+                ui.label(RichText::new(tr!("panel.selected")).color(theme::CYAN));
                 ui.label(name);
-                ui.label(RichText::new(format!(
-                    "at {}  ·  {duration:.2}s long\nsource in-point {}",
-                    fmt_time(start), fmt_time(in_point)
+                ui.label(RichText::new(tr!(
+                    "panel.selected.summary",
+                    at = crate::i18n::clock(start),
+                    d = crate::i18n::num(duration, 2),
+                    inp = crate::i18n::clock(in_point)
                 )).small().color(egui::Color32::from_gray(150)));
 
                 // ── Effects ─────────────────────────────────────────────
                 // What you set here is what the export renders — the preview
                 // and the ffmpeg filters share one formula (effects.rs).
                 ui.add_space(6.0);
-                ui.label(RichText::new("Look").color(theme::CYAN));
+                ui.label(RichText::new(tr!("panel.look")).color(theme::CYAN));
                 let mut fx = before;
-                ui.add(egui::Slider::new(&mut fx.exposure, 0.2..=2.0).text("Exposure"));
-                ui.add(egui::Slider::new(&mut fx.contrast, 0.2..=2.5).text("Contrast"));
-                ui.add(egui::Slider::new(&mut fx.saturation, 0.0..=2.5).text("Saturation"));
+                ui.add(egui::Slider::new(&mut fx.exposure, 0.2..=2.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.exposure")));
+                ui.add(egui::Slider::new(&mut fx.contrast, 0.2..=2.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.contrast")));
+                ui.add(egui::Slider::new(&mut fx.saturation, 0.0..=2.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.saturation")));
                 // Levels + white balance — baked into the grade lattice
                 // with the LUT and curves, so preview cost stays one sample.
-                ui.collapsing("Levels & balance", |ui| {
-                    ui.add(egui::Slider::new(&mut fx.levels_black, 0.0..=0.5).text("Black point"));
-                    ui.add(egui::Slider::new(&mut fx.levels_white, 0.5..=1.5).text("White point"));
-                    ui.add(egui::Slider::new(&mut fx.levels_gamma, 0.2..=3.0).logarithmic(true).text("Gamma"));
-                    ui.add(egui::Slider::new(&mut fx.wb_temp, -1.0..=1.0).text("Temperature"));
-                    ui.add(egui::Slider::new(&mut fx.wb_tint, -1.0..=1.0).text("Tint"));
-                    if ui.small_button("reset").clicked() {
+                egui::CollapsingHeader::new(tr!("panel.look.levels")).id_salt("levels_balance").show(ui, |ui| {
+                    ui.add(egui::Slider::new(&mut fx.levels_black, 0.0..=0.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.black_point")));
+                    ui.add(egui::Slider::new(&mut fx.levels_white, 0.5..=1.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.white_point")));
+                    ui.add(egui::Slider::new(&mut fx.levels_gamma, 0.2..=3.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).logarithmic(true).text(tr!("panel.look.gamma")));
+                    ui.add(egui::Slider::new(&mut fx.wb_temp, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.temperature")));
+                    ui.add(egui::Slider::new(&mut fx.wb_tint, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.look.tint")));
+                    if ui.small_button(tr!("panel.reset")).clicked() {
                         fx.levels_black = 0.0;
                         fx.levels_white = 1.0;
                         fx.levels_gamma = 1.0;
@@ -865,53 +890,47 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 });
                 // HSL qualifier — grab a hue/sat/lightness window, push it.
-                ui.collapsing("HSL qualifier", |ui| {
+                egui::CollapsingHeader::new(tr!("panel.hsl")).id_salt("hsl_qualifier").show(ui, |ui| {
                     let mut on = fx.hsl.is_some();
-                    if ui.checkbox(&mut on, "Qualify").on_hover_text(
-                        "Select pixels by hue, saturation and lightness, then push only those — the make-the-sky-bluer tool.",
-                    ).changed() {
+                    if ui.checkbox(&mut on, tr!("panel.hsl.qualify")).on_hover_text(tr!("panel.hsl.qualify_hover")).changed() {
                         fx.hsl = on.then(crate::effects::Hsl::default);
                     }
                     if let Some(q) = &mut fx.hsl {
-                        ui.add(egui::Slider::new(&mut q.hue, 0.0..=360.0).text("Hue centre"));
-                        ui.add(egui::Slider::new(&mut q.hue_width, 5.0..=180.0).text("Hue width"));
-                        ui.add(egui::Slider::new(&mut q.sat_min, 0.0..=1.0).text("Sat min"));
-                        ui.add(egui::Slider::new(&mut q.sat_max, 0.0..=1.0).text("Sat max"));
-                        ui.add(egui::Slider::new(&mut q.lum_min, 0.0..=1.0).text("Light min"));
-                        ui.add(egui::Slider::new(&mut q.lum_max, 0.0..=1.0).text("Light max"));
-                        ui.add(egui::Slider::new(&mut q.soft, 0.02..=0.5).text("Softness"));
+                        ui.add(egui::Slider::new(&mut q.hue, 0.0..=360.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.hue")));
+                        ui.add(egui::Slider::new(&mut q.hue_width, 5.0..=180.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.hue_width")));
+                        ui.add(egui::Slider::new(&mut q.sat_min, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.sat_min")));
+                        ui.add(egui::Slider::new(&mut q.sat_max, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.sat_max")));
+                        ui.add(egui::Slider::new(&mut q.lum_min, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.light_min")));
+                        ui.add(egui::Slider::new(&mut q.lum_max, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.light_max")));
+                        ui.add(egui::Slider::new(&mut q.soft, 0.02..=0.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.softness")));
                         ui.separator();
-                        ui.add(egui::Slider::new(&mut q.push_hue, -180.0..=180.0).text("Push hue"));
-                        ui.add(egui::Slider::new(&mut q.push_sat, 0.0..=2.0).text("Push sat"));
-                        ui.add(egui::Slider::new(&mut q.push_lum, 0.0..=2.0).text("Push light"));
+                        ui.add(egui::Slider::new(&mut q.push_hue, -180.0..=180.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.push_hue")));
+                        ui.add(egui::Slider::new(&mut q.push_sat, 0.0..=2.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.push_sat")));
+                        ui.add(egui::Slider::new(&mut q.push_lum, 0.0..=2.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.hsl.push_light")));
                     }
                 });
-                ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).text("Fade in (s)"));
-                ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).text("Fade out (s)"));
+                ui.add(egui::Slider::new(&mut fx.fade_in, 0.0..=duration.min(5.0)).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.fade_in")));
+                ui.add(egui::Slider::new(&mut fx.fade_out, 0.0..=duration.min(5.0)).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.fade_out")));
                 // Reframe — how you put a landscape shot into a vertical
                 // frame without blurred sides.
                 ui.horizontal(|ui| {
-                    if ui.selectable_label(fx.flip_h, "Flip ↔").clicked() {
+                    if ui.selectable_label(fx.flip_h, tr!("panel.flip_h")).clicked() {
                         fx.flip_h = !fx.flip_h;
                     }
-                    if ui.selectable_label(fx.flip_v, "Flip ↕").clicked() {
+                    if ui.selectable_label(fx.flip_v, tr!("panel.flip_v")).clicked() {
                         fx.flip_v = !fx.flip_v;
                     }
-                    if ui.button("Rotate 90°").on_hover_text(
-                        "Quarter turn clockwise (click again for 180°, 270°, back). \
-                         The render rotates before fitting, so a turned portrait \
-                         letterboxes correctly.",
-                    ).clicked() {
+                    if ui.button(tr!("panel.rotate")).on_hover_text(tr!("panel.rotate_hover")).clicked() {
                         fx.rotate = (fx.rotate + 1) % 4;
                     }
                     if fx.rotate % 4 != 0 {
                         ui.label(RichText::new(format!("{}°", fx.rotate as u16 * 90)).small().color(theme::EMBER));
                     }
                 });
-                ui.add(egui::Slider::new(&mut fx.zoom, 1.0..=3.0).text("Zoom"));
+                ui.add(egui::Slider::new(&mut fx.zoom, 1.0..=3.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.zoom")));
                 if fx.zoom > 1.0001 {
-                    ui.add(egui::Slider::new(&mut fx.pan_x, -1.0..=1.0).text("Pan ↔"));
-                    ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).text("Pan ↕"));
+                    ui.add(egui::Slider::new(&mut fx.pan_x, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.pan_h")));
+                    ui.add(egui::Slider::new(&mut fx.pan_y, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.pan_v")));
                 }
 
                 // Picture-in-picture placement, for overlay clips only.
@@ -921,12 +940,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 });
                 if is_overlay {
                     ui.add_space(4.0);
-                    ui.label(RichText::new("Picture-in-picture").color(theme::CYAN));
+                    ui.label(RichText::new(tr!("panel.pip")).color(theme::CYAN));
                     let mut pip = app.project.clip(id).map(|c| c.pip).unwrap_or_default();
                     let before_pip = pip;
-                    ui.add(egui::Slider::new(&mut pip.scale, 0.05..=1.0).text("Size"));
-                    ui.add(egui::Slider::new(&mut pip.x, 0.02..=0.98).text("Across"));
-                    ui.add(egui::Slider::new(&mut pip.y, 0.02..=0.98).text("Down"));
+                    ui.add(egui::Slider::new(&mut pip.scale, 0.05..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.pip.size")));
+                    ui.add(egui::Slider::new(&mut pip.x, 0.02..=0.98).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.across")));
+                    ui.add(egui::Slider::new(&mut pip.y, 0.02..=0.98).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.down")));
                     ui.horizontal(|ui| {
                         for (label, x, y) in [
                             ("↖", 0.24, 0.26), ("↗", 0.76, 0.26),
@@ -945,7 +964,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         app.editor.mark_changed();
                     }
                     ui.label(
-                        RichText::new("Drag it on the preview to place it. The inset shows a still, not live video.")
+                        RichText::new(tr!("panel.pip.hint"))
                             .small()
                             .color(egui::Color32::from_gray(140)),
                     );
@@ -956,19 +975,19 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 // render evaluates the curve per frame. The preview shows the
                 // same evaluation, so scrubbing plays the animation.
                 ui.add_space(6.0);
-                ui.label(RichText::new("Animate").color(theme::CYAN));
+                ui.label(RichText::new(tr!("panel.animate")).color(theme::CYAN));
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("keyparam")
-                        .selected_text(app.editor.key_param.name())
+                        .selected_text(app.editor.key_param.ui_label())
                         .width(110.0)
                         .show_ui(ui, |ui| {
                             for q in crate::edit::Param::ALL {
-                                ui.selectable_value(&mut app.editor.key_param, q, q.name());
+                                ui.selectable_value(&mut app.editor.key_param, q, q.ui_label());
                             }
                         });
                     if ui
-                        .button("+ Key at playhead")
-                        .on_hover_text("Capture this parameter's current value as a keyframe here")
+                        .button(tr!("panel.key.add"))
+                        .on_hover_text(tr!("panel.key.add_hover"))
                         .clicked()
                     {
                         let t = app.editor.playhead;
@@ -1045,7 +1064,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     for (q, t, v) in &key_rows {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(format!("{} @ {t:.2}s = {v:.2}", q.name()))
+                                RichText::new(tr!(
+                                    "panel.key.row",
+                                    param = q.ui_label(),
+                                    t = crate::i18n::num(*t, 2),
+                                    v = crate::i18n::num(*v, 2)
+                                ))
                                     .small()
                                     .color(egui::Color32::from_gray(160)),
                             );
@@ -1072,8 +1096,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 .file_name()
                                 .map(|s| s.to_string_lossy().to_string())
                                 .unwrap_or(path);
-                            ui.label(RichText::new(format!("LUT: {name}")).small());
-                            if ui.small_button("−").on_hover_text("Remove the LUT").clicked() {
+                            ui.label(RichText::new(tr!("panel.lut.name", name = name)).small());
+                            if ui.small_button("−").on_hover_text(tr!("panel.lut.remove_hover")).clicked() {
                                 app.editor.push_undo(&app.project);
                                 if let Some(c) = app.project.clip_mut(id) {
                                     c.effects.lut = None;
@@ -1083,8 +1107,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         }
                         None => {
                             if ui
-                                .button("LUT…")
-                                .on_hover_text("Grade through a .cube 3D LUT — applied before the sliders above")
+                                .button(tr!("panel.lut.pick"))
+                                .on_hover_text(tr!("panel.lut.pick_hover"))
                                 .clicked()
                             {
                                 app.pick_lut(id);
@@ -1097,8 +1121,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Curves").color(theme::CYAN));
-                        for (i, label) in ["All", "R", "G", "B"].iter().enumerate() {
+                        ui.label(RichText::new(tr!("panel.curves")).color(theme::CYAN));
+                        for (i, label) in [tr!("panel.curves.all"), "R", "G", "B"].iter().enumerate() {
                             if ui
                                 .selectable_label(app.curve_channel == i, *label)
                                 .clicked()
@@ -1112,7 +1136,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             .and_then(|c| c.effects.curves)
                             .map(|c| !c.is_identity())
                             .unwrap_or(false);
-                        if has && ui.small_button("Reset").clicked() {
+                        if has && ui.small_button(tr!("panel.curves.reset")).clicked() {
                             app.editor.push_undo(&app.project);
                             if let Some(c) = app.project.clip_mut(id) {
                                 c.effects.curves = None;
@@ -1133,11 +1157,11 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         Some(_) => 2,
                     };
                     egui::ComboBox::from_id_salt("maskkind")
-                        .selected_text(["No mask", "Ellipse mask", "Rectangle mask"][kind])
+                        .selected_text([tr!("panel.mask.none"), tr!("panel.mask.ellipse"), tr!("panel.mask.rect")][kind])
                         .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut kind, 0, "No mask");
-                            ui.selectable_value(&mut kind, 1, "Ellipse mask");
-                            ui.selectable_value(&mut kind, 2, "Rectangle mask");
+                            ui.selectable_value(&mut kind, 0, tr!("panel.mask.none"));
+                            ui.selectable_value(&mut kind, 1, tr!("panel.mask.ellipse"));
+                            ui.selectable_value(&mut kind, 2, tr!("panel.mask.rect"));
                         });
                     match kind {
                         0 => fxm.mask = None,
@@ -1152,32 +1176,29 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         }
                     }
                     if let Some(m) = &mut fxm.mask {
-                        ui.add(egui::Slider::new(&mut m.cx, 0.0..=1.0).text("Across"));
-                        ui.add(egui::Slider::new(&mut m.cy, 0.0..=1.0).text("Down"));
-                        ui.add(egui::Slider::new(&mut m.w, 0.02..=0.8).text("Width"));
-                        ui.add(egui::Slider::new(&mut m.h, 0.02..=0.8).text("Height"));
-                        ui.add(egui::Slider::new(&mut m.feather, 0.0..=0.3).text("Feather"));
-                        ui.checkbox(&mut m.invert, "Grade outside instead");
+                        ui.add(egui::Slider::new(&mut m.cx, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.across")));
+                        ui.add(egui::Slider::new(&mut m.cy, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.down")));
+                        ui.add(egui::Slider::new(&mut m.w, 0.02..=0.8).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.mask.width")));
+                        ui.add(egui::Slider::new(&mut m.h, 0.02..=0.8).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.mask.height")));
+                        ui.add(egui::Slider::new(&mut m.feather, 0.0..=0.3).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.mask.feather")));
+                        ui.checkbox(&mut m.invert, tr!("panel.mask.invert"));
                         // Auto tracking: follow whatever is under the window
                         // and keyframe the window onto its path.
                         if app.tracking.as_ref().map(|(_, tid)| *tid) == Some(id) {
                             ui.horizontal(|ui| {
                                 ui.spinner();
-                                ui.label("tracking the subject…");
+                                ui.label(tr!("panel.mask.tracking"));
                             });
                             ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
                         } else if ui
-                            .button("Track subject")
-                            .on_hover_text(
-                                "Follow what's under the window through the clip and keyframe \
-                                 the window onto its path (replaces mask-x/y keyframes)",
-                            )
+                            .button(tr!("panel.mask.track"))
+                            .on_hover_text(tr!("panel.mask.track_hover"))
                             .clicked()
                         {
                             app.start_tracking(id);
                         }
                         ui.label(
-                            RichText::new("The colour grade (LUT + sliders) applies only where the window says. Track subject follows what's under it.")
+                            RichText::new(tr!("panel.mask.hint"))
                                 .small()
                                 .color(egui::Color32::from_gray(140)),
                         );
@@ -1194,11 +1215,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     let mut st = app.project.clip(id).map(|c| c.stabilize).unwrap_or(false);
                     if ui
-                        .checkbox(&mut st, "Stabilize on export")
-                        .on_hover_text(
-                            "Two-pass camera-shake smoothing at render time. The preview \
-                             shows the raw footage — the analysis costs a full decode.",
-                        )
+                        .checkbox(&mut st, tr!("panel.stab"))
+                        .on_hover_text(tr!("panel.stab_hover"))
                         .changed()
                     {
                         app.editor.push_undo(&app.project);
@@ -1214,8 +1232,11 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let frac = app.audition.as_ref().map(|(j, _, _)| j.state().fraction).unwrap_or(0.0);
                         ui.horizontal(|ui| {
                             ui.spinner();
-                            ui.label(format!("auditioning… {:.0}%", frac * 100.0));
-                            if ui.small_button("cancel").clicked() {
+                            ui.label(tr!(
+                                "panel.audition.progress",
+                                pct = tr!("common.percent", n = format!("{:.0}", frac * 100.0))
+                            ));
+                            if ui.small_button(tr!("panel.cancel")).clicked() {
                                 if let Some((job, out, _)) = app.audition.take() {
                                     job.cancel();
                                     let _ = std::fs::remove_file(out);
@@ -1224,11 +1245,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         });
                         ui.ctx().request_repaint_after(std::time::Duration::from_millis(200));
                     } else if ui
-                        .button("Audition stabilization")
-                        .on_hover_text(
-                            "Render just this clip with stabilization (720p) and play it. \
-                             The edit is untouched — press E to come back.",
-                        )
+                        .button(tr!("panel.audition"))
+                        .on_hover_text(tr!("panel.audition_hover"))
                         .clicked()
                     {
                         app.start_audition(id);
@@ -1241,7 +1259,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     let before2 = fx2;
                     let mut keyed = fx2.key_color.is_some();
                     ui.horizontal(|ui| {
-                        if ui.checkbox(&mut keyed, "Green screen").changed() {
+                        if ui.checkbox(&mut keyed, tr!("panel.green")).changed() {
                             fx2.key_color = if keyed {
                                 Some([0.0, 0.69, 0.25])
                             } else {
@@ -1264,10 +1282,10 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         }
                     });
                     if fx2.key_color.is_some() {
-                        ui.add(egui::Slider::new(&mut fx2.key_similarity, 0.02..=0.8).text("Reach"));
-                        ui.add(egui::Slider::new(&mut fx2.key_softness, 0.0..=0.5).text("Soften"));
+                        ui.add(egui::Slider::new(&mut fx2.key_similarity, 0.02..=0.8).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.green.reach")));
+                        ui.add(egui::Slider::new(&mut fx2.key_softness, 0.0..=0.5).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.green.soften")));
                         ui.label(
-                            RichText::new("Keys live in the preview and the render alike. Put the clip on the overlay track to composite it over the cut.")
+                            RichText::new(tr!("panel.green.hint"))
                                 .small()
                                 .color(egui::Color32::from_gray(140)),
                         );
@@ -1285,10 +1303,10 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 let mut rate = app.project.clip(id).map(|c| c.speed).unwrap_or(1.0);
                 let before_rate = rate;
                 ui.add(
-                    egui::Slider::new(&mut rate, 0.25..=4.0)
+                    egui::Slider::new(&mut rate, 0.25..=4.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
                         .logarithmic(true)
-                        .text("Speed")
-                        .custom_formatter(|v, _| format!("{v:.2}×")),
+                        .text(tr!("panel.speed"))
+                        .custom_formatter(|v, _| tr!("panel.speed.value", v = crate::i18n::num(v, 2))),
                 );
                 if (rate - before_rate).abs() > 1e-4 {
                     if let Some(c) = app.project.clip_mut(id) {
@@ -1303,10 +1321,14 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 let mut gain = app.project.clip(id).map(|c| c.gain_db).unwrap_or(0.0);
                 let before_gain = gain;
                 ui.add(
-                    egui::Slider::new(&mut gain, -30.0..=12.0)
-                        .text("Volume (dB)")
+                    egui::Slider::new(&mut gain, -30.0..=12.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
+                        .text(tr!("panel.volume"))
                         .custom_formatter(|v, _| {
-                            if v <= -29.9 { "silent".into() } else { format!("{v:+.1} dB") }
+                            if v <= -29.9 {
+                                tr!("panel.volume.silent").into()
+                            } else {
+                                tr!("panel.volume.value", v = crate::i18n::localise_decimal(format!("{v:+.1}")))
+                            }
                         }),
                 );
                 if (gain - before_gain).abs() > 1e-4 {
@@ -1322,15 +1344,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let label = fx.plugin
                             .and_then(|i| app.project.plugin_path(i))
                             .and_then(|path| crate::plugins::load(path).ok().map(|p| p.name.clone()))
-                            .unwrap_or_else(|| "Effect plugin…".into());
-                        if ui.button(label).on_hover_text(
-                            "A WGSL effect file — runs identically in the preview and the render. \
-                             Drop files in ~/.config/reel/effects; see docs/PLUGINS.md",
-                        ).clicked() {
+                            .unwrap_or_else(|| tr!("panel.plugin.pick").into());
+                        if ui.button(label).on_hover_text(tr!("panel.plugin.hover")).clicked() {
                             app.picker_target = crate::app::PickerTarget::Plugin(id);
                             app.open_picker_inner_for_target();
                         }
-                        if fx.plugin.is_some() && ui.small_button("off").clicked() {
+                        if fx.plugin.is_some() && ui.small_button(tr!("panel.off")).clicked() {
                             fx.plugin = None;
                         }
                     });
@@ -1340,7 +1359,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     {
                         for (i, d) in plug.params.iter().enumerate() {
                             ui.add(
-                                egui::Slider::new(&mut fx.plugin_params[i], d.min..=d.max)
+                                egui::Slider::new(&mut fx.plugin_params[i], d.min..=d.max).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
                                     .text(&d.name),
                             );
                         }
@@ -1353,12 +1372,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     if let Some(raw) = &current {
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new(format!("ffmpeg: {raw}"))
+                                RichText::new(tr!("panel.raw", raw = raw))
                                     .small()
                                     .monospace()
                                     .color(theme::EMBER),
                             );
-                            if ui.small_button("off").clicked() {
+                            if ui.small_button(tr!("panel.off")).clicked() {
                                 app.editor.push_undo(&app.project);
                                 if let Some(c) = app.project.clip_mut(id) {
                                     c.raw_filter = None;
@@ -1367,7 +1386,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             }
                         });
                         ui.label(
-                            RichText::new("Expert filter — applied at render; the live preview plays without it.")
+                            RichText::new(tr!("panel.raw.hint"))
                                 .small()
                                 .color(egui::Color32::from_gray(140)),
                         );
@@ -1379,7 +1398,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 {
                     let mut afx = app.project.clip(id).map(|c| c.audio).unwrap_or_default();
                     let before_afx = afx;
-                    egui::CollapsingHeader::new("Audio")
+                    egui::CollapsingHeader::new(tr!("panel.audio"))
+                        .id_salt("clip_audio")
                         .default_open(std::env::var("REEL_DEBUG_AUDIOPANEL").is_ok())
                         .show(ui, |ui| {
                         // A live spectrum of what's playing, right where the
@@ -1419,45 +1439,40 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 ui.scroll_to_rect(rect, Some(egui::Align::Center));
                             }
                         }
-                        ui.add(egui::Slider::new(&mut afx.pan, -1.0..=1.0).text("Pan"));
-                        ui.add(egui::Slider::new(&mut afx.eq_low, -18.0..=18.0).text("Low (dB)"));
-                        ui.add(egui::Slider::new(&mut afx.eq_mid, -18.0..=18.0).text("Mid (dB)"));
+                        ui.add(egui::Slider::new(&mut afx.pan, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.pan")));
+                        ui.add(egui::Slider::new(&mut afx.eq_low, -18.0..=18.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.low")));
+                        ui.add(egui::Slider::new(&mut afx.eq_mid, -18.0..=18.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.mid")));
                         if afx.eq_mid.abs() > 0.01 {
                             ui.add(
-                                egui::Slider::new(&mut afx.eq_mid_freq, 200.0..=8000.0)
+                                egui::Slider::new(&mut afx.eq_mid_freq, 200.0..=8000.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
                                     .logarithmic(true)
-                                    .text("Mid freq (Hz)"),
+                                    .text(tr!("panel.audio.mid_freq")),
                             );
                         }
-                        ui.add(egui::Slider::new(&mut afx.eq_high, -18.0..=18.0).text("High (dB)"));
-                        ui.checkbox(&mut afx.comp, "Compressor").on_hover_text(
-                            "Even out the level: quiet parts stay, loud parts come down",
-                        );
+                        ui.add(egui::Slider::new(&mut afx.eq_high, -18.0..=18.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.high")));
+                        ui.checkbox(&mut afx.comp, tr!("panel.audio.comp")).on_hover_text(tr!("panel.audio.comp_hover"));
                         if afx.comp {
                             ui.add(
-                                egui::Slider::new(&mut afx.comp_thresh, -40.0..=0.0)
-                                    .text("Threshold (dB)"),
+                                egui::Slider::new(&mut afx.comp_thresh, -40.0..=0.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
+                                    .text(tr!("panel.audio.threshold")),
                             );
-                            ui.add(egui::Slider::new(&mut afx.comp_ratio, 1.5..=10.0).text("Ratio"));
+                            ui.add(egui::Slider::new(&mut afx.comp_ratio, 1.5..=10.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.ratio")));
                         }
                         ui.horizontal(|ui| {
-                            ui.label(RichText::new("Fade shape").small());
+                            ui.label(RichText::new(tr!("panel.audio.fade_shape")).small());
                             for (label, v) in [
-                                ("linear", crate::edit::FadeCurve::Linear),
-                                ("smooth", crate::edit::FadeCurve::Smooth),
-                                ("exp", crate::edit::FadeCurve::Exp),
+                                (tr!("panel.audio.fade_linear"), crate::edit::FadeCurve::Linear),
+                                (tr!("panel.audio.fade_smooth"), crate::edit::FadeCurve::Smooth),
+                                (tr!("panel.audio.fade_exp"), crate::edit::FadeCurve::Exp),
                             ] {
                                 ui.selectable_value(&mut afx.fade_curve, v, label);
                             }
                         });
-                        ui.add(egui::Slider::new(&mut afx.deess, 0.0..=1.0).text("De-ess"))
-                            .on_hover_text("Tame harsh S sounds — render-time, like Fix voice");
-                        ui.checkbox(&mut afx.voice_fix, "Fix voice on export")
-                            .on_hover_text(
-                                "Rumble/hum off, background noise down, clicks patched. \
-                                 A render-time FFT pass — the preview plays without it.",
-                            );
-                        if ui.small_button("reset audio").clicked() {
+                        ui.add(egui::Slider::new(&mut afx.deess, 0.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.audio.deess")))
+                            .on_hover_text(tr!("panel.audio.deess_hover"));
+                        ui.checkbox(&mut afx.voice_fix, tr!("panel.audio.voice_fix"))
+                            .on_hover_text(tr!("panel.audio.voice_fix_hover"));
+                        if ui.small_button(tr!("panel.audio.reset")).clicked() {
                             afx = Default::default();
                         }
                     });
@@ -1485,7 +1500,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 if has_prev {
                     let mut xf = app.project.clip(id).map(|c| c.transition_in).unwrap_or(0.0);
                     let before_xf = xf;
-                    ui.add(egui::Slider::new(&mut xf, 0.0..=duration.min(3.0)).text("Crossfade in (s)"));
+                    ui.add(egui::Slider::new(&mut xf, 0.0..=duration.min(3.0)).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("panel.xfade")));
                     if (xf - before_xf).abs() > 1e-6 {
                         if let Some(c) = app.project.clip_mut(id) {
                             c.transition_in = xf;
@@ -1513,38 +1528,31 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             app.editor.mark_changed();
                         }
                         ui.label(
-                            RichText::new(
-                                "Previewed live; the render overlaps the clips and the \
-                                 edit shortens by the transition.",
-                            )
+                            RichText::new(tr!("panel.xfade.hint"))
                             .small()
                             .color(egui::Color32::from_gray(140)),
                         );
                     }
                 }
                 ui.horizontal(|ui| {
-                    if ui.button("Reset look").clicked() {
+                    if ui.button(tr!("panel.reset_look")).clicked() {
                         fx = crate::effects::Effects::default();
                     }
                     if !fx.is_identity() {
-                        ui.label(RichText::new("• applied on export").small().color(theme::EMBER));
+                        ui.label(RichText::new(tr!("panel.applied")).small().color(theme::EMBER));
                     }
                 });
                 // A grade is a look — carry it between clips, or stamp it
                 // on the whole edit as the project's look.
                 ui.horizontal(|ui| {
-                    if ui.small_button("Copy grade").on_hover_text(
-                        "Copy the colour work (trims, levels, balance, HSL, LUT, curves) — not fades or reframe",
-                    ).clicked() {
+                    if ui.small_button(tr!("panel.grade.copy")).on_hover_text(tr!("panel.grade.copy_hover")).clicked() {
                         app.grade_clipboard = Some(fx);
                     }
                     if let Some(g) = app.grade_clipboard {
-                        if ui.small_button("Paste grade").clicked() {
+                        if ui.small_button(tr!("panel.grade.paste")).clicked() {
                             fx.copy_grade_from(&g);
                         }
-                        if ui.small_button("Paste to ALL clips").on_hover_text(
-                            "Apply the copied grade to every video clip — the project look",
-                        ).clicked() {
+                        if ui.small_button(tr!("panel.grade.paste_all")).on_hover_text(tr!("panel.grade.paste_all_hover")).clicked() {
                             app.editor.push_undo(&app.project);
                             for t in &mut app.project.tracks {
                                 for c in &mut t.clips {
@@ -1573,7 +1581,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
         // ── Mixer ───────────────────────────────────────────────────────
         ui.separator();
-        ui.label(RichText::new("Mixer").color(theme::CYAN));
+        ui.label(RichText::new(tr!("mixer.heading")).color(theme::CYAN));
         {
             // Live levels from the mixer, when it runs (Linux + PipeWire).
             #[cfg(any(target_os = "linux", target_os = "windows", target_os = "macos"))]
@@ -1630,24 +1638,27 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     let mut gain = t.gain_db;
                     if ui
                         .add(
-                            egui::Slider::new(&mut gain, -30.0..=12.0)
+                            egui::Slider::new(&mut gain, -30.0..=12.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
                                 .show_value(false)
                                 .text(""),
                         )
-                        .on_hover_text(format!("{:+.1} dB", t.gain_db))
+                        .on_hover_text(tr!(
+                            "mixer.gain_hover",
+                            db = crate::i18n::localise_decimal(format!("{:+.1}", t.gain_db))
+                        ))
                         .changed()
                     {
                         t.gain_db = gain;
                         changed = true;
                     }
                     let mut m = t.muted;
-                    if ui.selectable_label(m, "M").on_hover_text("Mute").clicked() {
+                    if ui.selectable_label(m, tr!("mixer.mute_short")).on_hover_text(tr!("mixer.mute")).clicked() {
                         m = !m;
                         t.muted = m;
                         changed = true;
                     }
                     let mut so = t.solo;
-                    if ui.selectable_label(so, "S").on_hover_text("Solo").clicked() {
+                    if ui.selectable_label(so, tr!("mixer.solo_short")).on_hover_text(tr!("mixer.solo")).clicked() {
                         so = !so;
                         t.solo = so;
                         changed = true;
@@ -1655,11 +1666,14 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     let mut pan = t.pan;
                     if ui
                         .add(
-                            egui::Slider::new(&mut pan, -1.0..=1.0)
+                            egui::Slider::new(&mut pan, -1.0..=1.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse)
                                 .show_value(false)
                                 .text(""),
                         )
-                        .on_hover_text(format!("Pan {:+.2}", t.pan))
+                        .on_hover_text(tr!(
+                            "mixer.pan_hover",
+                            v = crate::i18n::localise_decimal(format!("{:+.2}", t.pan))
+                        ))
                         .changed()
                     {
                         t.pan = pan;
@@ -1671,13 +1685,16 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             // delivery specs ask about, live while you listen.
             if let Some(lv) = &levels {
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("out").small().color(egui::Color32::from_gray(170)));
+                    ui.label(RichText::new(tr!("mixer.out")).small().color(egui::Color32::from_gray(170)));
                     meter(ui, lv.master[0]);
                     meter(ui, lv.master[1]);
                     let lufs = if lv.lufs < -70.0 {
                         "–".to_string()
                     } else {
-                        format!("{:+.1} LUFS", lv.lufs)
+                        tr!(
+                            "mixer.lufs",
+                            v = crate::i18n::localise_decimal(format!("{:+.1}", lv.lufs))
+                        )
                     };
                     ui.label(RichText::new(lufs).small().monospace());
                 });
@@ -1696,22 +1713,22 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("⏺").color(theme::EMBER));
                     ui.label(
-                        RichText::new(format!("recording… {secs:.1}s (from {})", fmt_time(at)))
+                        RichText::new(tr!(
+                            "mixer.voice.recording",
+                            secs = crate::i18n::num(secs, 1),
+                            at = fmt_time(at)
+                        ))
                             .small()
                             .color(theme::EMBER),
                     );
-                    if ui.button("Stop").clicked() {
+                    if ui.button(tr!("mixer.voice.stop")).clicked() {
                         app.finish_record_voice();
                     }
                 });
                 ui.ctx().request_repaint_after(std::time::Duration::from_millis(150));
             } else if ui
-                .button("⏺ Record voice")
-                .on_hover_text(
-                    "Punch in: the timeline rolls from the playhead and your \
-                     microphone records over it — the take lands on A1 where \
-                     you started. Press again to stop.",
-                )
+                .button(tr!("mixer.voice.record"))
+                .on_hover_text(tr!("mixer.voice.record_hover"))
                 .clicked()
             {
                 app.toggle_record_voice();
@@ -1720,11 +1737,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 
         // ── Tighten ─────────────────────────────────────────────────────
         if ui
-            .button("✂ Tighten silence")
-            .on_hover_text(
-                "Cut the quiet air out of the whole edit and close up — \
-                 keeps 0.15s of breathing room around every cut. Undoable.",
-            )
+            .button(tr!("mixer.tighten"))
+            .on_hover_text(tr!("mixer.tighten_hover"))
             .clicked()
         {
             app.editor.push_undo(&app.project);
@@ -1741,29 +1755,25 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             };
             let (cuts, removed) = app.project.tighten(&mut supplier, 0.06, 0.6, 0.15);
             app.status = if cuts == 0 {
-                "Nothing to tighten — no silences found.".into()
+                tr!("mixer.tighten_none").into()
             } else {
                 app.editor.mark_changed();
-                format!("Tightened: {cuts} cut(s), {removed:.1}s of silence removed.")
+                tr!("mixer.tightened", cuts = cuts, removed = crate::i18n::num(removed, 1))
             };
         }
 
         // ── Frame export ────────────────────────────────────────────────
         if ui
-            .button("📷 Export this frame")
-            .on_hover_text("The frame under the playhead — effects, overlays and animation included — as a PNG next to the project")
+            .button(tr!("mixer.frame_export"))
+            .on_hover_text(tr!("mixer.frame_export_hover"))
             .clicked()
         {
             app.export_current_frame();
         }
 
         if ui
-            .button("⏺ Snapshot")
-            .on_hover_text(
-                "Freeze the whole project as a named copy under \
-                 <project>.snapshots/ — `reel snapshot --list` shows them, \
-                 --restore rolls back",
-            )
+            .button(tr!("mixer.snapshot"))
+            .on_hover_text(tr!("mixer.snapshot_hover"))
             .clicked()
         {
             if let Some(path) = app.editor.project_path.clone() {
@@ -1772,19 +1782,19 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 app.editor.changed_at = std::time::Instant::now() - std::time::Duration::from_secs(2);
                 app.poll_autosave();
                 match crate::cli::take_snapshot(&path, None) {
-                    Ok(dest) => app.status = format!("Snapshot saved: {}", dest.display()),
-                    Err(e) => app.status = format!("Snapshot failed: {e}"),
+                    Ok(dest) => app.status = tr!("mixer.snapshot_saved", path = dest.display()),
+                    Err(e) => app.status = tr!("mixer.snapshot_failed", e = e),
                 }
             } else {
-                app.status = "The project has no file yet — add media first.".into();
+                app.status = tr!("mixer.snapshot_no_file").into();
             }
         }
 
         // ── Scopes ──────────────────────────────────────────────────────
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Scopes").color(theme::CYAN));
-            let label = if app.show_scopes { "Hide" } else { "Show" };
+            ui.label(RichText::new(tr!("mixer.scopes")).color(theme::CYAN));
+            let label = if app.show_scopes { tr!("mixer.hide") } else { tr!("mixer.show") };
             if ui.small_button(label).clicked() {
                 app.show_scopes = !app.show_scopes;
                 app.scroll_to_scopes = app.show_scopes;
@@ -1807,7 +1817,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 
         // ── Captions ────────────────────────────────────────────────────
         ui.separator();
-        ui.label(RichText::new("Captions").color(theme::CYAN));
+        ui.label(RichText::new(tr!("mixer.captions.heading")).color(theme::CYAN));
         if let Some(job) = &app.captions_job {
             let st = job.state();
             ui.label(RichText::new(&st.stage).small());
@@ -1816,16 +1826,16 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
             } else {
                 ui.spinner();
             }
-            if ui.button("Cancel").clicked() {
+            if ui.button(tr!("mixer.captions.cancel")).clicked() {
                 job.cancel();
             }
         } else if !app.project.captions.is_empty() {
             ui.label(
-                RichText::new(format!("{} captions · burned in on export", app.project.captions.len()))
+                RichText::new(trn!("mixer.captions.count", app.project.captions.len()))
                     .small()
                     .color(egui::Color32::from_gray(150)),
             );
-            ui.add(egui::Slider::new(&mut app.project.caption_size, 12..=40).text("Size"));
+            ui.add(egui::Slider::new(&mut app.project.caption_size, 12..=40).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("mixer.captions.size")));
             // The cue editor: fix a word, nudge a timing, drop a line —
             // whisper gets it almost right, and "almost" is editable.
             let head = app.editor.playhead;
@@ -1842,8 +1852,14 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                         };
                         ui.horizontal(|ui| {
                             if ui
-                                .small_button(RichText::new(format!("{start:.1}s")).monospace())
-                                .on_hover_text("Jump the playhead here")
+                                .small_button(
+                                    RichText::new(tr!(
+                                        "mixer.captions.cue_time",
+                                        t = crate::i18n::num(start, 1)
+                                    ))
+                                    .monospace(),
+                                )
+                                .on_hover_text(tr!("mixer.captions.jump_hover"))
                                 .clicked()
                             {
                                 app.seek_timeline(start);
@@ -1859,7 +1875,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 cue.text = text;
                                 app.editor.mark_changed();
                             }
-                            if ui.small_button("−").on_hover_text("Delete this cue").clicked() {
+                            if ui.small_button("−").on_hover_text(tr!("mixer.captions.delete_cue")).clicked() {
                                 delete = Some(i);
                             }
                         });
@@ -1871,24 +1887,21 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     }
                 });
             ui.horizontal(|ui| {
-                if ui.button("Redo captions").clicked() {
+                if ui.button(tr!("mixer.captions.redo")).clicked() {
                     app.start_captions();
                 }
-                if ui.button("Remove all").clicked() {
+                if ui.button(tr!("mixer.captions.remove_all")).clicked() {
                     app.editor.push_undo(&app.project);
                     app.project.captions.clear();
                     app.editor.mark_changed();
                 }
             });
         } else {
-            let btn = egui::Button::new(RichText::new("Generate captions").color(theme::VOID))
+            let btn = egui::Button::new(RichText::new(tr!("mixer.captions.generate")).color(theme::VOID))
                 .fill(theme::CYAN)
                 .corner_radius(8.0);
             if ui.add_sized([ui.available_width(), 30.0], btn)
-                .on_hover_text(
-                    "Speech to captions, entirely on this machine — nothing is uploaded.\n\
-                     The engine and model are fetched once, automatically.",
-                )
+                .on_hover_text(tr!("mixer.captions.generate_hover"))
                 .clicked()
             {
                 app.start_captions();
@@ -1904,12 +1917,12 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
 
         // ── Music ───────────────────────────────────────────────────────
         ui.separator();
-        ui.label(RichText::new("Music").color(theme::CYAN));
+        ui.label(RichText::new(tr!("mixer.music.heading")).color(theme::CYAN));
         match app.project.music.clone() {
             None => {
                 if ui
-                    .button("♪ Add music bed")
-                    .on_hover_text("A track under the whole edit — ducked under speech automatically")
+                    .button(tr!("mixer.music.add"))
+                    .on_hover_text(tr!("mixer.music.add_hover"))
                     .clicked()
                 {
                     app.pick_music();
@@ -1922,15 +1935,15 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                     .unwrap_or_else(|| m.source.clone());
                 ui.label(RichText::new(name).small().color(egui::Color32::from_gray(160)));
                 let before = m.clone();
-                ui.add(egui::Slider::new(&mut m.gain_db, -40.0..=6.0).text("Level (dB)"));
-                ui.checkbox(&mut m.duck, "Duck under speech")
-                    .on_hover_text("Pull the music down whenever the edit's own audio speaks");
-                ui.add(egui::Slider::new(&mut m.fade, 0.0..=5.0).text("Fade (s)"));
+                ui.add(egui::Slider::new(&mut m.gain_db, -40.0..=6.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("mixer.music.level")));
+                ui.checkbox(&mut m.duck, tr!("mixer.music.duck"))
+                    .on_hover_text(tr!("mixer.music.duck_hover"));
+                ui.add(egui::Slider::new(&mut m.fade, 0.0..=5.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("mixer.music.fade")));
                 ui.horizontal(|ui| {
-                    if ui.button("Replace…").clicked() {
+                    if ui.button(tr!("mixer.music.replace")).clicked() {
                         app.pick_music();
                     }
-                    if ui.button("Remove").clicked() {
+                    if ui.button(tr!("mixer.music.remove")).clicked() {
                         app.editor.push_undo(&app.project);
                         app.project.music = None;
                         app.editor.mark_changed();
@@ -1946,12 +1959,15 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         // ── Titles ──────────────────────────────────────────────────────
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("Titles").color(theme::CYAN));
-            if ui.button("+ Add").on_hover_text("Text on the picture at the playhead").clicked() {
+            ui.label(RichText::new(tr!("mixer.titles.heading")).color(theme::CYAN));
+            if ui.button(tr!("mixer.titles.add")).on_hover_text(tr!("mixer.titles.add_hover")).clicked() {
                 app.editor.push_undo(&app.project);
                 let head = app.editor.playhead;
                 app.project.titles.push(crate::titles::Title {
                     start: head,
+                    // The placeholder text is born in the UI language; once
+                    // placed it is the user's own text and never re-translated.
+                    text: tr!("mixer.titles.default_text").into(),
                     end: head + 3.0,
                     ..Default::default()
                 });
@@ -1983,42 +1999,42 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 let t = &mut app.project.titles[i];
                 changed |= ui.text_edit_singleline(&mut t.text).changed();
                 changed |= ui
-                    .add(egui::Slider::new(&mut t.size, 0.03..=0.30).text("Size"))
+                    .add(egui::Slider::new(&mut t.size, 0.03..=0.30).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text(tr!("mixer.titles.size")))
                     .changed();
                 ui.horizontal(|ui| {
                     changed |= ui.color_edit_button_srgb(&mut t.color).changed();
-                    changed |= ui.checkbox(&mut t.bold, "Bold").changed();
-                    changed |= ui.checkbox(&mut t.outline, "Outline").changed();
+                    changed |= ui.checkbox(&mut t.bold, tr!("mixer.titles.bold")).changed();
+                    changed |= ui.checkbox(&mut t.outline, tr!("mixer.titles.outline")).changed();
                 });
                 // Motion: fades + a slide-in edge; and the preset browser —
                 // apply one, or save this title's look for reuse.
                 ui.horizontal(|ui| {
                     let mut fi = t.fade_in as f32;
-                    if ui.add(egui::DragValue::new(&mut fi).speed(0.05).range(0.0..=3.0).prefix("in ").suffix("s")).changed() {
+                    if ui.add(egui::DragValue::new(&mut fi).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).speed(0.05).range(0.0..=3.0).prefix(tr!("mixer.titles.fade_in_prefix")).suffix(tr!("mixer.titles.seconds_suffix"))).changed() {
                         t.fade_in = fi as f64;
                         changed = true;
                     }
                     let mut fo = t.fade_out as f32;
-                    if ui.add(egui::DragValue::new(&mut fo).speed(0.05).range(0.0..=3.0).prefix("out ").suffix("s")).changed() {
+                    if ui.add(egui::DragValue::new(&mut fo).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).speed(0.05).range(0.0..=3.0).prefix(tr!("mixer.titles.fade_out_prefix")).suffix(tr!("mixer.titles.seconds_suffix"))).changed() {
                         t.fade_out = fo as f64;
                         changed = true;
                     }
                     egui::ComboBox::from_id_salt(("slide", i))
                         .selected_text(match t.slide_from {
-                            crate::titles::Slide::None => "no slide",
-                            crate::titles::Slide::Left => "from left",
-                            crate::titles::Slide::Right => "from right",
-                            crate::titles::Slide::Top => "from top",
-                            crate::titles::Slide::Bottom => "from bottom",
+                            crate::titles::Slide::None => tr!("mixer.titles.slide_none"),
+                            crate::titles::Slide::Left => tr!("mixer.titles.slide_left"),
+                            crate::titles::Slide::Right => tr!("mixer.titles.slide_right"),
+                            crate::titles::Slide::Top => tr!("mixer.titles.slide_top"),
+                            crate::titles::Slide::Bottom => tr!("mixer.titles.slide_bottom"),
                         })
                         .width(92.0)
                         .show_ui(ui, |ui| {
                             for (label, v) in [
-                                ("no slide", crate::titles::Slide::None),
-                                ("from left", crate::titles::Slide::Left),
-                                ("from right", crate::titles::Slide::Right),
-                                ("from top", crate::titles::Slide::Top),
-                                ("from bottom", crate::titles::Slide::Bottom),
+                                (tr!("mixer.titles.slide_none"), crate::titles::Slide::None),
+                                (tr!("mixer.titles.slide_left"), crate::titles::Slide::Left),
+                                (tr!("mixer.titles.slide_right"), crate::titles::Slide::Right),
+                                (tr!("mixer.titles.slide_top"), crate::titles::Slide::Top),
+                                (tr!("mixer.titles.slide_bottom"), crate::titles::Slide::Bottom),
                             ] {
                                 if ui.selectable_value(&mut t.slide_from, v, label).changed() {
                                     changed = true;
@@ -2028,7 +2044,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                 });
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt(("preset", i))
-                        .selected_text("Preset…")
+                        .selected_text(tr!("mixer.titles.preset"))
                         .width(110.0)
                         .show_ui(ui, |ui| {
                             for name in crate::titles::list_presets() {
@@ -2043,8 +2059,8 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                                 }
                             }
                         });
-                    if ui.small_button("save preset").on_hover_text(
-                        "Save this title's style + motion as a reusable preset (a JSON file — share it)",
+                    if ui.small_button(tr!("mixer.titles.save_preset")).on_hover_text(
+                        tr!("mixer.titles.save_preset_hover"),
                     ).clicked() {
                         let dir = crate::titles::preset_dir();
                         let _ = std::fs::create_dir_all(&dir);
@@ -2057,29 +2073,33 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
                             .and_then(|json| std::fs::write(&path, json).ok())
                             .is_some();
                         app.status = if saved {
-                            format!("Preset saved: {}", path.display())
+                            tr!("mixer.titles.preset_saved", path = path.display())
                         } else {
-                            "Could not save the preset.".into()
+                            tr!("mixer.titles.preset_failed").into()
                         };
                     }
                 });
                 ui.horizontal(|ui| {
-                    if ui.button("Start here").on_hover_text("Begin at the playhead").clicked() {
+                    if ui.button(tr!("mixer.titles.start_here")).on_hover_text(tr!("mixer.titles.start_here_hover")).clicked() {
                         t.start = head;
                         t.end = head + dur.max(0.5);
                         changed = true;
                     }
-                    if ui.button("End here").clicked() {
+                    if ui.button(tr!("mixer.titles.end_here")).clicked() {
                         t.end = head.max(t.start + 0.2);
                         changed = true;
                     }
                 });
                 ui.label(
-                    RichText::new(format!("{:.2}s → {:.2}s · drag it on the picture", t.start, t.end))
+                    RichText::new(tr!(
+                        "mixer.titles.span",
+                        start = crate::i18n::num(t.start, 2),
+                        end = crate::i18n::num(t.end, 2)
+                    ))
                         .small()
                         .color(egui::Color32::from_gray(140)),
                 );
-                if ui.button("🗑 Remove").clicked() {
+                if ui.button(tr!("mixer.titles.remove")).clicked() {
                     remove = Some(i);
                 }
             });
@@ -2094,12 +2114,7 @@ fn media_panel_contents(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
 
         ui.separator();
-        ui.label(RichText::new(
-            "J K L shuttle · S or Ctrl+K split · Q W ripple-trim to playhead\n\
-             Del delete · Shift+Del ripple delete · right-click to close gaps\n\
-             Ctrl+C/V/D copy, paste, duplicate · Ctrl+M marker · Ctrl+Left/Right jump\n\
-             Ctrl+drag an edge: roll · Alt+drag: slip · Ctrl+Alt+drag: slide",
-        ).small().color(egui::Color32::from_gray(120)));
+        ui.label(RichText::new(tr!("mixer.shortcuts")).small().color(egui::Color32::from_gray(120)));
     }
 }
 
@@ -2250,7 +2265,7 @@ fn viewport(ui: &mut egui::Ui, app: &mut ReelApp) {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "drop a video, song or image here",
+            tr!("editor.drop_hint"),
             egui::FontId::proportional(20.0),
             Color32::from_gray(90),
         );
@@ -2271,9 +2286,9 @@ fn proxy_chip(app: &ReelApp, painter: &egui::Painter, rect: Rect) {
         .map(|p| app.proxies.is_proxy(&p.path))
         .unwrap_or(false)
     {
-        "PROXY"
+        tr!("editor.proxy")
     } else if app.proxies.is_busy() {
-        "PROXY…"
+        tr!("editor.proxy_baking")
     } else {
         return;
     };
@@ -2829,7 +2844,7 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
         }
     }
     ui.label(
-        RichText::new("drag a key · double-click adds · right-click removes · middle-click cycles linear/ease/hold/bezier")
+        RichText::new(tr!("editor.curve_hint"))
             .small()
             .color(egui::Color32::from_gray(120)),
     );
@@ -2842,7 +2857,7 @@ fn curve_editor(ui: &mut egui::Ui, app: &mut ReelApp, id: u64, duration: f64) {
 /// millisecond and updates live during playback.
 fn scopes(ui: &mut egui::Ui, app: &ReelApp) -> bool {
     let Some(frame) = app.player.as_ref().and_then(|p| p.current.as_ref()) else {
-        ui.label(RichText::new("No picture yet.").small().color(egui::Color32::from_gray(120)));
+        ui.label(RichText::new(tr!("editor.no_picture")).small().color(egui::Color32::from_gray(120)));
         return false;
     };
     let (w, h) = (frame.width as usize, frame.height as usize);
@@ -2999,7 +3014,7 @@ fn scopes(ui: &mut egui::Ui, app: &ReelApp) -> bool {
         }
     }
     ui.label(
-        RichText::new("Histogram · luma waveform · RGB parade · vectorscope")
+        RichText::new(tr!("editor.scopes_caption"))
             .small()
             .color(egui::Color32::from_gray(120)),
     );
@@ -3054,7 +3069,7 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         let normal_slider = ui.spacing().slider_width;
         ui.spacing_mut().slider_width = ui.available_width();
         let resp = ui.add(
-            egui::Slider::new(&mut pos, 0.0..=edit_len).show_value(false).trailing_fill(true),
+            egui::Slider::new(&mut pos, 0.0..=edit_len).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).show_value(false).trailing_fill(true),
         );
         ui.spacing_mut().slider_width = normal_slider;
         if resp.dragged() || resp.drag_stopped() {
@@ -3072,7 +3087,7 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
         let normal_slider = ui.spacing().slider_width;
         ui.spacing_mut().slider_width = ui.available_width();
         let resp = ui.add(
-            egui::Slider::new(&mut pos, 0.0..=dur).show_value(false).trailing_fill(true),
+            egui::Slider::new(&mut pos, 0.0..=dur).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).show_value(false).trailing_fill(true),
         );
         ui.spacing_mut().slider_width = normal_slider;
         if resp.drag_stopped() {
@@ -3131,17 +3146,17 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 let est = 3.0 * 38.0 + 46.0 + 4.0 * gap;
                 ui.add_space(((ui.available_width() - est) / 2.0).max(0.0));
                 ui.spacing_mut().item_spacing.x = gap;
-                if ui.add(round("⏮", false)).on_hover_text("Back to start").clicked() {
+                if ui.add(round("⏮", false)).on_hover_text(tr!("editor.transport.back_to_start")).clicked() {
                     player.seek(0.0);
                 }
-                if ui.add(round("◀", false)).on_hover_text("Frame back (,)").clicked() {
+                if ui.add(round("◀", false)).on_hover_text(tr!("editor.transport.frame_back")).clicked() {
                     player.frame_step(false);
                 }
                 let label = if player.playing { "⏸" } else { "▶" };
-                if ui.add(round(label, true)).on_hover_text("Play/pause (Space)").clicked() {
+                if ui.add(round(label, true)).on_hover_text(tr!("editor.transport.play_pause")).clicked() {
                     player.toggle_play();
                 }
-                if ui.add(round("▶", false)).on_hover_text("Frame forward (.)").clicked() {
+                if ui.add(round("▶", false)).on_hover_text(tr!("editor.transport.frame_forward")).clicked() {
                     player.frame_step(true);
                 }
             }
@@ -3151,17 +3166,17 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
             if let Some(img_open) = app.image.is_some().then_some(()) {
                 let _ = img_open;
                 if ui
-                    .button(RichText::new("⬇ Export").color(theme::CYAN))
-                    .on_hover_text("Convert — PNG/JPEG/WebP, resize")
+                    .button(RichText::new(tr!("editor.transport.export")).color(theme::CYAN))
+                    .on_hover_text(tr!("editor.transport.convert_image_hover"))
                     .clicked()
                 {
                     open_export = true;
                 }
                 if mode == Mode::Player {
-                    if ui.button(RichText::new("✂ Edit").color(theme::EMBER)).clicked() {
+                    if ui.button(RichText::new(tr!("editor.transport.edit")).color(theme::EMBER)).clicked() {
                         goto_editor = true;
                     }
-                } else if ui.button("▶ Done").on_hover_text("Back to the player (E)").clicked() {
+                } else if ui.button(tr!("editor.transport.done")).on_hover_text(tr!("editor.transport.done_hover")).clicked() {
                     goto_player = true;
                 }
                 return;
@@ -3177,8 +3192,8 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 format!("{} / {}", fmt_time(player.position), fmt_time(player.info.duration))
             };
             if ui
-                .button(RichText::new("⬇ Export").color(theme::CYAN))
-                .on_hover_text("Convert this file — codec, quality, size")
+                .button(RichText::new(tr!("editor.transport.export")).color(theme::CYAN))
+                .on_hover_text(tr!("editor.transport.convert_hover"))
                 .clicked()
             {
                 open_export = true;
@@ -3188,29 +3203,29 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 // I/O mark a window, Insert performs the three-point edit.
                 if app.source_preview.is_some() {
                     let label = match (app.src_mark_in, app.src_mark_out) {
-                        (Some(a), Some(b)) => format!("Insert {:.1}s", (b - a).max(0.0)),
-                        (Some(_), None) | (None, Some(_)) => "Insert (half-marked)".into(),
-                        (None, None) => "Insert all".into(),
+                        (Some(a), Some(b)) => tr!("editor.transport.insert_secs", t = crate::i18n::num((b - a).max(0.0), 1)),
+                        (Some(_), None) | (None, Some(_)) => tr!("editor.transport.insert_half").to_string(),
+                        (None, None) => tr!("editor.transport.insert_all").to_string(),
                     };
                     if ui
                         .button(RichText::new(label).color(theme::STAR))
-                        .on_hover_text("Three-point edit: source I/O + timeline playhead → a clip at the playhead")
+                        .on_hover_text(tr!("editor.transport.insert_hover"))
                         .clicked()
                     {
                         do_insert = true;
                     }
                 }
                 if ui
-                    .button(RichText::new("✂ Edit").color(theme::EMBER))
-                    .on_hover_text("Open on the timeline (E)")
+                    .button(RichText::new(tr!("editor.transport.edit")).color(theme::EMBER))
+                    .on_hover_text(tr!("editor.transport.edit_hover"))
                     .clicked()
                 {
                     goto_editor = true;
                 }
-            } else if ui.button("▶ Done").on_hover_text("Back to the player (E)").clicked() {
+            } else if ui.button(tr!("editor.transport.done")).on_hover_text(tr!("editor.transport.done_hover")).clicked() {
                 goto_player = true;
             }
-            if ui.button("⛶").on_hover_text("Fullscreen (F)").clicked() {
+            if ui.button("⛶").on_hover_text(tr!("editor.transport.fullscreen_hover")).clicked() {
                 toggle_fullscreen = true;
             }
 
@@ -3219,13 +3234,13 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                 ui.spacing_mut().slider_width = 90.0;
                 let mut vol = player.volume;
                 if ui
-                    .add(egui::Slider::new(&mut vol, 0.0..=130.0).show_value(false).trailing_fill(true))
+                    .add(egui::Slider::new(&mut vol, 0.0..=130.0).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).show_value(false).trailing_fill(true))
                     .changed()
                 {
                     player.set_volume(vol);
                 }
                 let speaker = if app.user_muted || player.volume <= 0.0 { "🔇" } else { "🔊" };
-                if ui.button(speaker).on_hover_text("Mute (M)").clicked() {
+                if ui.button(speaker).on_hover_text(tr!("editor.transport.mute_hover")).clicked() {
                     app.user_muted = !app.user_muted;
                     player.set_muted(app.user_muted);
                 }
@@ -3237,11 +3252,11 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
             let editing_here = app.mode == Mode::Editor;
             let mut speed = if editing_here { app.user_rate } else { player.speed };
             egui::ComboBox::from_id_salt("speed")
-                .selected_text(format!("{speed}×"))
+                .selected_text(crate::i18n::localise_decimal(format!("{speed}×")))
                 .width(64.0)
                 .show_ui(ui, |ui| {
                     for s in [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0, 4.0] {
-                        ui.selectable_value(&mut speed, s, format!("{s}×"));
+                        ui.selectable_value(&mut speed, s, crate::i18n::localise_decimal(format!("{s}×")));
                     }
                 });
             if editing_here {
@@ -3256,18 +3271,18 @@ fn chrome(ui: &mut egui::Ui, app: &mut ReelApp) {
                     .unwrap_or(1.0);
                 if (clip_rate - 1.0).abs() > 0.01 {
                     ui.label(
-                        RichText::new(format!("clip {clip_rate:.2}×"))
+                        RichText::new(tr!("editor.transport.clip_rate", r = crate::i18n::num(clip_rate, 2)))
                             .small()
                             .color(theme::EMBER),
                     )
-                    .on_hover_text("This clip has its own playback rate; it multiplies with yours.");
+                    .on_hover_text(tr!("editor.transport.clip_rate_hover"));
                 }
             } else if speed != player.speed {
                 player.set_speed(speed);
             }
 
             let mut looping = player.looping;
-            if ui.toggle_value(&mut looping, "🔁").on_hover_text("Loop (L)").changed() {
+            if ui.toggle_value(&mut looping, "🔁").on_hover_text(tr!("editor.transport.loop_hover")).changed() {
                 player.set_looping(looping);
             }
 
@@ -3324,7 +3339,8 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
     let duration = app.player.as_ref().map(|p| p.info.duration).unwrap_or(0.0);
 
     let mut keep_open = app.export_open;
-    egui::Window::new("Export / Convert")
+    egui::Window::new(tr!("export_ui.title"))
+        .id(egui::Id::new("export_window"))
         .open(&mut keep_open)
         .collapsible(false)
         .resizable(false)
@@ -3347,25 +3363,23 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 ui.add_space(4.0);
                 let before = app.export_timeline;
                 ui.horizontal(|ui| {
-                    ui.selectable_value(&mut app.export_timeline, false, "Source file");
+                    ui.selectable_value(&mut app.export_timeline, false, tr!("export_ui.source_file"));
+                    let secs = crate::i18n::num(cut_len, 1);
                     let label = if ranged {
-                        format!("✂ Range ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len)
+                        trn!("export_ui.range", segments.len(), t = secs)
                     } else {
-                        format!("✂ The edit ({} clip{}, {:.1}s)", segments.len(), if segments.len() == 1 { "" } else { "s" }, cut_len)
+                        trn!("export_ui.edit", segments.len(), t = secs)
                     };
                     ui.selectable_value(&mut app.export_timeline, true, label)
                         .on_hover_text(if ranged {
-                            "Only what the in/out markers enclose"
+                            tr!("export_ui.range_hover")
                         } else {
-                            "The whole timeline as cut"
+                            tr!("export_ui.edit_hover")
                         });
                 });
                 if app.export_timeline && !app.project.captions.is_empty() {
                     ui.label(
-                        RichText::new(format!(
-                            "• {} captions will be burned in",
-                            app.project.captions.len()
-                        ))
+                        RichText::new(trn!("export_ui.captions_burned", app.project.captions.len()))
                         .small()
                         .color(theme::CYAN),
                     );
@@ -3389,7 +3403,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     .corner_radius(6.0)
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
-                        ui.label(RichText::new("Render queue").color(theme::CYAN).small());
+                        ui.label(RichText::new(tr!("export_ui.queue_title")).color(theme::CYAN).small());
                         if let Some((label, st)) = app.queue.current() {
                             ui.label(format!("⏵ {label}"));
                             ui.add(egui::ProgressBar::new(st.fraction).show_percentage().animate(true));
@@ -3397,7 +3411,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         let waiting = app.queue.labels_pending();
                         if !waiting.is_empty() {
                             ui.label(
-                                RichText::new(format!("waiting: {}", waiting.join(", ")))
+                                RichText::new(tr!("export_ui.waiting", list = waiting.join(", ")))
                                     .small()
                                     .color(egui::Color32::from_gray(150)),
                             );
@@ -3413,10 +3427,10 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                             }
                         }
                         ui.horizontal(|ui| {
-                            if app.queue.is_busy() && ui.button("Cancel all").clicked() {
+                            if app.queue.is_busy() && ui.button(tr!("export_ui.cancel_all")).clicked() {
                                 app.queue.cancel_all();
                             }
-                            if !app.queue.done.is_empty() && ui.button("Clear finished").clicked() {
+                            if !app.queue.done.is_empty() && ui.button(tr!("export_ui.clear_finished")).clicked() {
                                 app.queue.clear_done();
                             }
                         });
@@ -3428,27 +3442,27 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             if let Some(job) = &app.export {
                 let st = job.state();
                 if !st.finished {
-                    ui.label(format!("Encoding → {}", job.output));
+                    ui.label(tr!("export_ui.encoding", path = job.output));
                     ui.add(egui::ProgressBar::new(st.fraction).show_percentage().animate(true));
                     if st.speed > 0.0 {
-                        ui.label(RichText::new(format!("{:.2}× realtime", st.speed)).small());
+                        ui.label(RichText::new(tr!("export_ui.realtime", x = crate::i18n::num(st.speed, 2))).small());
                     }
-                    if ui.button("Cancel").clicked() {
+                    if ui.button(tr!("export_ui.cancel")).clicked() {
                         job.cancel();
                     }
                 } else {
                     match &st.error {
                         None => {
-                            ui.colored_label(theme::CYAN, format!("✓ Done → {}", job.output));
+                            ui.colored_label(theme::CYAN, tr!("export_ui.done", path = job.output));
                         }
                         Some(e) if e == "cancelled" => {
-                            ui.colored_label(theme::EMBER, "Export cancelled.");
+                            ui.colored_label(theme::EMBER, tr!("export_ui.cancelled"));
                         }
                         Some(e) => {
                             ui.colored_label(theme::EMBER, format!("✗ {e}"));
                         }
                     }
-                    if ui.button("OK").clicked() {
+                    if ui.button(tr!("export_ui.ok")).clicked() {
                         app.export = None;
                         app.export_out = if app.export_timeline {
                             app.timeline_output()
@@ -3464,7 +3478,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             // Pick where it's going; Reel picks the frame, fit and codec.
             if kind != crate::media::MediaKind::Image {
                 ui.label(
-                    RichText::new("Where is this going?")
+                    RichText::new(tr!("export_ui.where"))
                         .size(15.0)
                         .color(theme::STAR),
                 );
@@ -3482,7 +3496,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                             } else {
                                 (theme::STAR, theme::VOID_3)
                             };
-                            let label = format!("{}\n{}", p.name, p.note);
+                            let label = format!("{}\n{}", p.ui_name(), p.note);
                             let btn = egui::Button::new(RichText::new(label).color(fg).size(13.0))
                                 .fill(bg)
                                 .corner_radius(10.0)
@@ -3504,18 +3518,18 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     // Delivery knobs for the batch: filename template and
                     // which platforms burn captions.
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Names").small().color(egui::Color32::from_gray(160)));
+                        ui.label(RichText::new(tr!("export_ui.names")).small().color(egui::Color32::from_gray(160)));
                         ui.add(
                             egui::TextEdit::singleline(&mut app.publish_template)
                                 .desired_width(ui.available_width())
-                        ).on_hover_text("{name} = project, {platform} = preset slug");
+                        ).on_hover_text(tr!("export_ui.names_hover"));
                     });
                     if !app.project.captions.is_empty() {
-                        ui.collapsing("Captions per platform", |ui| {
+                        ui.collapsing(tr!("export_ui.captions_per_platform"), |ui| {
                             for preset in export::Preset::ALL {
                                 let slug = preset.slug();
                                 let mut on = !app.publish_no_captions.contains(&slug);
-                                if ui.checkbox(&mut on, preset.name).changed() {
+                                if ui.checkbox(&mut on, preset.ui_name()).changed() {
                                     if on {
                                         app.publish_no_captions.remove(&slug);
                                     } else {
@@ -3526,27 +3540,24 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         });
                     }
                     let every = egui::Button::new(
-                        RichText::new("Queue ALL platforms").color(theme::VOID),
+                        RichText::new(tr!("export_ui.queue_all")).color(theme::VOID),
                     )
                     .fill(theme::EMBER)
                     .corner_radius(8.0);
                     if ui
                         .add_sized([ui.available_width(), 26.0], every)
-                        .on_hover_text(
-                            "One render per preset — YouTube, TikTok, Reels, feed, square, \
-                             Facebook, X — named after the platform, delivered at its loudness",
-                        )
+                        .on_hover_text(tr!("export_ui.queue_all_hover"))
                         .clicked()
                     {
                         let count = app.queue_all_platforms();
-                        app.status = format!("{count} renders queued — keep editing.");
+                        app.status = trn!("export_ui.queued", count);
                     }
                 }
                 ui.add_space(6.0);
                 let custom = export::Preset::ALL.iter().all(|p| !p.is_active(&app.export_settings));
                 if ui
-                    .selectable_label(custom, RichText::new("⚙ Custom settings").size(13.0))
-                    .on_hover_text("Choose format, quality and size yourself")
+                    .selectable_label(custom, RichText::new(tr!("export_ui.custom_settings")).size(13.0))
+                    .on_hover_text(tr!("export_ui.custom_hover"))
                     .clicked()
                 {
                     app.export_settings.target = None;
@@ -3571,7 +3582,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             let prev_codec = s.codec;
 
             egui::Grid::new("export_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                ui.label("Format");
+                ui.label(tr!("export_ui.format"));
                 egui::ComboBox::from_id_salt("codec")
                     .selected_text(s.codec.label())
                     .width(260.0)
@@ -3585,7 +3596,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 let is_video_out = !s.codec.is_audio_only() && !s.codec.is_image() && s.codec != Codec::Remux;
 
                 if s.codec.has_quality() {
-                    ui.label("Quality");
+                    ui.label(tr!("export_ui.quality"));
                     ui.horizontal(|ui| {
                         egui::ComboBox::from_id_salt("quality")
                             .selected_text(s.quality.label())
@@ -3605,7 +3616,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                         if is_video_out {
                             if let Quality::Custom(crf) = &mut s.quality {
                                 let mut v = *crf as i32;
-                                ui.add(egui::Slider::new(&mut v, 10..=50).text("CRF"));
+                                ui.add(egui::Slider::new(&mut v, 10..=50).custom_formatter(crate::i18n::egui_num).custom_parser(crate::i18n::egui_parse).text("CRF"));
                                 *crf = v as u8;
                             }
                         }
@@ -3616,7 +3627,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 if let Some((tw, th)) = s.target {
                     // A preset owns the frame; the choice left is how the
                     // picture is placed inside it.
-                    ui.label("Frame");
+                    ui.label(tr!("export_ui.frame"));
                     ui.horizontal(|ui| {
                         ui.label(RichText::new(format!("{tw}×{th}")).monospace());
                         egui::ComboBox::from_id_salt("fit")
@@ -3629,7 +3640,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     });
                     ui.end_row();
                 } else if is_video_out || s.codec.is_image() {
-                    ui.label("Resolution");
+                    ui.label(tr!("export_ui.resolution"));
                     egui::ComboBox::from_id_salt("resolution")
                         .selected_text(s.resolution.label())
                         .show_ui(ui, |ui| {
@@ -3642,25 +3653,25 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
 
                 if is_video_out && timeline_mode {
                     // Timeline renders carry the sources' audio automatically.
-                    ui.label("Audio");
+                    ui.label(tr!("export_ui.audio"));
                     ui.label(
-                        RichText::new("from the clips")
+                        RichText::new(tr!("export_ui.audio_from_clips"))
                             .small()
                             .color(egui::Color32::from_gray(150)),
                     );
                     ui.end_row();
                 } else if is_video_out {
-                    ui.label("Audio");
+                    ui.label(tr!("export_ui.audio"));
                     egui::ComboBox::from_id_salt("audio")
                         .selected_text(match s.audio {
-                            AudioMode::Copy => "Copy (untouched)".to_string(),
-                            AudioMode::Encode { kbps } => format!("Encode {kbps} kb/s"),
+                            AudioMode::Copy => tr!("export_ui.audio_copy").to_string(),
+                            AudioMode::Encode { kbps } => tr!("export_ui.audio_encode", kbps = kbps),
                         })
                         .show_ui(ui, |ui| {
                             for kbps in [128u32, 160, 256] {
-                                ui.selectable_value(&mut s.audio, AudioMode::Encode { kbps }, format!("Encode {kbps} kb/s"));
+                                ui.selectable_value(&mut s.audio, AudioMode::Encode { kbps }, tr!("export_ui.audio_encode", kbps = kbps));
                             }
-                            ui.selectable_value(&mut s.audio, AudioMode::Copy, "Copy (untouched)");
+                            ui.selectable_value(&mut s.audio, AudioMode::Copy, tr!("export_ui.audio_copy"));
                         });
                     ui.end_row();
                 }
@@ -3676,13 +3687,13 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     })
                 };
                 if let Some(hw) = hw_for_codec {
-                    ui.label("Encoder");
-                    ui.checkbox(&mut s.hardware, format!("{} (faster)", hw.label()))
-                        .on_hover_text("Uncheck for the software encoder — slower, slightly smaller files");
+                    ui.label(tr!("export_ui.encoder"));
+                    ui.checkbox(&mut s.hardware, tr!("export_ui.hw_faster", name = hw.label()))
+                        .on_hover_text(tr!("export_ui.hw_hover"));
                     ui.end_row();
                 }
 
-                ui.label("Save to");
+                ui.label(tr!("export_ui.save_to"));
                 ui.add(egui::TextEdit::singleline(&mut app.export_out).desired_width(260.0));
                 ui.end_row();
             });
@@ -3703,14 +3714,14 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 let label = export::Preset::ALL
                     .iter()
                     .find(|p| p.is_active(&app.export_settings))
-                    .map(|p| p.name.to_string())
-                    .unwrap_or_else(|| "Custom".to_string());
-                let btn = egui::Button::new(RichText::new(format!("+ Queue {label}")).color(theme::CYAN))
+                    .map(|p| p.ui_name().to_string())
+                    .unwrap_or_else(|| tr!("export_ui.custom").to_string());
+                let btn = egui::Button::new(RichText::new(tr!("export_ui.queue_one", label = label)).color(theme::CYAN))
                     .corner_radius(8.0)
                     .min_size(Vec2::new(0.0, 30.0));
                 if ui
                     .add(btn)
-                    .on_hover_text("Add this to the render queue and keep choosing")
+                    .on_hover_text(tr!("export_ui.queue_one_hover"))
                     .clicked()
                 {
                     queue_clicked = true;
@@ -3720,8 +3731,8 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 let label = export::Preset::ALL
                     .iter()
                     .find(|p| p.is_active(&app.export_settings))
-                    .map(|p| p.name.to_string())
-                    .unwrap_or_else(|| "Custom".to_string());
+                    .map(|p| p.ui_name().to_string())
+                    .unwrap_or_else(|| tr!("export_ui.custom").to_string());
                 app.queue_current_export(label);
                 // Suggest a fresh name so the next queue entry can't collide.
                 if let Some(p) = export::Preset::ALL.iter().find(|p| p.is_active(&app.export_settings)) {
@@ -3732,7 +3743,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
             // add_sized (not min_size): it centres the label in the button.
             let start = ui.add_sized(
                 [ui.available_width(), 38.0],
-                egui::Button::new(RichText::new("Start export").color(theme::VOID).strong().size(15.0))
+                egui::Button::new(RichText::new(tr!("export_ui.start")).color(theme::VOID).strong().size(15.0))
                     .fill(theme::CYAN)
                     .corner_radius(10.0),
             );
@@ -3757,7 +3768,7 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                     },
                 ) {
                     Ok(job) => app.export = Some(job),
-                    Err(e) => app.status = format!("Export: {e}"),
+                    Err(e) => app.status = tr!("export_ui.error", e = e),
                 }
             } else if start.clicked() {
                 // ffmpeg can't read SVG — hand it the rasterized copy instead.
@@ -3769,14 +3780,14 @@ fn export_window(ctx: &egui::Context, app: &mut ReelApp) {
                 let input = match input {
                     Some(Ok(p)) => p.to_string_lossy().into_owned(),
                     Some(Err(e)) => {
-                        app.status = format!("Export: {e}");
+                        app.status = tr!("export_ui.error", e = e);
                         return;
                     }
                     None => source.clone(),
                 };
                 match export::start(&input, &app.export_out, &app.export_settings, duration) {
                     Ok(job) => app.export = Some(job),
-                    Err(e) => app.status = format!("Export: {e}"),
+                    Err(e) => app.status = tr!("export_ui.error", e = e),
                 }
             }
         });
@@ -3791,40 +3802,32 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
 
     // ── Toolbar ──────────────────────────────────────────────────────────
     ui.horizontal(|ui| {
-        if ui.button("−").on_hover_text("Zoom out (Ctrl+scroll)").clicked() {
+        if ui.button("−").on_hover_text(tr!("timeline.zoom_out")).clicked() {
             app.editor.px_per_s = (app.editor.px_per_s / 1.5).max(2.0);
         }
-        if ui.button("+").on_hover_text("Zoom in (Ctrl+scroll)").clicked() {
+        if ui.button("+").on_hover_text(tr!("timeline.zoom_in")).clicked() {
             app.editor.px_per_s = (app.editor.px_per_s * 1.5).min(600.0);
         }
-        if ui.button("↔").on_hover_text("Fit the whole edit").clicked() {
+        if ui.button("↔").on_hover_text(tr!("timeline.fit")).clicked() {
             let w = ui.available_width().max(200.0);
             app.editor.px_per_s = (w / app.project.duration().max(1.0) as f32).clamp(2.0, 600.0);
             app.editor.scroll_x = 0.0;
         }
         ui.separator();
-        if ui.button("✂ Split").on_hover_text("Split under the playhead (S)").clicked() {
+        if ui.button(tr!("timeline.split")).on_hover_text(tr!("timeline.split_hover")).clicked() {
             app.editor_split();
         }
         let lane_on = app.editor.show_curve_lane;
         if ui
-            .selectable_label(lane_on, "Curve lane")
-            .on_hover_text(
-                "A full-width lane under the tracks: the selected clip's \
-                 keyframes for the Animate panel's parameter, aligned with \
-                 the ruler. Drag keys, double-click adds, right-click removes.",
-            )
+            .selectable_label(lane_on, tr!("timeline.curve_lane"))
+            .on_hover_text(tr!("timeline.curve_lane_hover"))
             .clicked()
         {
             app.editor.show_curve_lane = !lane_on;
         }
         if ui
-            .button("+ Adjust")
-            .on_hover_text(
-                "Add an ADJUSTMENT LAYER at the playhead: a 4s span whose \
-                 colour grade applies to everything beneath it — select it \
-                 and use the Look panel",
-            )
+            .button(tr!("timeline.adjust"))
+            .on_hover_text(tr!("timeline.adjust_hover"))
             .clicked()
         {
             app.editor.push_undo(&app.project);
@@ -3837,28 +3840,28 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             app.editor.selected = Some(id);
             app.editor.mark_changed();
         }
-        let del = ui.add_enabled(app.editor.selected.is_some(), egui::Button::new("🗑 Delete"));
-        if del.on_hover_text("Delete selected clip (Del)").clicked() {
+        let del = ui.add_enabled(app.editor.selected.is_some(), egui::Button::new(tr!("timeline.delete")));
+        if del.on_hover_text(tr!("timeline.delete_hover")).clicked() {
             app.editor_delete();
         }
         ui.separator();
-        if ui.add_enabled(app.editor.can_undo(), egui::Button::new("Undo")).on_hover_text("Undo (Ctrl+Z)").clicked() {
+        if ui.add_enabled(app.editor.can_undo(), egui::Button::new(tr!("timeline.undo"))).on_hover_text(tr!("timeline.undo_hover")).clicked() {
             app.editor.undo(&mut app.project);
         }
-        if ui.add_enabled(app.editor.can_redo(), egui::Button::new("Redo")).on_hover_text("Redo (Ctrl+Shift+Z)").clicked() {
+        if ui.add_enabled(app.editor.can_redo(), egui::Button::new(tr!("timeline.redo"))).on_hover_text(tr!("timeline.redo_hover")).clicked() {
             app.editor.redo(&mut app.project);
         }
         ui.separator();
-        if ui.button("[").on_hover_text("Range in at playhead (I)").clicked() {
+        if ui.button("[").on_hover_text(tr!("timeline.range_in_hover")).clicked() {
             app.editor.range_in = Some(app.editor.playhead);
         }
-        if ui.button("]").on_hover_text("Range out at playhead (O)").clicked() {
+        if ui.button("]").on_hover_text(tr!("timeline.range_out_hover")).clicked() {
             app.editor.range_out = Some(app.editor.playhead);
         }
         let has_range = app.editor.range_in.is_some() || app.editor.range_out.is_some();
         if ui
             .add_enabled(has_range, egui::Button::new("✕"))
-            .on_hover_text("Clear export range (Shift+I/O)")
+            .on_hover_text(tr!("timeline.clear_range_hover"))
             .clicked()
         {
             app.editor.range_in = None;
@@ -3866,11 +3869,15 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
         }
         ui.separator();
         // No Save button: edits save themselves (see app::poll_autosave).
-        let saved_label = if app.editor.dirty { "saving…" } else { "saved" };
+        let saved_label = if app.editor.dirty { tr!("timeline.saving") } else { tr!("timeline.saved") };
         ui.label(RichText::new(saved_label).small().color(egui::Color32::from_gray(130)));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(
-                RichText::new(format!("{}  ·  {:.1}s", app.project.name, app.project.duration()))
+                RichText::new(tr!(
+                    "timeline.project_len",
+                    name = app.project.name,
+                    t = crate::i18n::num(app.project.duration(), 1)
+                ))
                     .color(theme::CYAN)
                     .small(),
             );
@@ -4007,7 +4014,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     }
     let mut close_all_bg = false;
     bg.context_menu(|ui| {
-        if ui.button("Close every gap").clicked() {
+        if ui.button(tr!("timeline.close_every_gap")).clicked() {
             close_all_bg = true;
             ui.close_menu();
         }
@@ -4015,7 +4022,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
     if close_all_bg {
         app.editor.push_undo(&app.project);
         let moved = app.project.close_all_gaps();
-        app.status = format!("Closed {moved:.2}s of gaps.");
+        app.status = tr!("timeline.closed_gaps", t = crate::i18n::num(moved, 2));
     }
 
     // Lanes + clips (drawn from a snapshot; edits go through clip_mut).
@@ -4155,9 +4162,9 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             if cr.width() > 40.0 {
                 // A slab behind the label so it stays readable over the wave.
                 let text = if clip.adjustment {
-                    format!("ADJUST  {:.1}s", clip.duration)
+                    tr!("timeline.adjust_label", t = crate::i18n::num(clip.duration, 1))
                 } else {
-                    format!("{}  {:.1}s", clip.name, clip.duration)
+                    tr!("timeline.clip_label", name = clip.name, t = crate::i18n::num(clip.duration, 1))
                 };
                 let galley = painter.layout_no_wrap(
                     text,
@@ -4254,16 +4261,16 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             let mut delete_this = false;
             resp.context_menu(|ui| {
                 ui.label(RichText::new(&clip.name).small().color(theme::CYAN));
-                if ui.button("Close gap before this clip").clicked() {
+                if ui.button(tr!("timeline.close_gap_before")).clicked() {
                     close_this = true;
                     ui.close_menu();
                 }
-                if ui.button("Close every gap").clicked() {
+                if ui.button(tr!("timeline.close_every_gap")).clicked() {
                     close_all = true;
                     ui.close_menu();
                 }
                 ui.separator();
-                if ui.button("Delete clip").clicked() {
+                if ui.button(tr!("timeline.delete_clip")).clicked() {
                     delete_this = true;
                     ui.close_menu();
                 }
@@ -4275,19 +4282,19 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
             if close_this {
                 let moved = app.project.close_gap_before(clip.id);
                 app.status = if moved > 0.0 {
-                    format!("Closed a {moved:.2}s gap.")
+                    tr!("timeline.closed_gap", t = crate::i18n::num(moved, 2))
                 } else {
-                    "No gap before that clip.".into()
+                    tr!("timeline.no_gap").into()
                 };
             }
             if close_all {
                 let moved = app.project.close_all_gaps();
-                app.status = format!("Closed {moved:.2}s of gaps.");
+                app.status = tr!("timeline.closed_gaps", t = crate::i18n::num(moved, 2));
             }
             if delete_this {
                 app.project.delete_clip(clip.id);
                 app.editor.selected = None;
-                app.status = "Clip deleted.".into();
+                app.status = tr!("timeline.clip_deleted").into();
             }
             if resp.drag_started() {
                 app.editor.push_undo(&app.project);
@@ -4393,7 +4400,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                     Drag::Roll { id, last } => {
                         let applied = app.project.roll(id, pt - last);
                         app.editor.drag = Some(Drag::Roll { id, last: last + applied });
-                        app.status = "Roll: moving the cut — the total length stays.".into();
+                        app.status = tr!("timeline.roll").into();
                     }
                     Drag::Slip { id, last } if id == clip.id => {
                         // Dragging RIGHT shows earlier material — the
@@ -4401,12 +4408,12 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                         let applied = app.project.slip(id, -(pt - last));
                         app.editor.drag = Some(Drag::Slip { id, last: last - applied });
                         let ip = app.project.clip(id).map(|c| c.in_point).unwrap_or(0.0);
-                        app.status = format!("Slip: source in-point {ip:.2}s");
+                        app.status = tr!("timeline.slip", t = crate::i18n::num(ip, 2));
                     }
                     Drag::Slide { id, last } if id == clip.id => {
                         let applied = app.project.slide(id, pt - last);
                         app.editor.drag = Some(Drag::Slide { id, last: last + applied });
-                        app.status = "Slide: neighbours absorb the move.".into();
+                        app.status = tr!("timeline.slide").into();
                     }
                     _ => {}
                 }
@@ -4572,7 +4579,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 painter.text(
                     egui::pos2(lane.left() + 6.0, lane.top() + 8.0),
                     egui::Align2::LEFT_CENTER,
-                    param.name(),
+                    param.ui_label(),
                     egui::FontId::monospace(10.0),
                     Color32::from_gray(130),
                 );
@@ -4581,7 +4588,7 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
                 painter.text(
                     lane.center(),
                     egui::Align2::CENTER_CENTER,
-                    "select a clip with keyframes (Animate panel picks the parameter)",
+                    tr!("timeline.curve_lane_empty"),
                     egui::FontId::proportional(11.0),
                     Color32::from_gray(110),
                 );
@@ -4637,13 +4644,5 @@ fn timeline(ui: &mut egui::Ui, app: &mut ReelApp) {
 }
 
 fn fmt_time(secs: f64) -> String {
-    let s = secs.max(0.0);
-    let h = (s / 3600.0).floor() as u64;
-    let m = ((s % 3600.0) / 60.0).floor() as u64;
-    let rem = s - (h * 3600 + m * 60) as f64;
-    if h > 0 {
-        format!("{h}:{m:02}:{rem:05.2}")
-    } else {
-        format!("{m:02}:{rem:05.2}")
-    }
+    crate::i18n::clock(secs)
 }

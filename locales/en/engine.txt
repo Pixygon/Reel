@@ -1,0 +1,147 @@
+# engine — en
+# Export: codec / quality / resolution / fit labels (export dialog combos)
+export.codec.h264 = MP4 · H.264 (compatible)
+export.codec.h265 = MP4 · H.265 (smaller)
+export.codec.av1 = MP4 · AV1 (smallest, slow)
+export.codec.vp9 = WebM · VP9 (web)
+export.codec.remux = MKV · no re-encode (instant)
+export.codec.mp3 = MP3 · audio only
+export.codec.m4a = M4A/AAC · audio only
+export.codec.opus = Opus · audio only
+export.codec.flac = FLAC · audio, lossless
+export.codec.wav = WAV · audio, uncompressed
+export.codec.png = PNG · lossless
+export.codec.jpeg = JPEG · small
+export.codec.webp = WebP · web
+export.quality.high = High (near-lossless)
+export.quality.balanced = Balanced
+export.quality.small = Small file
+export.quality.custom = Custom CRF
+export.resolution.source = Source
+export.fit.letterbox = Fit (bars)
+export.fit.crop = Fill (crop)
+export.fit.blur = Fill (blurred sides)
+# Social preset names that are words (brand names stay as they are)
+export.preset.square = Square
+export.preset.instagram_feed = Instagram feed
+# Export errors
+export.err.timeline_empty = the timeline is empty
+export.err.output_exists = output already exists: {output}
+export.err.ffmpeg_start = ffmpeg failed to start: {e}
+export.err.ffmpeg_unreadable = ffmpeg output unreadable: {e}
+export.err.no_output = export failed (no output produced)
+
+# Editor model: transitions and keyframe parameters
+edit.transition.fade = Crossfade
+edit.transition.dip = Dip to black
+edit.transition.wipe_left = Wipe left
+edit.transition.wipe_right = Wipe right
+edit.transition.wipe_up = Wipe up
+edit.transition.wipe_down = Wipe down
+edit.transition.slide_left = Slide left
+edit.transition.slide_right = Slide right
+edit.param.exposure = exposure
+edit.param.contrast = contrast
+edit.param.saturation = saturation
+edit.param.zoom = zoom
+edit.param.pan_x = pan-x
+edit.param.pan_y = pan-y
+edit.param.opacity = opacity
+edit.param.pip_x = pip-x
+edit.param.pip_y = pip-y
+edit.param.pip_scale = pip-scale
+edit.param.speed = speed
+edit.param.mask_x = mask-x
+edit.param.mask_y = mask-y
+edit.param.mask_w = mask-w
+edit.param.mask_h = mask-h
+edit.param.plugin_1 = plugin-1
+edit.param.plugin_2 = plugin-2
+edit.param.plugin_3 = plugin-3
+edit.param.plugin_4 = plugin-4
+# Template slots and variants
+edit.variants.no_slots = none yet — bind one with `reel slot bind`
+edit.variants.err.no_media_slot = no media slot named {name}. Slots: {slots}
+edit.variants.err.no_text_slot = no text slot named {name}. Slots: {slots}
+edit.variants.err.no_variant_list = no variant named {name}. Variants: {variants}
+edit.variants.err.no_variant = no variant named {name}
+
+# Captions: models, progress stages, errors
+captions.model.tiny = Fast (tiny, ~75 MB)
+captions.model.base = Balanced (base, ~148 MB)
+captions.model.small = Accurate (small, ~488 MB)
+captions.stage.starting = Starting…
+captions.stage.fetch_engine_first = Fetching the caption engine (first time only)…
+captions.stage.fetch_engine = Fetching the caption engine
+captions.stage.fetch_model_first = Fetching the speech model (first time only)…
+captions.stage.fetch_model = Fetching the speech model
+captions.stage.extracting = Extracting audio…
+captions.stage.listening = Listening…
+captions.stage.download = {label} — {done} of {total} MB
+captions.err.no_engine = no caption engine for this platform — install whisper.cpp to enable captions
+captions.err.unpack = could not unpack the caption engine
+captions.err.no_binary = the caption engine unpacked without a runnable binary
+captions.err.read_audio = could not read the audio from this file
+captions.err.engine_start = caption engine failed to start: {e}
+captions.err.engine = caption engine error: {e}
+captions.err.unknown = unknown
+captions.err.no_captions = the engine produced no captions ({e})
+captions.err.no_speech = no speech found in this file
+captions.err.download_host = could not reach the download host: {e}
+
+# Titles
+titles.err.no_preset = no title preset {name} ({e}) — presets live in {dir} (`reel title presets` lists them)
+
+# Frame server / compositor / decoders
+engine.err.probe_overlay = could not probe overlay source {source}
+engine.err.probe_ramped = could not probe ramped source {source}
+engine.err.write = could not write {path}
+engine.err.burnin_start = burn-in encoder failed to start
+engine.err.no_stdin = no stdin
+engine.err.burn_still = burning captions into the still failed
+engine.err.audio_start = audio pass failed to start
+engine.err.audio_failed = the audio pass failed
+engine.err.encoder_start = encoder failed to start
+engine.err.encoder_no_stdin = encoder has no stdin
+engine.err.no_frames = no frames decoded from {source}
+engine.err.no_frames_overlay = no frames decoded from overlay {source}
+engine.err.encoder_stopped = the encoder stopped accepting frames
+engine.err.encoder_exit = encoder did not exit
+engine.err.encode_failed = encode failed: {e}
+engine.err.unknown_encoder = unknown encoder error
+engine.err.decoder_start = could not start a decoder for {source}
+engine.err.native_decoder_start = could not start a native decoder for {source}
+engine.err.decoder_no_stdout = decoder has no stdout
+engine.err.stabilize = stabilisation analysis failed for {source}
+engine.err.no_adapter_compositor = no GPU adapter for the compositor
+engine.err.no_adapter = no suitable GPU adapter found
+# LUTs
+engine.lut.err.one_d = 1D LUTs aren't supported (yet) — this needs a LUT_3D_SIZE cube
+engine.lut.err.bad_size = bad LUT_3D_SIZE
+engine.lut.err.bad_row = bad LUT row: {line}
+engine.lut.err.no_size = no LUT_3D_SIZE in the file
+engine.lut.err.row_count = LUT has {rows} rows, its size says {expect}
+engine.lut.err.read = could not read the LUT {path}: {e}
+# Media loading
+engine.media.err.read_image = could not read image {path}: {e}
+engine.media.err.parse_svg = could not parse SVG {path}: {e}
+engine.media.err.svg_size = SVG {path} has no intrinsic size
+engine.media.err.svg_alloc = SVG raster target {w}×{h} is not allocatable
+engine.media.err.buffer = image buffer size mismatch
+# Plates
+engine.plate.err.spec = a plate is color:RRGGBB or color:transparent, got {media}
+engine.plate.err.no_cache = no cache folder
+engine.plate.err.write = could not write a plate to {path}
+# Effect plugins
+engine.plugin.err.contract = a Reel effect must define `fn plugin(rgb: vec3<f32>, uv: vec2<f32>, p: vec4<f32>) -> vec3<f32>`
+engine.plugin.err.read = could not read the effect {path}: {e}
+# Beat detection
+engine.beats.err.too_short = not enough audio to find beats in
+engine.beats.err.ffmpeg = could not start ffmpeg: {e}
+engine.beats.err.no_pipe = no pipe
+engine.beats.err.read = decode read failed: {e}
+# Nested (compound) clips
+engine.compound.err.load = could not load {path}: {e}
+engine.compound.err.empty = {path} has an empty timeline — nothing to nest
+engine.compound.err.render = nested render failed: {e}
+engine.compound.err.finalise = could not finalise the flat render: {e}

@@ -1,6 +1,6 @@
 [package]
 name = "reel"
-version = "2.1.1"
+version = "2.2.0"
 edition = "2021"
 description = "Reel — a cross-platform video player and editor. Better-than-VLC playback, Premiere-class editing. Linux-first."
 license = "MIT"
@@ -54,6 +54,9 @@ lto = "thin"
 # use cpal (its ALSA backend is dead on PipeWire-only desktops) — see
 # audio.rs for the native PipeWire stream.
 cpal = "0.16"
+# The user's UI language (Windows: GetUserPreferredUILanguages, macOS:
+# CFLocale) — Linux reads the gettext variables itself (i18n.rs).
+sys-locale = "0.3"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # Finder hands files to the app delegate, not argv (macos.rs). Same objc2

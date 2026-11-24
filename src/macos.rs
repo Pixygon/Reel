@@ -47,7 +47,7 @@ extern "C" fn open_urls(_this: *mut AnyObject, _cmd: Sel, _app: *mut AnyObject, 
 /// app arrive too.
 pub fn install_open_handler(proxy: EventLoopProxy<UserEvent>) {
     let _ = PROXY.set(proxy);
-    let Some(cls) = AnyClass::get("WinitApplicationDelegate") else {
+    let Some(cls) = AnyClass::get("WinitApplicationDelegate") else { // i18n-ok: Objective-C class name
         log::warn!("no WinitApplicationDelegate — Finder opens will be ignored");
         return;
     };

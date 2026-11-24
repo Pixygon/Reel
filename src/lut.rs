@@ -35,14 +35,14 @@ pub fn parse_cube(text: &str) -> Result<Lut> {
         let mut it = line.split_whitespace();
         match it.next() {
             Some("TITLE") | Some("LUT_1D_SIZE") if line.starts_with("LUT_1D") => {
-                bail!("1D LUTs aren't supported (yet) — this needs a LUT_3D_SIZE cube")
+                bail!(tr!("engine.lut.err.one_d"))
             }
             Some("TITLE") => {}
             Some("LUT_3D_SIZE") => {
                 size = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .ok_or_else(|| anyhow!("bad LUT_3D_SIZE"))?;
+                    .ok_or_else(|| anyhow!(tr!("engine.lut.err.bad_size")))?;
             }
             Some("DOMAIN_MIN") => {
                 for m in &mut min {
@@ -56,26 +56,26 @@ pub fn parse_cube(text: &str) -> Result<Lut> {
             }
             Some(first) => {
                 // A data row: three floats.
-                let r: f32 = first.parse().map_err(|_| anyhow!("bad LUT row: {line}"))?;
+                let r: f32 = first.parse().map_err(|_| anyhow!(tr!("engine.lut.err.bad_row", line = line)))?;
                 let g: f32 = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .ok_or_else(|| anyhow!("bad LUT row: {line}"))?;
+                    .ok_or_else(|| anyhow!(tr!("engine.lut.err.bad_row", line = line)))?;
                 let b: f32 = it
                     .next()
                     .and_then(|v| v.parse().ok())
-                    .ok_or_else(|| anyhow!("bad LUT row: {line}"))?;
+                    .ok_or_else(|| anyhow!(tr!("engine.lut.err.bad_row", line = line)))?;
                 rows.push([r, g, b]);
             }
             None => {}
         }
     }
     if size < 2 {
-        bail!("no LUT_3D_SIZE in the file");
+        bail!(tr!("engine.lut.err.no_size"));
     }
     let expect = (size * size * size) as usize;
     if rows.len() != expect {
-        bail!("LUT has {} rows, its size says {expect}", rows.len());
+        bail!(tr!("engine.lut.err.row_count", rows = rows.len(), expect = expect));
     }
     // Normalise a non-unit domain into 0..1 while building the RGBA buffer.
     let mut data = Vec::with_capacity(expect * 4);
@@ -126,7 +126,7 @@ pub fn load(path: &str) -> Result<Arc<Lut>> {
         }
     }
     let text = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("could not read the LUT {path}: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.lut.err.read", path = path, e = e)))?;
     let lut = Arc::new(parse_cube(&text)?);
     cache.lock().unwrap().insert(path.to_string(), (mtime, lut.clone()));
     Ok(lut)

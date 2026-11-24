@@ -77,7 +77,7 @@ macro_rules! mpv_fns {
                 $(
                     let $name: $ty = *lib
                         .get(concat!(stringify!($name), "\0").as_bytes())
-                        .map_err(|e| anyhow!("libmpv missing {}: {e}", stringify!($name)))?;
+                        .map_err(|e| anyhow!("libmpv missing {}: {e}", stringify!($name)))?; // i18n-ok: only logged while probing for libmpv
                 )+
                 Ok(Self { $( $name, )+ _lib: lib })
             }
@@ -188,7 +188,7 @@ impl MpvPlayer {
     pub fn open(lib: Arc<Lib>, path: &str) -> Result<Self> {
         let handle = unsafe { (lib.mpv_create)() };
         if handle.is_null() {
-            bail!("mpv_create returned null");
+            bail!(tr!("playback.mpv.create_null"));
         }
         // Wrap immediately so any early bail! below still terminates the core.
         let mut p = Self {
@@ -237,7 +237,7 @@ impl MpvPlayer {
             if rc == MPV_ERROR_OPTION_NOT_FOUND && matches!(k, "load-scripts" | "ytdl") {
                 continue;
             }
-            p.check(rc).map_err(|e| anyhow!("mpv option {k}={v}: {e}"))?;
+            p.check(rc).map_err(|e| anyhow!(tr!("playback.mpv.option", k = k, v = v, e = e)))?;
         }
         crate::timing!("mpv options set");
         p.check(unsafe { (p.lib.mpv_initialize)(p.handle) })
@@ -255,7 +255,7 @@ impl MpvPlayer {
         p.check(unsafe {
             (p.lib.mpv_render_context_create)(&mut render, p.handle, params.as_mut_ptr())
         })
-        .map_err(|e| anyhow!("mpv render context: {e}"))?;
+        .map_err(|e| anyhow!(tr!("playback.mpv.render_ctx", e = e)))?;
         p.render = render;
 
         crate::timing!("mpv render ctx ready");
@@ -269,12 +269,12 @@ impl MpvPlayer {
             match ev.event_id {
                 MPV_EVENT_FILE_LOADED => break,
                 MPV_EVENT_END_FILE | MPV_EVENT_SHUTDOWN => {
-                    bail!("mpv could not open {path}");
+                    bail!(tr!("playback.mpv.open_failed", path = path));
                 }
                 _ => {}
             }
             if Instant::now() > deadline {
-                bail!("mpv timed out opening {path}");
+                bail!(tr!("playback.mpv.timeout", path = path));
             }
         }
         crate::timing!("mpv FILE_LOADED");
@@ -286,7 +286,7 @@ impl MpvPlayer {
         p.albumart = p.get_flag("current-tracks/video/albumart");
         // Pure audio is welcome — it just needs *something* to play.
         if !p.has_video && duration <= 0.0 {
-            bail!("nothing playable in {path}");
+            bail!(tr!("playback.mpv.nothing_playable", path = path));
         }
         let fps = p
             .get_f64("container-fps")
@@ -333,14 +333,14 @@ impl MpvPlayer {
                         .map(|e| e.reason)
                         .unwrap_or(MPV_END_FILE_REASON_ERROR);
                     if reason == MPV_END_FILE_REASON_ERROR {
-                        bail!("mpv could not open {path}");
+                        bail!(tr!("playback.mpv.open_failed", path = path));
                     }
                 }
-                MPV_EVENT_SHUTDOWN => bail!("mpv could not open {path}"),
+                MPV_EVENT_SHUTDOWN => bail!(tr!("playback.mpv.open_failed", path = path)),
                 _ => {}
             }
             if Instant::now() > deadline {
-                bail!("mpv timed out opening {path}");
+                bail!(tr!("playback.mpv.timeout", path = path));
             }
         }
         let width = self.get_i64("width").unwrap_or(0) as u32;

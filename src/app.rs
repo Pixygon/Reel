@@ -206,12 +206,12 @@ impl ReelApp {
             player: None,
             image: None,
             image_uploaded: false,
-            project: Project::default(),
+            project: { let mut p = Project::default(); p.name = tr!("app.untitled").into(); p },
             editor: EditorState::default(),
             opening_for_project: false,
             tex_id: None,
             tex: None,
-            status: "Ready.".into(),
+            status: tr!("app.ready").into(),
             export_open: false,
             export_settings: ExportSettings::default(),
             export_out: String::new(),
@@ -333,15 +333,15 @@ impl ReelApp {
             }
             self.finish_defaults_prompt();
             if mimes.is_empty() {
-                return "Nothing selected — Reel stays available under “Open with”.".into();
+                return tr!("app.defaults.none_selected").into();
             }
             return match integ::set_default_for(&mimes) {
-                Ok(()) => "✓ Reel is now the default player for your selection.".into(),
-                Err(e) => format!("Could not set defaults: {e}"),
+                Ok(()) => tr!("app.defaults.done").into(),
+                Err(e) => tr!("app.defaults.failed", e = e),
             };
         }
         #[allow(unreachable_code)]
-        "Default-app setup is currently Linux-only.".into()
+        tr!("app.defaults.linux_only").into()
     }
 
     /// Dismiss the banner and remember the answer.
@@ -417,19 +417,19 @@ impl ReelApp {
         let (tx, rx) = crossbeam_channel::bounded(1);
         std::thread::spawn(move || {
             let audio_filters: [(&str, &[&str]); 2] = [
-                ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac", "aiff"]),
-                ("Any media", &["mp4", "mkv", "webm", "mov", "m4v", "mp3", "flac", "ogg",
+                (tr!("app.filter.audio"), &["mp3", "flac", "ogg", "opus", "m4a", "wav", "aac", "aiff"]),
+                (tr!("app.filter.any_media"), &["mp4", "mkv", "webm", "mov", "m4v", "mp3", "flac", "ogg",
                                 "opus", "m4a", "wav"]),
             ];
             let media_filters: [(&str, &[&str]); 6] = [
-                ("Media", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
+                (tr!("app.filter.media"), &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif",
                             "mp3", "flac", "ogg", "opus", "m4a", "wav",
                             "png", "jpg", "jpeg", "webp", "bmp", "svg"]),
-                ("Video", &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"]),
-                ("Audio", &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
-                ("Images", &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
-                ("Reel project", &["reel"]),
-                ("Effects & LUTs", &["wgsl", "cube"]),
+                (tr!("app.filter.video"), &["mp4", "mkv", "webm", "mov", "avi", "m4v", "ts", "wmv", "flv", "gif"]),
+                (tr!("app.filter.audio"), &["mp3", "flac", "ogg", "opus", "m4a", "wav"]),
+                (tr!("app.filter.images"), &["png", "jpg", "jpeg", "webp", "bmp", "svg", "tif", "tiff", "qoi", "tga"]),
+                (tr!("app.filter.project"), &["reel"]),
+                (tr!("app.filter.effects"), &["wgsl", "cube"]),
             ];
             // Linux: rfd talks to the portal over zbus built in tokio mode.
             // MUST run on the process-wide runtime (see runtime.rs) — a
@@ -488,9 +488,9 @@ impl ReelApp {
                                     c.effects.lut = Some(idx);
                                 }
                                 self.editor.mark_changed();
-                                self.status = "LUT applied — previewed and rendered alike.".into();
+                                self.status = tr!("app.lut_applied").into();
                             }
-                            Err(e) => self.status = format!("Not a usable LUT: {e}"),
+                            Err(e) => self.status = tr!("app.lut_bad", e = e),
                         }
                     }
                     PickerTarget::Plugin(clip) => {
@@ -510,9 +510,9 @@ impl ReelApp {
                                     }
                                 }
                                 self.editor.mark_changed();
-                                self.status = format!("Effect '{}' applied — previewed and rendered alike.", plug.name);
+                                self.status = tr!("app.effect_applied", name = plug.name);
                             }
-                            Err(e) => self.status = format!("Not a usable effect: {e}"),
+                            Err(e) => self.status = tr!("app.effect_bad", e = e),
                         }
                     }
                     PickerTarget::Pool => {
@@ -522,7 +522,7 @@ impl ReelApp {
                         self.editor.push_undo(&self.project);
                         self.project.pool_add(&abs, "");
                         self.editor.mark_changed();
-                        self.status = "Gathered into the pool.".into();
+                        self.status = tr!("app.pool_gathered").into();
                     }
                     PickerTarget::Relink(old) => {
                         let abs = std::fs::canonicalize(&path)
@@ -531,14 +531,14 @@ impl ReelApp {
                         self.editor.push_undo(&self.project);
                         let n = self.project.relink(&old, &abs);
                         self.editor.mark_changed();
-                        self.status = format!("Relinked {n} reference(s).");
+                        self.status = trn!("app.relinked", n);
                     }
                     PickerTarget::Music => {
                         self.editor.push_undo(&self.project);
                         let keep = self.project.music.clone().unwrap_or_default();
                         self.project.music = Some(crate::edit::Music { source: path, ..keep });
                         self.editor.mark_changed();
-                        self.status = "Music bed added — it ducks under speech on export.".into();
+                        self.status = tr!("app.music_added").into();
                     }
                 }
                 self.picker_target = PickerTarget::Media;
@@ -548,7 +548,7 @@ impl ReelApp {
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
                 // The dialog thread died without answering (e.g. no portal).
                 self.picker = None;
-                self.status = "File dialog unavailable — drop a file or paste a path instead.".into();
+                self.status = tr!("app.dialog_unavailable").into();
             }
         }
     }
@@ -586,8 +586,8 @@ impl ReelApp {
                     self.editor.selected =
                         ses.selected.filter(|id| self.project.clip(*id).is_some());
                     self.mode = Mode::Editor;
-                    self.window_title = format!("{name} — Reel");
-                    self.status = format!("Project {name} loaded.");
+                    self.window_title = format!("{name} — Reel"); // i18n-ok: brand + file name
+                    self.status = tr!("app.project_loaded", name = name);
                     if let Some(src) = first_source {
                         // The editor previews through proxies: a heavy source
                         // starts its background proxy build here, and the
@@ -596,14 +596,14 @@ impl ReelApp {
                         self.open_media_async(&path, true);
                     }
                 }
-                Err(e) => self.status = format!("Could not open project {path}: {e}"),
+                Err(e) => self.status = tr!("app.project_open_failed", path = path, e = e),
             }
             return;
         }
 
         if !media::is_image_path(path) {
             self.open_media_async(path, false);
-            self.status = format!("Opening {name}…");
+            self.status = tr!("app.opening", name = name);
             return;
         }
 
@@ -613,8 +613,8 @@ impl ReelApp {
                     self.player = None;
                     // Stills live on the video track with a default 5 s hold.
                     self.project.append_video(&name, path, 5.0);
-                    self.status = format!("{name} — {}×{} image", img.width, img.height);
-                    self.window_title = format!("{name} — Reel");
+                    self.status = tr!("app.image_info", name = name, w = img.width, h = img.height);
+                    self.window_title = format!("{name} — Reel"); // i18n-ok: brand + file name
                     self.export_settings.codec = crate::export::Codec::Png;
                     self.export_out = export::default_output(path, self.export_settings.codec);
                     self.image = Some(img);
@@ -622,7 +622,7 @@ impl ReelApp {
                     self.tex_id = None;
                     self.tex = None;
                 }
-                Err(e) => self.status = format!("Could not open {path}: {e}"),
+                Err(e) => self.status = tr!("app.open_failed_path", path = path, e = e),
             }
             return;
         }
@@ -713,12 +713,12 @@ impl ReelApp {
             }
             Ok(Err(e)) => {
                 self.opening = None;
-                self.status = format!("Could not open: {e}");
+                self.status = tr!("app.open_failed", e = e);
             }
             Err(crossbeam_channel::TryRecvError::Empty) => {}
             Err(crossbeam_channel::TryRecvError::Disconnected) => {
                 self.opening = None;
-                self.status = "Open failed unexpectedly.".into();
+                self.status = tr!("app.open_failed_unexpected").into();
             }
         }
     }
@@ -756,10 +756,11 @@ impl ReelApp {
         match p.kind {
             MediaKind::Audio => {
                 self.project.append_audio(&name, &path, p.info.duration);
-                self.status = format!(
-                    "♪ {name} — {:.1}s [{}]",
-                    p.info.duration,
-                    p.backend_name()
+                self.status = tr!(
+                    "app.audio_info",
+                    name = name,
+                    d = crate::i18n::num(p.info.duration, 1),
+                    backend = p.backend_name()
                 );
                 self.export_settings.codec = crate::export::Codec::Mp3;
             }
@@ -768,15 +769,19 @@ impl ReelApp {
                 self.project.fps = p.info.fps;
                 self.project.width = p.info.width;
                 self.project.height = p.info.height;
-                self.status = format!(
-                    "{name} — {}×{} @ {:.2}fps, {:.1}s [{}]",
-                    p.info.width, p.info.height, p.info.fps, p.info.duration,
-                    p.backend_name()
+                self.status = tr!(
+                    "app.video_info",
+                    name = name,
+                    w = p.info.width,
+                    h = p.info.height,
+                    fps = crate::i18n::num(p.info.fps, 2),
+                    d = crate::i18n::num(p.info.duration, 1),
+                    backend = p.backend_name()
                 );
                 self.export_settings.codec = crate::export::Codec::H264;
             }
         }
-        self.window_title = format!("{name} — Reel");
+        self.window_title = format!("{name} — Reel"); // i18n-ok: brand + file name
         self.export_out = export::default_output(&path, self.export_settings.codec);
         self.image = None;
         self.image_uploaded = false;
@@ -805,9 +810,9 @@ impl ReelApp {
         });
         self.shot_rx = Some(rx);
         self.status = if delay > 0.0 {
-            format!("Screenshot in {delay:.0}s…")
+            tr!("app.shot_in", s = crate::i18n::num(delay, 0))
         } else {
-            "Taking screenshot…".into()
+            tr!("app.shot_taking").into()
         };
     }
 
@@ -826,14 +831,14 @@ impl ReelApp {
                 let _ = tx.send(rec.stop().map_err(|e| e.to_string()));
             });
             self.rec_rx = Some(rx);
-            self.status = "Finalizing recording…".into();
+            self.status = tr!("app.rec_finalizing").into();
         } else if self.rec_start_rx.is_none() {
             let (tx, rx) = crossbeam_channel::bounded(1);
             std::thread::spawn(move || {
                 let _ = tx.send(capture::start_recording().map_err(|e| e.to_string()));
             });
             self.rec_start_rx = Some(rx);
-            self.status = "Starting recording — pick what to share…".into();
+            self.status = tr!("app.rec_starting").into();
         }
     }
 
@@ -851,7 +856,7 @@ impl ReelApp {
                 let _ = tx.send(s.and_then(|sp| c.map(|cp| (sp, cp))));
             });
             self.streamer_done_rx = Some(rx);
-            self.status = "Finalizing the streamer recording…".into();
+            self.status = tr!("app.streamer.finalizing").into();
             return;
         }
         if self.streamer_start_rx.is_some() {
@@ -873,7 +878,7 @@ impl ReelApp {
             let _ = tx.send(result);
         });
         self.streamer_start_rx = Some(rx);
-        self.status = "Streamer layout: starting camera, then pick the screen…".into();
+        self.status = tr!("app.streamer.starting").into();
     }
 
     #[cfg(target_os = "linux")]
@@ -883,11 +888,11 @@ impl ReelApp {
                 Ok(Ok(pair)) => {
                     self.streamer_start_rx = None;
                     self.streamer = Some(pair);
-                    self.status = "⏺ Streamer layout recording — stop from the ☰ menu.".into();
+                    self.status = tr!("app.streamer.recording").into();
                 }
                 Ok(Err(e)) => {
                     self.streamer_start_rx = None;
-                    self.status = format!("Streamer recording: {e}");
+                    self.status = tr!("app.streamer.error", e = e);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
                 Err(crossbeam_channel::TryRecvError::Disconnected) => self.streamer_start_rx = None,
@@ -902,15 +907,15 @@ impl ReelApp {
                         &cam.to_string_lossy(),
                     ) {
                         Ok(project_path) => {
-                            self.status = "Streamer project assembled — trim and publish.".into();
+                            self.status = tr!("app.streamer.assembled").into();
                             self.open(&project_path);
                         }
-                        Err(e) => self.status = format!("Could not assemble the project: {e}"),
+                        Err(e) => self.status = tr!("app.streamer.assemble_failed", e = e),
                     }
                 }
                 Ok(Err(e)) => {
                     self.streamer_done_rx = None;
-                    self.status = format!("Streamer finalize: {e}");
+                    self.status = tr!("app.streamer.finalize_failed", e = e);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
                 Err(crossbeam_channel::TryRecvError::Disconnected) => self.streamer_done_rx = None,
@@ -932,7 +937,7 @@ impl ReelApp {
                 let _ = tx.send(capture::start_webcam_recording().map_err(|e| e.to_string()));
             });
             self.rec_start_rx = Some(rx);
-            self.status = "Starting webcam recording…".into();
+            self.status = tr!("app.webcam.starting").into();
         }
     }
 
@@ -942,12 +947,12 @@ impl ReelApp {
             match rx.try_recv() {
                 Ok(Ok(rec)) => {
                     self.rec_start_rx = None;
-                    self.status = "⏺ Recording… click ⏹ to stop".into();
+                    self.status = tr!("app.webcam.recording").into();
                     self.recorder = Some(rec);
                 }
                 Ok(Err(e)) => {
                     self.rec_start_rx = None;
-                    self.status = format!("Recording: {e}");
+                    self.status = tr!("app.webcam.error", e = e);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => {}
                 Err(crossbeam_channel::TryRecvError::Disconnected) => self.rec_start_rx = None,
@@ -968,7 +973,7 @@ impl ReelApp {
         for res in done {
             match res {
                 Ok(path) => self.open(&path.to_string_lossy()),
-                Err(e) => self.status = format!("Capture: {e}"),
+                Err(e) => self.status = tr!("app.capture_error", e = e),
             }
         }
     }
@@ -1386,7 +1391,7 @@ impl ReelApp {
                 .project
                 .export_segments_range(self.editor.range_in, self.editor.range_out);
             if segments.is_empty() {
-                self.status = "Nothing on the timeline to queue.".into();
+                self.status = tr!("app.queue.empty").into();
                 return;
             }
             export::Job::Timeline {
@@ -1411,11 +1416,11 @@ impl ReelApp {
         };
         let output = self.export_out.clone();
         if std::path::Path::new(&output).exists() {
-            self.status = format!("{output} already exists — change the name first.");
+            self.status = tr!("app.queue.exists", output = output);
             return;
         }
         self.queue.push(export::Queued { label: label.clone(), output, settings: self.export_settings.clone(), job });
-        self.status = format!("Queued {label} ({} waiting).", self.queue.len_pending());
+        self.status = tr!("app.queue.queued", label = label, n = self.queue.len_pending());
     }
 
     /// Save the project automatically, shortly after edits stop. Serialising
@@ -1459,7 +1464,7 @@ impl ReelApp {
         let json = match serde_json::to_string_pretty(&self.project) {
             Ok(j) => j,
             Err(e) => {
-                self.status = format!("Could not save project: {e}");
+                self.status = tr!("app.save.project_failed", e = e);
                 self.editor.dirty = false; // don't spin on a broken document
                 return;
             }
@@ -1467,7 +1472,7 @@ impl ReelApp {
         self.editor.dirty = false;
         if !self.editor.announced_path {
             self.editor.announced_path = true;
-            self.status = format!("Saving automatically to {path}");
+            self.status = tr!("app.save.autosave_to", path = path);
         }
         std::thread::spawn(move || {
             if let Err(e) = crate::edit::write_atomic(&path, &json) {
@@ -1484,7 +1489,7 @@ impl ReelApp {
         }
         let Some(src) = self.media_path() else { return };
         self.captions_job = Some(crate::captions::start(&src, self.caption_model));
-        self.status = "Captioning — this stays on your machine.".into();
+        self.status = tr!("app.captions.running").into();
     }
 
     /// Collect a finished captioning run.
@@ -1496,8 +1501,8 @@ impl ReelApp {
         }
         self.captions_job = None;
         match st.error {
-            Some(e) if e == "cancelled" => self.status = "Captioning cancelled.".into(),
-            Some(e) => self.status = format!("Captions: {e}"),
+            Some(e) if e == "cancelled" => self.status = tr!("app.captions.cancelled").into(),
+            Some(e) => self.status = tr!("app.captions.error", e = e),
             None => {
                 // Cues come back in SOURCE time. Map each window onto every
                 // place it survives in the edit, so trims, splits, reorders
@@ -1517,7 +1522,7 @@ impl ReelApp {
                 let n = mapped.len();
                 self.editor.push_undo(&self.project);
                 self.project.captions = mapped;
-                self.status = format!("{n} captions added — they burn in on export.");
+                self.status = trn!("app.captions.added", n);
             }
         }
     }
@@ -1527,13 +1532,13 @@ impl ReelApp {
         if let Some((clip, kind)) = self.project.clip_with_kind(id) {
             let name = clip.name.clone();
             self.editor.clipboard = Some((clip, kind));
-            self.status = format!("Copied {name} — Ctrl+V pastes at the playhead.");
+            self.status = tr!("app.copied", name = name);
         }
     }
 
     pub fn editor_paste(&mut self) {
         let Some((clip, kind)) = self.editor.clipboard.clone() else {
-            self.status = "Nothing copied yet (select a clip, then Ctrl+C).".into();
+            self.status = tr!("app.copy_empty").into();
             return;
         };
         self.editor.push_undo(&self.project);
@@ -1557,7 +1562,7 @@ impl ReelApp {
         let id = self.project.paste_clip(&clip, at, kind);
         self.editor.selected = Some(id);
         self.editor.mark_changed();
-        self.status = format!("Pasted at {at:.2}s — everything after it moved along.");
+        self.status = tr!("app.pasted", t = crate::i18n::num(at, 2));
     }
 
     pub fn editor_duplicate(&mut self) {
@@ -1566,7 +1571,7 @@ impl ReelApp {
         if let Some(new_id) = self.project.duplicate_clip(id) {
             self.editor.selected = Some(new_id);
             self.editor.mark_changed();
-            self.status = "Duplicated.".into();
+            self.status = tr!("app.duplicated").into();
         }
     }
 
@@ -1579,12 +1584,12 @@ impl ReelApp {
         match near {
             Some(i) => {
                 self.project.markers.remove(i);
-                self.status = "Marker removed.".into();
+                self.status = tr!("app.marker_removed").into();
             }
             None => {
                 self.project.markers.push(t);
                 self.project.markers.sort_by(|a, b| a.total_cmp(b));
-                self.status = format!("Marker at {t:.2}s (Ctrl+Left/Right to jump).");
+                self.status = tr!("app.marker_added", t = crate::i18n::num(t, 2));
             }
         }
         self.editor.mark_changed();
@@ -1607,7 +1612,7 @@ impl ReelApp {
     pub fn export_current_frame(&mut self) {
         let segments = self.project.export_segments();
         if segments.is_empty() {
-            self.status = "Nothing on the timeline yet.".into();
+            self.status = tr!("app.timeline_empty").into();
             return;
         }
         let t = self.editor.playhead;
@@ -1644,8 +1649,8 @@ impl ReelApp {
             t,
             &out.to_string_lossy(),
         ) {
-            Ok(_) => self.status = format!("Frame saved: {}", out.display()),
-            Err(e) => self.status = format!("Frame export failed: {e}"),
+            Ok(_) => self.status = tr!("app.frame_saved", path = out.display()),
+            Err(e) => self.status = tr!("app.frame_failed", e = e),
         }
     }
 
@@ -1709,7 +1714,7 @@ impl ReelApp {
                 },
                 output: out.to_string_lossy().into_owned(),
                 settings,
-                label: preset.name.to_string(),
+                label: preset.ui_name().to_string(),
             });
             queued += 1;
         }
@@ -1810,7 +1815,7 @@ impl ReelApp {
         self.src_mark_in = None;
         self.src_mark_out = None;
         self.mode = Mode::Editor;
-        self.status = format!("Inserted {dur:.2}s at the playhead.");
+        self.status = tr!("app.inserted", d = crate::i18n::num(dur, 2));
     }
 
     /// Punch in: arm the recorder at the playhead and roll the timeline —
@@ -1896,7 +1901,7 @@ impl ReelApp {
         let (tx, rx) = std::sync::mpsc::channel();
         self.nesting = Some((rx, add_clip));
         let reel = reel.to_string();
-        self.status = format!("Rendering nested edit {reel}…");
+        self.status = tr!("app.nested.rendering", name = reel);
         std::thread::spawn(move || {
             let r = crate::compound::render_flat(&reel)
                 .map(|flat| (flat.to_string_lossy().into_owned(), reel));
@@ -1932,15 +1937,14 @@ impl ReelApp {
                         }
                         self.editor.selected = Some(id);
                         self.editor.mark_changed();
-                        self.status = "Nested edit added at the playhead.".into();
+                        self.status = tr!("app.nested.added").into();
                     } else {
-                        self.status =
-                            "Nested edit re-rendered — it plays fresh on the next seek.".into();
+                        self.status = tr!("app.nested.rerendered").into();
                     }
                 }
                 Ok(Err(e)) => {
                     self.nesting = None;
-                    self.status = format!("Nested render failed: {e:#}");
+                    self.status = tr!("app.nested.failed", e = format!("{e:#}"));
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => self.nesting = None,
@@ -2239,7 +2243,7 @@ impl ReelApp {
             MediaKind::Audio => self.project.append_audio(&name, &p.path, p.info.duration),
             _ => self.project.append_video(&name, &p.path, p.info.duration),
         }
-        self.status = format!("Added {name} to the timeline.");
+        self.status = tr!("app.added", name = name);
         self.image = None;
         self.image_uploaded = false;
         self.tex_id = None;
@@ -2267,12 +2271,12 @@ impl ReelApp {
             .flat_map(|tr| tr.clips.iter())
             .any(|c| c.start + 0.05 < t && t < c.end() - 0.05);
         if !would {
-            self.status = "Nothing under the playhead to split.".into();
+            self.status = tr!("app.split.none").into();
             return;
         }
         self.editor.push_undo(&self.project);
         let n = self.project.split_at(t);
-        self.status = format!("Split {n} clip(s) at {t:.2}s.");
+        self.status = trn!("app.split.done", n, t = crate::i18n::num(t, 2));
     }
 
     /// Ripple delete: remove the selected clip and close the hole
@@ -2283,16 +2287,16 @@ impl ReelApp {
             .selected
             .or_else(|| self.project.clip_at(TrackKind::Video, self.editor.playhead).map(|c| c.id));
         let Some(id) = id else {
-            self.status = "Nothing selected to ripple-delete.".into();
+            self.status = tr!("app.ripple.none").into();
             return;
         };
         self.editor.push_undo(&self.project);
         let removed = self.project.ripple_delete(id);
         self.editor.selected = None;
         self.status = if removed > 0.0 {
-            format!("Rippled out {removed:.2}s.")
+            tr!("app.ripple.done", t = crate::i18n::num(removed, 2))
         } else {
-            "Nothing to remove there.".into()
+            tr!("app.ripple.nothing").into()
         };
     }
 
@@ -2302,7 +2306,7 @@ impl ReelApp {
         let removed = self.project.ripple_trim_to_playhead(self.editor.playhead, head);
         if removed <= 0.0 {
             self.editor.undo(&mut self.project); // nothing happened; don't leave an undo step
-            self.status = "No edit to trim at the playhead.".into();
+            self.status = tr!("app.trim.none").into();
             return;
         }
         if head {
@@ -2313,7 +2317,7 @@ impl ReelApp {
         } else {
             self.seek_timeline(self.editor.playhead);
         }
-        self.status = format!("Trimmed {removed:.2}s and closed up.");
+        self.status = tr!("app.trim.done", t = crate::i18n::num(removed, 2));
     }
 
     /// Delete the selected clip (Del).
@@ -2334,11 +2338,7 @@ impl ReelApp {
         }
         self.editor.selected = None;
         self.editor.multi.clear();
-        self.status = if n == 1 {
-            "Clip deleted.".into()
-        } else {
-            format!("{n} clips deleted.")
-        };
+        self.status = trn!("app.deleted", n);
     }
 
     /// Save the project as a .reel document (Ctrl+S). Defaults to sitting
@@ -2360,7 +2360,7 @@ impl ReelApp {
                         .to_string_lossy()
                         .into_owned(),
                     None => {
-                        self.status = "Nothing on the timeline to save yet.".into();
+                        self.status = tr!("app.save.empty").into();
                         return;
                     }
                 }
@@ -2370,9 +2370,9 @@ impl ReelApp {
             Ok(()) => {
                 self.editor.project_path = Some(path.clone());
                 self.editor.dirty = false;
-                self.status = format!("Project saved → {path}");
+                self.status = tr!("app.save.done", path = path);
             }
-            Err(e) => self.status = format!("Save failed: {e}"),
+            Err(e) => self.status = tr!("app.save.failed", e = e),
         }
     }
 

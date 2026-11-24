@@ -35,7 +35,7 @@ impl Gpu {
                 force_fallback_adapter: false,
             })
             .await
-            .ok_or_else(|| anyhow::anyhow!("no suitable GPU adapter found"))?;
+            .ok_or_else(|| anyhow::anyhow!(tr!("engine.err.no_adapter")))?;
 
         let info = adapter.get_info();
         log::info!("GPU: {} ({:?}, {:?})", info.name, info.backend, info.device_type);

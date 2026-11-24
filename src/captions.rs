@@ -44,9 +44,9 @@ impl Model {
 
     pub fn label(self) -> &'static str {
         match self {
-            Model::TinyEn => "Fast (tiny, ~75 MB)",
-            Model::BaseEn => "Balanced (base, ~148 MB)",
-            Model::SmallEn => "Accurate (small, ~488 MB)",
+            Model::TinyEn => tr!("captions.model.tiny"),
+            Model::BaseEn => tr!("captions.model.base"),
+            Model::SmallEn => tr!("captions.model.small"),
         }
     }
 
@@ -149,17 +149,17 @@ pub fn ensure_engine(set: &dyn Fn(&str, f32), cancel: &AtomicBool) -> Result<Pat
         return Ok(e);
     }
     let asset = engine_asset().ok_or_else(|| {
-        anyhow!("no caption engine for this platform — install whisper.cpp to enable captions")
+        anyhow!(tr!("captions.err.no_engine"))
     })?;
     let url = format!(
         "https://github.com/ggml-org/whisper.cpp/releases/download/{ENGINE_RELEASE}/{asset}"
     );
-    set("Fetching the caption engine (first time only)…", 0.0);
+    set(tr!("captions.stage.fetch_engine_first"), 0.0);
 
     let dir = engine_dir();
     std::fs::create_dir_all(&dir)?;
     let archive = dir.join(asset);
-    download_to(&url, &archive, "Fetching the caption engine", set, cancel)?;
+    download_to(&url, &archive, tr!("captions.stage.fetch_engine"), set, cancel)?;
 
     // bsdtar handles both .tar.gz and .zip, and ships with Windows 10+ as
     // tar.exe — one extraction path for every platform we build for.
@@ -174,7 +174,7 @@ pub fn ensure_engine(set: &dyn Fn(&str, f32), cancel: &AtomicBool) -> Result<Pat
         .unwrap_or(false);
     let _ = std::fs::remove_file(&archive);
     if !ok {
-        bail!("could not unpack the caption engine");
+        bail!(tr!("captions.err.unpack"));
     }
     // Some archives nest one level deeper than --strip-components handles.
     if fetched_engine().is_none() {
@@ -191,7 +191,7 @@ pub fn ensure_engine(set: &dyn Fn(&str, f32), cancel: &AtomicBool) -> Result<Pat
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755));
     }
-    fetched_engine().ok_or_else(|| anyhow!("the caption engine unpacked without a runnable binary"))
+    fetched_engine().ok_or_else(|| anyhow!(tr!("captions.err.no_binary")))
 }
 
 fn find_engine_under(dir: &Path, depth: u32) -> Option<PathBuf> {
@@ -252,7 +252,7 @@ impl Job {
 /// Transcribe `media` in the background. Downloads the model on first use.
 pub fn start(media: &str, model: Model) -> Job {
     let state = Arc::new(Mutex::new(Progress {
-        stage: "Starting…".into(),
+        stage: tr!("captions.stage.starting").into(),
         ..Default::default()
     }));
     let cancel = Arc::new(AtomicBool::new(false));
@@ -314,7 +314,7 @@ fn run_with(
     }
 
     if !model.is_downloaded() {
-        set("Fetching the speech model (first time only)…", 0.0);
+        set(tr!("captions.stage.fetch_model_first"), 0.0);
         download_model(model, set, cancel)?;
     }
     if cancel.load(Ordering::Relaxed) {
@@ -322,7 +322,7 @@ fn run_with(
     }
 
     // whisper.cpp wants 16 kHz mono PCM; ffmpeg is already a hard dependency.
-    set("Extracting audio…", 0.0);
+    set(tr!("captions.stage.extracting"), 0.0);
     let tmp = std::env::temp_dir().join(format!("reel-captions-{}", std::process::id()));
     let wav = tmp.with_extension("wav");
     let ok = Command::new("ffmpeg")
@@ -332,10 +332,10 @@ fn run_with(
         .map(|s| s.success())
         .unwrap_or(false);
     if !ok {
-        bail!("could not read the audio from this file");
+        bail!(tr!("captions.err.read_audio"));
     }
 
-    set("Listening…", 0.0);
+    set(tr!("captions.stage.listening"), 0.0);
     let prefix = tmp.to_string_lossy().to_string();
     let mut args: Vec<String> = vec![
         "-m".into(), model.path().to_string_lossy().into_owned(),
@@ -354,27 +354,27 @@ fn run_with(
     let out = Command::new(&engine)
         .args(&args)
         .output()
-        .map_err(|e| anyhow!("caption engine failed to start: {e}"))?;
+        .map_err(|e| anyhow!(tr!("captions.err.engine_start", e = e)))?;
     let _ = std::fs::remove_file(&wav);
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        bail!("caption engine error: {}", err.lines().last().unwrap_or("unknown"));
+        bail!(tr!("captions.err.engine", e = err.lines().last().unwrap_or(tr!("captions.err.unknown"))));
     }
 
     let srt_path = PathBuf::from(format!("{prefix}.srt"));
     let srt = std::fs::read_to_string(&srt_path)
-        .map_err(|e| anyhow!("the engine produced no captions ({e})"))?;
+        .map_err(|e| anyhow!(tr!("captions.err.no_captions", e = e)))?;
     let _ = std::fs::remove_file(&srt_path);
     let cues = parse_srt(&srt);
     if cues.is_empty() {
-        bail!("no speech found in this file");
+        bail!(tr!("captions.err.no_speech"));
     }
     Ok(cues)
 }
 
 fn download_model(model: Model, set: &dyn Fn(&str, f32), cancel: &AtomicBool) -> Result<()> {
     std::fs::create_dir_all(model_dir())?;
-    download_to(&model.url(), &model.path(), "Fetching the speech model", set, cancel)
+    download_to(&model.url(), &model.path(), tr!("captions.stage.fetch_model"), set, cancel)
 }
 
 /// Stream a URL to a file, reporting progress and honouring cancel. Writes to
@@ -390,7 +390,7 @@ fn download_to(
     let tmp = target.with_extension("part");
     let mut resp = ureq::get(url)
         .call()
-        .map_err(|e| anyhow!("could not reach the download host: {e}"))?;
+        .map_err(|e| anyhow!(tr!("captions.err.download_host", e = e)))?;
     let total: u64 = resp
         .headers()
         .get("content-length")
@@ -415,7 +415,7 @@ fn download_to(
         done += n as u64;
         if total > 0 {
             set(
-                &format!("{label} — {} of {} MB", done >> 20, total >> 20),
+                &tr!("captions.stage.download", label = label, done = done >> 20, total = total >> 20),
                 done as f32 / total as f32,
             );
         }

@@ -1,0 +1,116 @@
+# editor — nb
+
+# Viewport, overlays, curve editor, scopes
+editor.drop_hint = slipp en video, en sang eller et bilde her
+editor.proxy = PROXY
+editor.proxy_baking = PROXY…
+editor.curve_hint = dra et nøkkelbilde · dobbeltklikk legger til · høyreklikk fjerner · midtklikk veksler lineær/myk/hold/bezier
+editor.no_picture = Ikke noe bilde ennå.
+editor.scopes_caption = Histogram · luma-bølgeform · RGB-parade · vektorskop
+
+# Transport chrome
+editor.transport.back_to_start = Til starten
+editor.transport.frame_back = Ett bilde tilbake (,)
+editor.transport.play_pause = Spill av/pause (Mellomrom)
+editor.transport.frame_forward = Ett bilde fram (.)
+editor.transport.export = ⬇ Eksporter
+editor.transport.convert_image_hover = Konverter — PNG/JPEG/WebP, endre størrelse
+editor.transport.convert_hover = Konverter denne filen — kodek, kvalitet, størrelse
+editor.transport.edit = ✂ Rediger
+editor.transport.edit_hover = Åpne på tidslinjen (E)
+editor.transport.done = ▶ Ferdig
+editor.transport.done_hover = Tilbake til avspilleren (E)
+editor.transport.insert_secs = Sett inn {t} s
+editor.transport.insert_half = Sett inn (halvveis markert)
+editor.transport.insert_all = Sett inn alt
+editor.transport.insert_hover = Trepunktsredigering: kildens inn/ut + spillehodet på tidslinjen → et klipp ved spillehodet
+editor.transport.fullscreen_hover = Fullskjerm (F)
+editor.transport.mute_hover = Lyd av (M)
+editor.transport.clip_rate = klipp {r}×
+editor.transport.clip_rate_hover = Dette klippet har sin egen avspillingshastighet; den ganges med din.
+editor.transport.loop_hover = Gjenta (L)
+
+# Export dialog
+export_ui.title = Eksporter / konverter
+export_ui.source_file = Kildefil
+export_ui.range.one = ✂ Utsnitt ({n} klipp, {t} s)
+export_ui.range.other = ✂ Utsnitt ({n} klipp, {t} s)
+export_ui.edit.one = ✂ Redigeringen ({n} klipp, {t} s)
+export_ui.edit.other = ✂ Redigeringen ({n} klipp, {t} s)
+export_ui.range_hover = Bare det som ligger mellom inn- og utpunktet
+export_ui.edit_hover = Hele tidslinjen slik den er klippet
+export_ui.captions_burned.one = • {n} undertekst brennes inn
+export_ui.captions_burned.other = • {n} undertekster brennes inn
+export_ui.queue_title = Eksportkø
+export_ui.waiting = venter: {list}
+export_ui.cancel_all = Avbryt alle
+export_ui.clear_finished = Fjern ferdige
+export_ui.encoding = Koder → {path}
+export_ui.realtime = {x}× sanntid
+export_ui.cancel = Avbryt
+export_ui.done = ✓ Ferdig → {path}
+export_ui.cancelled = Eksporten ble avbrutt.
+export_ui.ok = OK
+export_ui.where = Hvor skal dette?
+export_ui.names = Navn
+export_ui.names_hover = {name} = prosjektet, {platform} = forhåndsinnstillingens kortnavn
+export_ui.captions_per_platform = Teksting per plattform
+export_ui.queue_all = Legg ALLE plattformer i kø
+export_ui.queue_all_hover = Én eksport per forhåndsinnstilling — YouTube, TikTok, Reels, feed, kvadrat, Facebook, X — oppkalt etter plattformen og levert med dens lydstyrke
+export_ui.queued.one = {n} eksport lagt i kø — bare fortsett å redigere.
+export_ui.queued.other = {n} eksporter lagt i kø — bare fortsett å redigere.
+export_ui.custom_settings = ⚙ Egne innstillinger
+export_ui.custom_hover = Velg format, kvalitet og størrelse selv
+export_ui.format = Format
+export_ui.quality = Kvalitet
+export_ui.frame = Bilderamme
+export_ui.resolution = Oppløsning
+export_ui.audio = Lyd
+export_ui.audio_from_clips = fra klippene
+export_ui.audio_copy = Kopier (urørt)
+export_ui.audio_encode = Kod om til {kbps} kb/s
+export_ui.encoder = Koder
+export_ui.hw_faster = {name} (raskere)
+export_ui.hw_hover = Fjern haken for å bruke programvarekoderen — tregere, litt mindre filer
+export_ui.save_to = Lagre til
+export_ui.custom = Egendefinert
+export_ui.queue_one = + Sett i kø: {label}
+export_ui.queue_one_hover = Legg dette i eksportkøen og fortsett å velge
+export_ui.start = Start eksport
+export_ui.error = Eksport: {e}
+
+# Timeline
+timeline.zoom_out = Zoom ut (Ctrl+rull)
+timeline.zoom_in = Zoom inn (Ctrl+rull)
+timeline.fit = Vis hele redigeringen
+timeline.split = ✂ Del
+timeline.split_hover = Del ved spillehodet (S)
+timeline.curve_lane = Kurvefelt
+timeline.curve_lane_hover = Et felt i full bredde under sporene: det valgte klippets nøkkelbilder for parameteren i Animer-panelet, på linje med linjalen. Dra nøkkelbilder, dobbeltklikk legger til, høyreklikk fjerner.
+timeline.adjust = + Justering
+timeline.adjust_hover = Legg til et JUSTERINGSLAG ved spillehodet: et spenn på 4 s der fargekorrigeringen gjelder alt under det — velg det og bruk fargeuttrykk-panelet
+timeline.delete = 🗑 Slett
+timeline.delete_hover = Slett valgt klipp (Delete)
+timeline.undo = Angre
+timeline.undo_hover = Angre (Ctrl+Z)
+timeline.redo = Gjør om
+timeline.redo_hover = Gjør om (Ctrl+Shift+Z)
+timeline.range_in_hover = Sett innpunkt ved spillehodet (I)
+timeline.range_out_hover = Sett utpunkt ved spillehodet (O)
+timeline.clear_range_hover = Fjern eksportutsnittet (Shift+I/O)
+timeline.saving = lagrer…
+timeline.saved = lagret
+timeline.project_len = {name}  ·  {t} s
+timeline.close_every_gap = Lukk alle hull
+timeline.close_gap_before = Lukk hullet før dette klippet
+timeline.delete_clip = Slett klipp
+timeline.closed_gaps = Lukket {t} s med hull.
+timeline.closed_gap = Lukket et hull på {t} s.
+timeline.no_gap = Ingen hull før det klippet.
+timeline.clip_deleted = Klippet er slettet.
+timeline.adjust_label = JUSTERING  {t} s
+timeline.clip_label = {name}  {t} s
+timeline.roll = Rull: flytter kuttet — den totale lengden er uendret.
+timeline.slip = Slip: kildens innpunkt {t} s
+timeline.slide = Skyv: naboklippene tar opp flyttingen.
+timeline.curve_lane_empty = velg et klipp med nøkkelbilder (Animer-panelet velger parameteren)

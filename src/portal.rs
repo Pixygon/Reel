@@ -62,7 +62,7 @@ pub fn screenshot_interactive(dest: PathBuf) -> Result<PathBuf> {
     })?;
     let src = uri
         .to_file_path()
-        .map_err(|_| anyhow!("portal returned a non-file uri: {uri}"))?;
+        .map_err(|_| anyhow!(tr!("capture.portal.non_file_uri", uri = uri)))?;
     // Rename first (same fs); fall back to copy+remove.
     if std::fs::rename(&src, &dest).is_err() {
         std::fs::copy(&src, &dest)?;
@@ -96,7 +96,7 @@ impl PortalRecorder {
         let _ = self.stop.send(());
         self.done
             .recv_timeout(Duration::from_secs(15))
-            .map_err(|_| anyhow!("recorder did not finish in time"))?
+            .map_err(|_| anyhow!(tr!("capture.portal.stop_timeout")))?
             .map_err(|e| anyhow!("{e}"))
     }
 }
@@ -331,10 +331,10 @@ fn run_pipewire_capture(
         ),
     );
     let values = PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(obj))
-        .map_err(|e| anyhow!("pod serialize: {e:?}"))?
+        .map_err(|e| anyhow!(tr!("capture.portal.pod", e = format!("{e:?}"))))?
         .0
         .into_inner();
-    let mut params = [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad format pod"))?];
+    let mut params = [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!(tr!("capture.portal.bad_pod")))?];
 
     stream.connect(
         spa::utils::Direction::Input,
@@ -362,13 +362,13 @@ fn run_pipewire_capture(
                 }
             }
             if t0.elapsed() > Duration::from_secs(20) {
-                bail!("no frames arrived from the compositor");
+                bail!(tr!("capture.portal.no_frames"));
             }
             std::thread::sleep(Duration::from_millis(20));
         };
         let audio = audio_monitor();
         let mut child = spawn_encoder(&fmt, &enc_out, audio.as_deref())?;
-        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!("encoder stdin missing"))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| anyhow!(tr!("capture.portal.no_stdin")))?;
         let frame_len = (fmt.width * fmt.height * 4) as usize;
         let mut current: Vec<u8> = vec![0; frame_len];
         let tick = Duration::from_micros(33_333);
@@ -417,12 +417,12 @@ fn run_pipewire_capture(
     match encoder.join() {
         Ok(Ok(())) => {}
         Ok(Err(e)) => return Err(e),
-        Err(_) => bail!("encoder thread panicked"),
+        Err(_) => bail!(tr!("capture.portal.encoder_panicked")),
     }
     if out.exists() {
         Ok(out)
     } else {
-        bail!("recording produced no file")
+        bail!(tr!("capture.portal.no_file"))
     }
 }
 

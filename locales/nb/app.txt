@@ -1,0 +1,97 @@
+# app — nb
+# Statuslinjer, filtre i fildialogen og meldinger fra src/app.rs.
+app.ready = Klar.
+
+app.defaults.none_selected = Ingenting valgt — Reel er fortsatt tilgjengelig under «Åpne med».
+app.defaults.done = ✓ Reel er nå standardavspiller for det du valgte.
+app.defaults.failed = Kunne ikke angi standardprogrammer: {e}
+app.defaults.linux_only = Oppsett av standardprogrammer fungerer foreløpig bare på Linux.
+
+app.filter.audio = Lyd
+app.filter.any_media = Alle medier
+app.filter.media = Medier
+app.filter.video = Video
+app.filter.images = Bilder
+app.filter.project = Reel-prosjekt
+app.filter.effects = Effekter og LUT-er
+app.dialog_unavailable = Fildialogen er ikke tilgjengelig — slipp en fil hit eller lim inn en filbane i stedet.
+
+app.lut_applied = LUT brukt — likt i forhåndsvisning og eksport.
+app.lut_bad = Ikke en brukbar LUT: {e}
+app.effect_applied = Effekten «{name}» er brukt — likt i forhåndsvisning og eksport.
+app.effect_bad = Ikke en brukbar effekt: {e}
+app.pool_gathered = Lagt til i mediebiblioteket.
+app.relinked.one = Koblet {n} referanse på nytt.
+app.relinked.other = Koblet {n} referanser på nytt.
+app.music_added = Bakgrunnsmusikk lagt til — den dempes under tale ved eksport.
+
+app.project_loaded = Prosjektet {name} er lastet inn.
+app.project_open_failed = Kunne ikke åpne prosjektet {path}: {e}
+app.opening = Åpner {name}…
+app.image_info = {name} — {w}×{h} bilde
+app.open_failed_path = Kunne ikke åpne {path}: {e}
+app.open_failed = Kunne ikke åpne: {e}
+app.open_failed_unexpected = Åpningen mislyktes uventet.
+app.audio_info = ♪ {name} — {d} s [{backend}]
+app.video_info = {name} — {w}×{h} @ {fps} fps, {d} s [{backend}]
+
+app.shot_in = Skjermbilde om {s} s…
+app.shot_taking = Tar skjermbilde…
+app.rec_finalizing = Fullfører opptaket…
+app.rec_starting = Starter opptak — velg hva du vil dele…
+app.streamer.finalizing = Fullfører strømmeropptaket…
+app.streamer.starting = Strømmeroppsett: starter kameraet, velg deretter skjermen…
+app.streamer.recording = ⏺ Tar opp med strømmeroppsett — stopp fra ☰-menyen.
+app.streamer.error = Strømmeropptak: {e}
+app.streamer.assembled = Strømmerprosjektet er satt sammen — trim og publiser.
+app.streamer.assemble_failed = Kunne ikke sette sammen prosjektet: {e}
+app.streamer.finalize_failed = Fullføring av strømmeropptak: {e}
+app.webcam.starting = Starter opptak fra webkamera…
+app.webcam.recording = ⏺ Tar opp… klikk ⏹ for å stoppe
+app.webcam.error = Opptak: {e}
+app.capture_error = Opptak: {e}
+
+app.queue.empty = Ingenting på tidslinjen å legge i kø.
+app.queue.exists = {output} finnes allerede — endre navnet først.
+app.queue.queued = {label} er lagt i kø ({n} venter).
+
+app.save.project_failed = Kunne ikke lagre prosjektet: {e}
+app.save.autosave_to = Lagrer automatisk til {path}
+app.save.empty = Ingenting på tidslinjen å lagre ennå.
+app.save.done = Prosjektet er lagret → {path}
+app.save.failed = Lagring mislyktes: {e}
+
+app.captions.running = Lager teksting — alt blir på maskinen din.
+app.captions.cancelled = Tekstingen ble avbrutt.
+app.captions.error = Teksting: {e}
+app.captions.added.one = {n} undertekst lagt til — den brennes inn ved eksport.
+app.captions.added.other = {n} undertekster lagt til — de brennes inn ved eksport.
+
+app.copied = Kopierte {name} — Ctrl+V limer inn ved spillehodet.
+app.copy_empty = Ingenting er kopiert ennå (velg et klipp, og trykk Ctrl+C).
+app.pasted = Limt inn ved {t} s — alt etter er flyttet bakover.
+app.duplicated = Duplisert.
+app.marker_removed = Markør fjernet.
+app.marker_added = Markør ved {t} s (Ctrl+venstre/høyre for å hoppe).
+app.timeline_empty = Ingenting på tidslinjen ennå.
+app.frame_saved = Bilde lagret: {path}
+app.frame_failed = Eksport av bilde mislyktes: {e}
+app.inserted = Satte inn {d} s ved spillehodet.
+
+app.nested.rendering = Eksporterer nestet redigering {name}…
+app.nested.added = Nestet redigering lagt til ved spillehodet.
+app.nested.rerendered = Nestet redigering eksportert på nytt — den spilles fersk ved neste spoling.
+app.nested.failed = Eksport av nestet redigering mislyktes: {e}
+
+app.added = La til {name} på tidslinjen.
+app.split.none = Ingenting under spillehodet å dele.
+app.split.done.one = Delte {n} klipp ved {t} s.
+app.split.done.other = Delte {n} klipp ved {t} s.
+app.ripple.none = Ingenting valgt å slette og lukke hullet etter.
+app.ripple.done = Fjernet {t} s og lukket hullet.
+app.ripple.nothing = Ingenting å fjerne der.
+app.trim.none = Ingen klipp å trimme ved spillehodet.
+app.trim.done = Trimmet bort {t} s og lukket hullet.
+app.deleted.one = Klippet er slettet.
+app.deleted.other = {n} klipp slettet.
+app.untitled = Uten navn

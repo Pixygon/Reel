@@ -45,7 +45,7 @@ pub fn track_region(
 ) -> Result<Vec<TrackPoint>> {
     let frames = decode_gray(source, src_start, src_len)?;
     if frames.len() < 2 {
-        return Err(anyhow!("not enough frames to track (got {})", frames.len()));
+        return Err(anyhow!(tr!("playback.track.too_few_frames", n = frames.len())));
     }
     Ok(track_frames(&frames, cx, cy, half_w, half_h))
 }
@@ -154,7 +154,7 @@ fn decode_gray(source: &str, start: f64, len: f64) -> Result<Vec<Vec<u8>>> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .context("spawn ffmpeg for tracking")?;
+        .context(tr!("playback.track.spawn"))?;
     let mut stdout = child.stdout.take().unwrap();
     let mut frames = Vec::new();
     loop {
@@ -164,7 +164,7 @@ fn decode_gray(source: &str, start: f64, len: f64) -> Result<Vec<Vec<u8>>> {
             match stdout.read(&mut buf[got..]) {
                 Ok(0) => break,
                 Ok(n) => got += n,
-                Err(e) => return Err(anyhow!("tracking decode read failed: {e}")),
+                Err(e) => return Err(anyhow!(tr!("playback.track.read_failed", e = e))),
             }
         }
         if got < buf.len() {
@@ -184,7 +184,7 @@ pub fn track_clip(clip: &crate::edit::Clip) -> Result<(Vec<crate::edit::Keyframe
     let mask = clip
         .effects
         .mask
-        .ok_or_else(|| anyhow!("clip {} has no power window to track — add a mask first", clip.id))?;
+        .ok_or_else(|| anyhow!(tr!("playback.track.no_mask", id = clip.id)))?;
     let src_len = clip.source_len();
     let points = track_region(
         &clip.source,

@@ -417,6 +417,20 @@ pearl ship                     # ship ritual: test → draft → ship → commit
   gives opaque video 255, so PNG alpha survives. `SegmentReader` seeks a still
   to 0 — `-ss` past its one frame decodes nothing. The live inset preview is
   still opaque for stills (mpv's padding byte).
+- LOCALISATION (`i18n.rs`): every word the WINDOW shows comes from
+  `locales/{en,nb}/<area>.txt` via `tr!("key")` / `tr!("key", x = v)` /
+  `trn!` (one/other). Numbers a person reads go through `i18n::num` /
+  `i18n::clock` (bokmål writes 2,50); sliders carry
+  `.custom_formatter(i18n::egui_num)`. `no_hard_coded_ui_strings` fails on a
+  new literal in ui.rs/app.rs/tray.rs or in a `bail!`/`anyhow!` message of
+  the engine files (`// i18n-ok: why` for the rare non-UI one);
+  `the_main_window_in_bokmal_has_no_english` renders the real window in nb.
+  A label that is ALSO a machine key (`Param::name`, `Preset.name`) keeps its
+  English and gets a `ui_label()`/`ui_name()` beside it. egui ids must not
+  hang off translated text (windows use `.id(...)`, collapsing headers
+  `id_salt`). The CLI never calls `i18n::init()`, so it stays English and
+  error tests keep their wording. User data (file names, captions, titles
+  once typed) is a placeholder value, never a key.
 
 ## macOS (Apple silicon)
 

@@ -21,9 +21,44 @@ materialized from the Pixygon Changelog API — edit there, not here.
 - PNG alpha on the overlay track now survives the render.
 - `reel frame` no longer loses a still that isn't at the very start of the timeline.
 
+## [2.2.0] — 2026-11-24
+
+_Reel now speaks Norwegian bokmål as well as English_
+
+### Added
+- Reel's window can now be shown in Norwegian bokmål. It picks English or Norwegian from your computer's language and falls back to English for any other language.
+- A new Language option in the ☰ menu lets you choose Norwegian or English yourself, or follow the system again.
+
+### Changed
+- Numbers and times now follow your language. In Norwegian, 2.50 s is written 2,50 s.
+- Your own media, captions, titles and file names are never translated, and the command line stays in English.
+
+Codex impact: none
+
+## [2.3.0] — 2026-11-24
+
+### Added
+- The Reel website is now available in Norwegian (bokmål). Every page has a Norsk / English switch in the header that takes you to the same page in the other language.
+- If your browser's main language is Norwegian, the site opens in Norwegian on your first visit. The site remembers your choice after that, and the switch always overrides it.
+- A Norwegian "page not found" page that links to the Norwegian home, guides, CLI and support pages.
+
+### Improved
+- The header fits better on phones. It's tighter on small screens, so the language switch is always visible.
+
+Codex impact: none
+
+## [2.2.1] — 2026-11-21
+
+### Fixed
+- The version the Reel website reports now matches the release that's live. It was stuck at 1.0.0 through every release until 2.2.0.
+
+Codex impact: none
+
 ## [2.1.1] — 2026-11-01
 
-_Screenshot and recording now detect unreachable displays up front, avoiding failed launches and crash-reporter popups on headless machines._
+### Added
+- A new iPhone & iPad card on the download page says Reel for iPhone and iPad is in invite-only testing on TestFlight, needs iOS 26 or later, and is not on the App Store yet, so there is no download link.
+- A new "Reel for iPhone & iPad" section describes what the app does: playback with a frame-accurate scrubber, speed control and Picture in Picture; a simple one-track timeline; non-destructive photo adjustments; and export presets for YouTube, TikTok and Reels.
 
 ### Changed
 - The `reel devices` report now shows a "headless" session state with an explicit reason when no display is reachable, instead of misreporting the session type or defaulting to "the desktop portal".
@@ -58,6 +93,14 @@ Codex impact: none
 
 ## [2.0.1] — 2026-10-30
 
+### Added
+- A support page that explains how to report a bug or ask a question on GitHub, links to the guides, CLI reference, downloads and releases, and gives a contact email for Pixygon.
+- A privacy page on the Reel site that points to Pixygon's privacy policy, with links to data deletion and the terms of service.
+- A "support" link in the home page footer, and in the "page not found" page's suggestions.
+
+### Improved
+- Visiting /contact or /kontakt now takes you to the support page instead of a "page not found" error.
+
 ### Internal
 - Internal maintenance, no user-visible changes.
 
@@ -71,7 +114,6 @@ Codex impact: none
 ### Fixed
 - Unknown URLs now correctly return a 404 status instead of silently serving the homepage, which previously could confuse search engines and browsers into treating broken links as valid pages. **(BREAKING)**
 
-
 ## [1.16.0] — 2026-10-22
 
 ### Added
@@ -79,7 +121,6 @@ Codex impact: none
 
 ### Changed
 - The releases link in the site footer now points to the GitHub Releases page instead of the raw manifest file, making it easier to browse release history.
-
 
 ## [0.40.0] — 2026-08-29
 
@@ -92,13 +133,11 @@ Codex impact: none
 ### Changed
 - The caption panel's 'Remove' button is now 'Remove all', clarifying that it clears every caption rather than a single one. _(b435f5f)_
 
-
 ## [0.39.0] — 2026-08-29
 
 ### Added
 - Added a mixer to the editor: each track now has its own gain fader, mute and solo button, right in the media panel. _(a667692)_
 - Soloing a track now works the way you'd expect — it silences every other track, including the base video's own audio — and mute/solo/gain routing is identical between live preview and the exported file, so what you hear while editing is what you get in the render. _(a667692)_
-
 
 ## [0.38.0] — 2026-08-29
 
@@ -107,7 +146,6 @@ Codex impact: none
 
 ### Fixed
 - Audio-track clips (voice-overs and sound effects) and overlay audio now render correctly on export. Previously these were audible in the live preview but silently dropped from the final exported file. _(bb4d38d)_
-
 
 ## [0.37.0] — 2026-08-29
 
@@ -119,7 +157,6 @@ Codex impact: none
 ### Fixed
 - Letterbox bars are now transparent under the hood so grades and chroma-key effects on your footage no longer bleed color into the black bars. _(06b5092)_
 
-
 ## [0.36.0] — 2026-08-29
 
 ### Added
@@ -130,13 +167,11 @@ Codex impact: none
 ### Changed
 - The `reel transition` command's `--seconds` flag is now described as controlling transition length generally (not just crossfade), reflecting the new range of transition types available via `--kind`. _(4318a20)_
 
-
 ## [0.35.0] — 2026-08-28
 
 ### Added
 - New Tighten feature (the ✂ Tighten silence button, or `reel tighten` on the CLI) cuts the dead air out of your edit in one click — the classic podcast jump-cut pass. It scans each clip's own audio to find quiet spans, trims them out while keeping a little breathing room around your words so nothing clips, and closes the timeline up behind every cut. Fully undoable, with `--threshold`, `--min-gap`, and `--pad` flags on the CLI for fine control. _(2469c91)_
 - Multi-select on the timeline: shift-click to build a selection of clips. Dragging or deleting the selection now acts on the whole group at once — a group move keeps every clip's relative position, and delete removes them all together. _(2469c91)_
-
 
 ## [0.34.0] — 2026-08-28
 
@@ -147,7 +182,6 @@ Codex impact: none
 - Markers now become real chapter points in exported video (MP4/MKV chapter atoms), so long exports arrive with sections already named. _(e9be24c)_
 - You can now export the exact composed frame under the playhead — effects, overlays and animation included — as a PNG, either from a new editor button or via the `reel frame` CLI command, which also grabs frames from plain media files. _(e9be24c)_
 
-
 ## [0.33.0] — 2026-08-28
 
 ### Added
@@ -155,7 +189,6 @@ Codex impact: none
 
 ### Fixed
 - HDR footage (HLG and HDR10/PQ, common from phones) no longer looks washed-out or murky. Reel now detects the source's colour transfer curve and properly tone-maps HDR to standard SDR before scaling, so clips look right straight after import. _(3f12953)_
-
 
 ## [0.32.0] — 2026-08-28
 
@@ -168,13 +201,11 @@ Codex impact: none
 ### Fixed
 - Muting now consistently reflects your intent across the player and the editor's live mix, instead of being tied only to the player's own mute state. _(e647513)_
 
-
 ## [0.31.0] — 2026-08-28
 
 ### Added
 - Speed ramps: add a `speed` keyframe track to a clip to accelerate or slow down playback over time while the clip's position on the timeline stays put. Video is decoded at its native rate to follow the ramp exactly, and audio tempo is adjusted piecewise to keep sound in sync with the changing pace. _(289643f)_
 - New curve editor for keyframes: see the animated curve for the selected parameter drawn live inside the clip panel. Drag keyframes to change their time and value, double-click to add a new key, and right-click a key to remove it — all synced to the preview's playhead. _(289643f)_
-
 
 ## [0.30.0] — 2026-08-28
 
@@ -183,7 +214,6 @@ Codex impact: none
 
 ### Fixed
 - Fixed an issue where playback could intermittently fail to switch to the next clip when a clip ended exactly at a cut point. _(0d3d9f4)_
-
 
 ## [0.29.0] — 2026-08-28
 
@@ -196,7 +226,6 @@ Codex impact: none
 
 ### Fixed
 - Media and music files added via the CLI are now stored with their absolute path, so a project opened from a different working directory still finds its media instead of failing to locate it. _(808188d)_
-
 
 ## [0.28.0] — 2026-08-28
 
@@ -211,7 +240,6 @@ Codex impact: none
 ### Improved
 - Timeline clips now show thumbnail previews of the footage along with the waveform, making it much easier to spot the shot you're looking for without scrubbing. Timeline lanes are also taller to fit both.
 
-
 ## [0.27.0] — 2026-08-28
 
 ### Added
@@ -224,7 +252,6 @@ Codex impact: none
 ### Fixed
 - Fixed a bug where locally-generated captions could collapse into a single 30-second cue instead of following the speech — captions now track the spoken audio accurately throughout the video.
 
-
 ## [0.26.1] — 2026-08-28
 
 ### Fixed
@@ -232,7 +259,6 @@ Codex impact: none
 - Pasted clips no longer inherit the crossfade from the clip they were copied from, since a fade only makes sense next to the original neighbour. _(9b44ef3)_
 - Markers are now saved as part of your project, so a marker you drop stays put after closing and reopening the project instead of disappearing. _(9b44ef3)_
 - Replaced a few icons that rendered as empty boxes (missing glyphs in the app font) with characters that actually display, and updated on-screen shortcut hints to show "Left/Right" instead of arrow symbols. _(9b44ef3)_
-
 
 ## [0.26.0] — 2026-08-28
 
@@ -244,7 +270,6 @@ Codex impact: none
 ### Changed
 - Arrow-key seeking and the M mute shortcut now ignore the Ctrl modifier so they don't collide with the new marker-jump and marker shortcuts. _(7b57238)_
 
-
 ## [0.25.0] — 2026-08-28
 
 ### Added
@@ -254,7 +279,6 @@ Codex impact: none
 
 ### Fixed
 - Corrected an issue where, under certain conditions, the exported video and audio streams could be swapped in the output file, which could cause some players or downstream tools to reject or misread the file. _(acb6173)_
-
 
 ## [0.24.0] — 2026-08-28
 
@@ -270,7 +294,6 @@ Codex impact: none
 ### Fixed
 - Fixed a bug where captions rendered far too large on high-resolution exports (e.g. ~3.7× too big on 4K), causing the exported captions to not match the preview. _(fe249ea)_
 
-
 ## [0.23.0] — 2026-08-28
 
 ### Added
@@ -282,7 +305,6 @@ Codex impact: none
 - The L key now requires Shift to toggle looping, since plain L is used for shuttle-forward; Ctrl/Cmd+K is now an alternate shortcut for splitting a clip. **(BREAKING)** _(39fdbb0)_
 - Updated the on-screen editor shortcut hints to reflect the new J K L shuttle, ripple delete, and ripple trim controls. _(39fdbb0)_
 
-
 ## [0.21.1] — 2026-08-28
 
 ### Added
@@ -293,7 +315,6 @@ Codex impact: none
 ### Changed
 - The L key now requires Shift to toggle looping, since plain L is used for shuttle-forward; Ctrl/Cmd+K is now an alternate shortcut for splitting a clip. **(BREAKING)** _(39fdbb0)_
 - Updated the on-screen editor shortcut hints to reflect the new J K L shuttle, ripple delete, and ripple trim controls. _(39fdbb0)_
-
 
 ## [0.21.0] — 2026-08-28
 
@@ -307,7 +328,6 @@ Codex impact: none
 
 ### Fixed
 - Fixed the editor toolbar layout so the right-hand tools no longer overflow and overlap the playback transport when the window is narrow. _(3bf31fb)_
-
 
 ## [0.20.0] — 2026-08-28
 
@@ -324,14 +344,12 @@ Codex impact: none
 - The media/inspector side panel now resizes smoothly and stays at the width you drag it to, and its contents scroll instead of forcing the panel wider than you want. _(11a61ba)_
 - The editor layout was reorganized so the timeline always spans the full window width and the side panel no longer resizes it when opening or closing. _(11a61ba)_
 
-
 ## [0.19.0] — 2026-08-28
 
 ### Added
 - Added a render queue: line up exports for multiple platforms with different settings, hit "Queue", and keep going — Reel renders them one after another while you walk away. The export dialog shows the currently rendering job, what's waiting, and a result for each finished export, with options to cancel everything or clear finished jobs.
 - Added clip crossfades: set a crossfade duration on any clip to smoothly transition from the one before it. The timeline shows a visual wedge marking the overlap, and the exported video's duration correctly reflects the shortened, overlapped edit.
 - Added reframing (zoom and pan) to clip effects, making it easy to punch into a landscape shot and pan the visible window so it fills a vertical or square frame without blurred bars on the sides. Adjustments are visible live in the preview and match exactly what's rendered on export.
-
 
 ## [0.18.0] — 2026-08-27
 
@@ -341,7 +359,6 @@ Codex impact: none
 
 ### Improved
 - Timeline exports now apply each clip's colour and fade settings when rendering the final video, keeping the exported look consistent with the editor.
-
 
 ## [0.17.0] — 2026-08-27
 
@@ -353,7 +370,6 @@ Codex impact: none
 ### Improved
 - Manual export settings are unaffected — choosing "Custom" keeps full control over resolution, codec and quality as before, with a per-fit option now available for exports with a fixed target frame. _(8c7a300)_
 
-
 ## [0.16.0] — 2026-08-27
 
 ### Added
@@ -362,7 +378,6 @@ Codex impact: none
 ### Improved
 - Video is now drawn through Reel's own GPU render pipeline instead of a generic texture blit, removing a per-pixel CPU alpha-fixup pass on every frame for smoother, more efficient playback. _(8c64756)_
 - mpv now renders video at the exact on-screen size instead of always decoding at full source resolution, cutting rendering, copying and upload work dramatically when a large video is displayed at a smaller size (e.g. up to ~9x less work at 1280px display for a 4K source). _(8c64756)_
-
 
 ## [0.15.0] — 2026-08-27
 
@@ -375,7 +390,6 @@ Codex impact: none
 ### Fixed
 - Timeline exports no longer force an extra scaling pass after concatenation; the target resolution is now applied consistently while assembling each clip, avoiding quality loss on multi-clip exports. _(796a292)_
 
-
 ## [0.14.0] — 2026-08-27
 
 ### Added
@@ -387,7 +401,6 @@ Codex impact: none
 
 ### Improved
 - The export dialog now shows how many clips and how many seconds are in your edit before you export it, and automatically carries over audio from your clips when rendering a timeline. _(301d253)_
-
 
 ## [0.13.2] — 2026-08-27
 
@@ -402,13 +415,11 @@ Codex impact: none
 - The timeline ruler now adapts its tick spacing to the current zoom level and shows readable time labels, and the editor toolbar gained zoom, split, delete, undo/redo, and save controls with a live unsaved-changes indicator. _(8094d7d)_
 - Selecting a clip in the media/clips list now shows its position, length, and source in-point details in the side panel. _(8094d7d)_
 
-
 ## [0.13.1] — 2026-08-27
 
 ### Improved
 - Opening a video or audio file no longer freezes the window — Reel now loads media on a background thread and shows an "Opening…" status while it works.
 - App startup and cold-opening a file is noticeably faster: GPU backend selection skips unnecessary probing, and video decoding starts in software mode immediately, upgrading to hardware decoding a second later once playback is smoothly rolling.
-
 
 ## [0.13.0] — 2026-08-27
 
@@ -418,7 +429,6 @@ Codex impact: none
 ### Fixed
 - Fixed the playback control overlay (seek bar, volume slider, buttons) rendering with an inflated, invisible layout in certain window sizes — controls now stay correctly bounded to the window.
 - The volume slider no longer stretches to the full width of the window; it now displays at a normal, compact size.
-
 
 ## [0.12.0] — 2026-08-27
 
@@ -433,7 +443,6 @@ Codex impact: none
 ### Fixed
 - Transparent images now render with correct colors instead of a dark or fringed halo around transparent areas, and are shown over a checkerboard backdrop like a proper image viewer. _(781f2dd)_
 
-
 ## [0.11.0] — 2026-08-27
 
 ### Added
@@ -447,7 +456,6 @@ Codex impact: none
 ### Fixed
 - Fixed a bug on Linux where the "Open…" file picker and screenshot/screen-recording dialogs would only work the first time and then silently stop responding.
 
-
 ## [0.10.0] — 2026-08-27
 
 ### Added
@@ -456,12 +464,10 @@ Codex impact: none
 ### Fixed
 - Opening a file on Linux via the file picker is now more reliable, and if the dialog fails to open for any reason, you'll see a helpful message suggesting you drop a file or paste a path instead.
 
-
 ## [0.9.0] — 2026-08-27
 
 ### Added
 - Added command-line --help/-h and --version/-V flags, so running Reel from a terminal now prints usage, keyboard shortcuts, and version info instead of just opening a window.
-
 
 ## [0.8.0] — 2026-08-27
 
@@ -475,7 +481,6 @@ Codex impact: none
 ### Changed
 - The Record button now shows a starting state while the screen/window picker is open, since starting a recording may briefly wait on your selection.
 
-
 ## [0.7.0] — 2026-08-27
 
 ### Added
@@ -488,7 +493,6 @@ Codex impact: none
 - Opening any media — video, audio, or an image — now drops it onto the editor timeline automatically: video and stills land on the video track, audio on the audio track.
 - The Export dialog now only shows options relevant to what's open (e.g. quality/CRF controls are hidden for lossless or audio-only formats), reducing clutter and confusion.
 
-
 ## [0.6.0] — 2026-08-27
 
 ### Added
@@ -498,7 +502,6 @@ Codex impact: none
 
 ### Improved
 - Seeking is now smoother: dragging the seek bar or clicking/dragging the timeline scrubs live with frame-exact precision on the libmpv backend, and time labels now show hours for longer videos.
-
 
 ## [0.5.0] — 2026-08-27
 

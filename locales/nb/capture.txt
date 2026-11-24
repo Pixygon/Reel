@@ -1,0 +1,76 @@
+# capture — nb
+# Skjermopptak (capture.rs, portal.rs), sporing, analyse og avspillingsfeil.
+
+# Hodeløs deteksjon (Env.headless)
+capture.headless.unset = {var} er ikke satt
+capture.headless.dead = {var}={value} er satt, men kan ikke brukes herfra (intet svar, eller tilgang nektet)
+capture.headless.error = Ingen skjerm: fant ingen tilgjengelig skjerm ({wayland}; {x11}), så ingen opptaksverktøy ble startet. Kjør dette i en skrivebordsøkt, eller la DISPLAY peke på en X-server som kjører, for eksempel Xvfb
+
+# Rektangler
+capture.rect.bad = forventet et rektangel som 0,0,1280x720 (X,Y,BREDDExHØYDE), fikk {got}
+capture.rect.too_small = et opptaksrektangel må ha en reell størrelse, fikk {w}x{h}
+
+# Skjermbilder
+capture.shot.crop_failed = kunne ikke beskjære skjermbildet til {w}x{h}
+capture.shot.no_backend = ingen skjermbildeverktøy på denne maskinen — installer ett av: {tools}
+capture.shot.all_failed = ingen av skjermbildeverktøyene virket
+
+# Opptak
+capture.audio.bad_arg = --audio tar none, system, mic eller both, fikk {got}
+capture.rec.camera_needs_ffmpeg = opptak fra kamera krever ffmpeg i PATH
+capture.rec.windows_needs_ffmpeg = skjermopptak på Windows krever ffmpeg i PATH
+capture.rec.mac_needs_ffmpeg = skjermopptak på macOS krever ffmpeg i PATH
+capture.rec.gsr_no_area = gpu-screen-recorder kan ikke ta opp et rektangel — installer wf-recorder eller wl-screenrec for --area på Wayland
+capture.rec.no_wayland_recorder = ingen hodeløs skjermopptaker i denne Wayland-økten — installer wf-recorder, wl-screenrec eller gpu-screen-recorder (Reels innebygde portalopptak virker i appen, men der må du velge kilde i systemets velger)
+capture.rec.failed_to_start = {tool} kunne ikke starte: {e}
+capture.rec.no_file = {tool} laget ingen fil i {path}
+capture.rec.no_webcam = fant ikke noe webkamera (så etter /dev/video*)
+capture.rec.probe_screen = kunne ikke analysere skjermopptaket: {e}
+capture.rec.probe_camera = kunne ikke analysere kameraopptaket: {e}
+capture.rec.save_streamer = kunne ikke lagre strømmeprosjektet: {e}
+capture.rec.already_running = et opptak pågår allerede (pid {pid}, til {path}) — stopp det først med `reel record --stop`
+capture.rec.windows_needs_duration = på Windows må et opptak ha en lengde: `reel record --duration SECONDS`
+capture.rec.exited_immediately = {tool} avsluttet med en gang — sjekk at kilden kan tas opp (prøv `reel devices`)
+capture.rec.none_running = ingen opptak pågår — start et med `reel record`
+capture.rec.session_unreadable = opptaksøktfilen kan ikke leses: {e}
+capture.rec.no_self = finner ikke selve reel-programmet: {e}
+capture.rec.portal_spawn = kunne ikke starte portalopptaket: {e}
+capture.rec.portal_cancelled = portalopptaket stoppet før det begynte — ble kildevelgeren avbrutt?
+capture.rec.portal_timeout = portalopptaket startet aldri (intet svar fra systemets velger)
+
+# Innebygd portalopptak (portal.rs)
+capture.portal.non_file_uri = portalen returnerte en URI som ikke er en fil: {uri}
+capture.portal.stop_timeout = opptakeren ble ikke ferdig i tide
+capture.portal.pod = pod-serialisering: {e}
+capture.portal.bad_pod = ugyldig formatpod
+capture.portal.no_frames = ingen bilder kom fra kompositoren
+capture.portal.no_stdin = koderens stdin mangler
+capture.portal.encoder_panicked = kodertråden krasjet
+capture.portal.no_file = opptaket laget ingen fil
+
+# Bevegelsessporing (track.rs)
+playback.track.too_few_frames = for få bilder til å spore (fikk {n})
+playback.track.spawn = kunne ikke starte ffmpeg for sporing
+playback.track.read_failed = lesing av dekodet video for sporing mislyktes: {e}
+playback.track.no_mask = klipp {id} har ingen maske å spore — legg til en maske først
+
+# Analyse (video/decoder.rs)
+playback.probe.no_ffprobe = ffprobe kunne ikke starte ({e}); er ffmpeg installert?
+playback.probe.error = ffprobe-feil: {e}
+playback.probe.no_video = ingen videostrøm i {path}
+playback.probe.no_dims = kunne ikke lese videoens dimensjoner for {path}
+
+# libmpv-motoren (video/mpv.rs)
+playback.mpv.create_null = mpv_create ga null
+playback.mpv.option = mpv-innstilling {k}={v}: {e}
+playback.mpv.render_ctx = mpv-gjengivelseskontekst: {e}
+playback.mpv.open_failed = mpv kunne ikke åpne {path}
+playback.mpv.timeout = mpv brukte for lang tid på å åpne {path}
+playback.mpv.nothing_playable = ingenting å spille av i {path}
+
+# Lydvisualisering (video/player.rs)
+playback.visualizer.off = Omslag / av
+playback.visualizer.cqt = Spekterstolper
+playback.visualizer.spectrum = Spektrogram
+playback.visualizer.scope = Vektorskop
+playback.visualizer.waves = Lydbølge

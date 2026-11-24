@@ -726,11 +726,11 @@ fn pw_playback(
     };
     let values =
         PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(obj))
-            .map_err(|e| anyhow!("pod serialize: {e:?}"))?
+            .map_err(|e| anyhow!("pod serialize: {e:?}"))? // i18n-ok: only logged ("audio mixer unavailable")
             .0
             .into_inner();
     let mut params =
-        [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad audio format pod"))?];
+        [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad audio format pod"))?]; // i18n-ok: only logged
 
     stream.connect(
         spa::utils::Direction::Output,
@@ -771,7 +771,7 @@ impl Mixer {
                     let host = cpal::default_host();
                     let device = host
                         .default_output_device()
-                        .ok_or_else(|| anyhow::anyhow!("no output device"))?;
+                        .ok_or_else(|| anyhow::anyhow!("no output device"))?; // i18n-ok: only logged ("audio mixer unavailable")
                     let config = cpal::StreamConfig {
                         channels: CHANNELS as u16,
                         sample_rate: cpal::SampleRate(RATE),
@@ -1034,11 +1034,11 @@ fn pw_capture(state: Arc<Mutex<RecState>>, ready: Sender<bool>) -> anyhow::Resul
     };
     let values =
         PodSerializer::serialize(std::io::Cursor::new(Vec::new()), &spa::pod::Value::Object(obj))
-            .map_err(|e| anyhow!("pod serialize: {e:?}"))?
+            .map_err(|e| anyhow!("pod serialize: {e:?}"))? // i18n-ok: only logged ("audio mixer unavailable")
             .0
             .into_inner();
     let mut params =
-        [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad audio format pod"))?];
+        [spa::pod::Pod::from_bytes(&values).ok_or_else(|| anyhow!("bad audio format pod"))?]; // i18n-ok: only logged
 
     stream.connect(
         spa::utils::Direction::Input,

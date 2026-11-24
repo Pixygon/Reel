@@ -1,0 +1,116 @@
+# player — en
+
+# Default-apps banner and window
+player.defaults.ask = Open your media with Reel by default?
+player.defaults.video = Video
+player.defaults.music = Music
+player.defaults.images = Images
+player.defaults.make_default = Make default
+player.defaults.later = Later
+player.defaults.later_status = You can set defaults any time under ⚙ → Default apps.
+player.defaults.title = Default apps
+player.defaults.intro = Open these with Reel when you double-click them:
+player.defaults.current = \s\s(current default: Reel)
+player.defaults.video_kinds = Video — mp4, mkv, webm, …
+player.defaults.music_kinds = Music — mp3, flac, opus, …
+player.defaults.image_kinds = Images — png, jpg, svg, …
+player.defaults.apply = Apply
+player.defaults.footer = Reel always stays available under “Open with” either way.
+
+# Keyboard status messages
+player.shuttle.reverse = ◀◀ {n}× reverse
+player.shuttle.forward = {n}× forward
+player.shuttle.paused = paused
+player.status.cut_to_angle = Cut to angle {n} at {t}s.
+player.status.range_cleared = Export range cleared.
+player.status.range_in = Range in at {t}s (Shift+I/O clears).
+player.status.range_out = Range out at {t}s (Shift+I/O clears).
+
+# Keyboard reference window
+player.keys.title = Keyboard
+player.keys.playback = Playback
+player.keys.editing = Editing
+player.keys.pointer = Timeline pointer
+player.keys.source = Source monitor
+player.keys.space = Space
+player.keys.play_pause = Play / pause
+player.keys.shuttle = Shuttle back / stop / forward (tap J or L again: faster)
+player.keys.frame_step = Frame step back / forward
+player.keys.seek = Seek 5 s (Shift: 60 s)
+player.keys.volume = Volume
+player.keys.mute = Mute
+player.keys.speed_keys = [ · ] · Backspace
+player.keys.speed = Playback speed down / up / reset
+player.keys.loop = Loop
+player.keys.fullscreen = Fullscreen
+player.keys.visualizer = Audio visualizer (audio files)
+player.keys.editor_toggle = Editor ↔ player
+player.keys.split_keys = S (or Ctrl+K)
+player.keys.split = Split at playhead
+player.keys.trim = Trim head / tail to playhead
+player.keys.delete_key = Delete
+player.keys.delete = Delete clip (Shift: ripple delete)
+player.keys.undo = Undo / redo
+player.keys.copy = Copy / paste (inserts + ripples) / duplicate
+player.keys.range = Export range in / out (Shift+I/O clears)
+player.keys.marker = Drop a marker
+player.keys.jump_marker = Jump between markers
+player.keys.multicam = Multicam: cut to angle at the playhead
+player.keys.drag_clip = Drag clip
+player.keys.move = Move (multi-selection moves together)
+player.keys.drag_edge = Drag edge
+player.keys.trim_drag = Trim
+player.keys.ctrl_edge = Ctrl+edge
+player.keys.roll = Roll the cut (tail edge rolls the next clip's head)
+player.keys.alt_drag = Alt+drag body
+player.keys.slip = Slip the source window
+player.keys.ctrl_alt_drag = Ctrl+Alt+drag
+player.keys.slide = Slide between neighbours
+player.keys.shift_click = Shift+click
+player.keys.add_select = Add to selection
+player.keys.shift_drag = Shift+drag empty space
+player.keys.lasso = Lasso-select clips
+player.keys.ctrl_scroll = Ctrl+scroll
+player.keys.zoom = Zoom the timeline
+player.keys.pool_item = ▶ (pool item)
+player.keys.preview_pool = Preview a pool item over the live edit
+player.keys.mark_piece = Mark the piece you want
+player.keys.enter = Enter
+player.keys.insert = Insert it at the playhead (three-point edit)
+
+# ☰ REEL menu
+player.open = Open…
+player.menu.ui_scale = UI scale
+player.menu.default_apps = Default apps…
+player.menu.website = Website — reel.pixygon.io
+player.menu.screenshot = 📷 Screenshot
+player.menu.stop_recording = ⏹ Stop recording
+player.menu.record_starting = ⏺ starting…
+player.menu.record_screen = ⏺ Record screen…
+player.menu.record_webcam = ⏺ Record webcam
+player.menu.record_webcam_hint = Record the camera (plus the default mic when one answers) to ~/Videos
+player.menu.stop_streamer = ⏹ Stop streamer layout
+player.menu.streamer = ⏺ Streamer layout (screen + cam)
+player.menu.streamer_hint = Record the screen AND the camera together; stopping builds a ready-made project — screen full-frame, camera as a corner PiP you can still move, resize or recut
+player.menu.quit = Quit
+
+# Screenshot choices (☰ menu and tray)
+player.shot.full = Full screen
+player.shot.region = Region…
+player.shot.window = Window…
+player.shot.full_after = Full screen after {n}s
+
+# Nothing open
+player.empty.open = \s\sOpen a file…\s\s
+player.empty.hint_drop = …or drop one here, or double-click any video, song or image in your file manager.
+player.empty.hint = …or double-click any video, song or image in your file manager — Reel opens it directly.
+
+# Desktop integration errors
+player.integration.no_xdg_mime = xdg-mime not available: {e}
+player.integration.xdg_mime_failed = xdg-mime failed: {e}
+
+# System tray
+tray.title_recording = Reel — recording
+tray.open = Open Reel
+tray.screenshot = Screenshot
+tray.quit = Quit Reel

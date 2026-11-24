@@ -150,10 +150,12 @@ pub fn load_preset(name: &str) -> anyhow::Result<Title> {
         preset_dir().join(format!("{name}.json"))
     };
     let text = std::fs::read_to_string(&path).map_err(|e| {
-        anyhow::anyhow!(
-            "no title preset {name:?} ({e}) — presets live in {} (`reel title presets` lists them)",
-            preset_dir().display()
-        )
+        anyhow::anyhow!(tr!(
+            "titles.err.no_preset",
+            name = format!("{name:?}"),
+            e = e,
+            dir = preset_dir().display()
+        ))
     })?;
     Ok(serde_json::from_str(&text)?)
 }

@@ -171,6 +171,11 @@ not the finished tool, but real, honest software you can build and run today.
   static build on first launch.
 - **Projects are files.** Ctrl+S saves the cut as a `.reel` document;
   double-clicking one reopens the edit with its media loaded at the playhead.
+- **Speaks your language.** Norwegian bokmål and English, picked from the
+  OS language (LANG/LC_MESSAGES on Linux, the user locale on Windows and
+  macOS), English otherwise; ☰ → Language overrides it. Numbers and times
+  follow the locale (2,50 s in bokmål). Your media, captions and file names
+  are never translated. The command line stays English.
 - **Native Pixygon stack.** winit + wgpu + egui — the same stack as Infinite —
   themed in the Pixygon master-brand voice (void grounds, signal cyan, ember).
 - **One binary, three platforms.** Builds to Linux + Windows via `pearl build`,

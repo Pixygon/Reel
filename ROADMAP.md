@@ -241,8 +241,11 @@ read `10.00 / 8.00` at the end of a transitioned edit.
       state as its own snapshot).
 - [x] AccessKit wired (egui-winit accesskit feature + adapter + action
       routing) — screen readers get egui's accessibility tree. UI scale
-      setting (☰ → UI scale, persisted). Localization scaffolding: still
-      open, tracked as a starter issue.
+      setting (☰ → UI scale, persisted). Localisation: the window speaks
+      Norwegian bokmål or English, following the OS language (☰ → Language
+      overrides it); strings live in `locales/<lang>/*.txt`, tests fail on
+      new hard-coded UI text and on keys missing from either language. The
+      CLI stays English.
 
 ---
 

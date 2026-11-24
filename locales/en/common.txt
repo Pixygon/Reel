@@ -1,0 +1,4 @@
+# Shared words and the language picker.
+common.language = Language
+common.language_system = Follow the system
+common.percent = {n}%

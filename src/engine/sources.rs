@@ -63,8 +63,8 @@ impl SegmentReader {
             .stderr(Stdio::null())
             .stdin(Stdio::null())
             .spawn()
-            .with_context(|| format!("could not start a decoder for {source}"))?;
-        let out = child.stdout.take().ok_or_else(|| anyhow!("decoder has no stdout"))?;
+            .with_context(|| tr!("engine.err.decoder_start", source = source))?;
+        let out = child.stdout.take().ok_or_else(|| anyhow!(tr!("engine.err.decoder_no_stdout")))?;
         Ok(Self {
             child,
             out,
@@ -155,8 +155,8 @@ impl NativeReader {
             .stderr(Stdio::null())
             .stdin(Stdio::null())
             .spawn()
-            .with_context(|| format!("could not start a native decoder for {source}"))?;
-        let out = child.stdout.take().ok_or_else(|| anyhow!("decoder has no stdout"))?;
+            .with_context(|| tr!("engine.err.native_decoder_start", source = source))?;
+        let out = child.stdout.take().ok_or_else(|| anyhow!(tr!("engine.err.decoder_no_stdout")))?;
         let frame_len = (w * h * 4) as usize;
         Ok(Self {
             child,
@@ -244,7 +244,7 @@ pub fn stab_chain(source: &str, in_point: f64, src_len: f64) -> Result<String> {
             .map(|s| s.success())
             .unwrap_or(false);
         if !ok || !trf.exists() {
-            anyhow::bail!("stabilisation analysis failed for {source}");
+            anyhow::bail!(tr!("engine.err.stabilize", source = source));
         }
     }
     Ok(format!(

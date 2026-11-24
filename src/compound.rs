@@ -30,10 +30,10 @@ pub fn is_stale(reel_path: &str) -> bool {
 /// Returns the flat file's path.
 pub fn render_flat(reel_path: &str) -> Result<PathBuf> {
     let proj = crate::edit::Project::load(reel_path)
-        .map_err(|e| anyhow!("could not load {reel_path}: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.compound.err.load", path = reel_path, e = e)))?;
     let segments = proj.export_segments();
     if segments.is_empty() {
-        return Err(anyhow!("{reel_path} has an empty timeline — nothing to nest"));
+        return Err(anyhow!(tr!("engine.compound.err.empty", path = reel_path)));
     }
     let out = flat_path(reel_path);
     let tmp = out.with_extension("part.mp4");
@@ -74,14 +74,14 @@ pub fn render_flat(reel_path: &str) -> Result<PathBuf> {
         if st.finished {
             if let Some(e) = st.error {
                 let _ = std::fs::remove_file(&tmp);
-                return Err(anyhow!("nested render failed: {e}"));
+                return Err(anyhow!(tr!("engine.compound.err.render", e = e)));
             }
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(60));
     }
     std::fs::rename(&tmp, &out)
-        .map_err(|e| anyhow!("could not finalise the flat render: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.compound.err.finalise", e = e)))?;
     Ok(out)
 }
 

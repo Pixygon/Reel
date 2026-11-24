@@ -23,7 +23,7 @@ impl ksni::Tray for ReelTray {
     }
 
     fn title(&self) -> String {
-        if self.recording { "Reel — recording".into() } else { "Reel".into() }
+        if self.recording { tr!("tray.title_recording").into() } else { "Reel".into() }
     }
 
     fn icon_pixmap(&self) -> Vec<ksni::Icon> {
@@ -37,42 +37,42 @@ impl ksni::Tray for ReelTray {
         }
         vec![
             StandardItem {
-                label: "Open Reel".into(),
+                label: tr!("tray.open").into(),
                 activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::Show)),
                 ..Default::default()
             }
             .into(),
             MenuItem::Separator,
             SubMenu {
-                label: "Screenshot".into(),
+                label: tr!("tray.screenshot").into(),
                 submenu: vec![
                     StandardItem {
-                        label: "Full screen".into(),
+                        label: tr!("player.shot.full").into(),
                         activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::Shot(ShotMode::Full))),
                         ..Default::default()
                     }
                     .into(),
                     StandardItem {
-                        label: "Region…".into(),
+                        label: tr!("player.shot.region").into(),
                         activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::Shot(ShotMode::Region))),
                         ..Default::default()
                     }
                     .into(),
                     StandardItem {
-                        label: "Window…".into(),
+                        label: tr!("player.shot.window").into(),
                         activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::Shot(ShotMode::Window))),
                         ..Default::default()
                     }
                     .into(),
                     MenuItem::Separator,
                     StandardItem {
-                        label: "Full screen after 3s".into(),
+                        label: tr!("player.shot.full_after", n = 3),
                         activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ShotAfter(ShotMode::Full, 3.0))),
                         ..Default::default()
                     }
                     .into(),
                     StandardItem {
-                        label: "Full screen after 10s".into(),
+                        label: tr!("player.shot.full_after", n = 10),
                         activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ShotAfter(ShotMode::Full, 10.0))),
                         ..Default::default()
                     }
@@ -82,20 +82,20 @@ impl ksni::Tray for ReelTray {
             }
             .into(),
             StandardItem {
-                label: if self.recording { "⏹ Stop recording".into() } else { "⏺ Record screen…".into() },
+                label: if self.recording { tr!("player.menu.stop_recording").into() } else { tr!("player.menu.record_screen").into() },
                 activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ToggleRecord)),
                 ..Default::default()
             }
             .into(),
             StandardItem {
-                label: if self.recording { "⏹ Stop recording".into() } else { "⏺ Record webcam".into() },
+                label: if self.recording { tr!("player.menu.stop_recording").into() } else { tr!("player.menu.record_webcam").into() },
                 activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::ToggleWebcam)),
                 ..Default::default()
             }
             .into(),
             MenuItem::Separator,
             StandardItem {
-                label: "Quit Reel".into(),
+                label: tr!("tray.quit").into(),
                 activate: Box::new(|t: &mut Self| send(&t.proxy, UserEvent::Quit)),
                 ..Default::default()
             }

@@ -65,19 +65,19 @@ impl Codec {
 
     pub fn label(self) -> &'static str {
         match self {
-            Codec::H264 => "MP4 · H.264 (compatible)",
-            Codec::H265 => "MP4 · H.265 (smaller)",
-            Codec::Av1 => "MP4 · AV1 (smallest, slow)",
-            Codec::Vp9 => "WebM · VP9 (web)",
-            Codec::Remux => "MKV · no re-encode (instant)",
-            Codec::Mp3 => "MP3 · audio only",
-            Codec::M4a => "M4A/AAC · audio only",
-            Codec::OpusAudio => "Opus · audio only",
-            Codec::Flac => "FLAC · audio, lossless",
-            Codec::Wav => "WAV · audio, uncompressed",
-            Codec::Png => "PNG · lossless",
-            Codec::Jpeg => "JPEG · small",
-            Codec::WebpImage => "WebP · web",
+            Codec::H264 => tr!("export.codec.h264"),
+            Codec::H265 => tr!("export.codec.h265"),
+            Codec::Av1 => tr!("export.codec.av1"),
+            Codec::Vp9 => tr!("export.codec.vp9"),
+            Codec::Remux => tr!("export.codec.remux"),
+            Codec::Mp3 => tr!("export.codec.mp3"),
+            Codec::M4a => tr!("export.codec.m4a"),
+            Codec::OpusAudio => tr!("export.codec.opus"),
+            Codec::Flac => tr!("export.codec.flac"),
+            Codec::Wav => tr!("export.codec.wav"),
+            Codec::Png => tr!("export.codec.png"),
+            Codec::Jpeg => tr!("export.codec.jpeg"),
+            Codec::WebpImage => tr!("export.codec.webp"),
         }
     }
 
@@ -142,10 +142,10 @@ pub enum Quality {
 impl Quality {
     pub fn label(self) -> &'static str {
         match self {
-            Quality::High => "High (near-lossless)",
-            Quality::Balanced => "Balanced",
-            Quality::Small => "Small file",
-            Quality::Custom(_) => "Custom CRF",
+            Quality::High => tr!("export.quality.high"),
+            Quality::Balanced => tr!("export.quality.balanced"),
+            Quality::Small => tr!("export.quality.small"),
+            Quality::Custom(_) => tr!("export.quality.custom"),
         }
     }
 }
@@ -165,7 +165,7 @@ impl Resolution {
 
     pub fn label(self) -> &'static str {
         match self {
-            Resolution::Source => "Source",
+            Resolution::Source => tr!("export.resolution.source"),
             Resolution::H2160 => "2160p (4K)",
             Resolution::H1080 => "1080p",
             Resolution::H720 => "720p",
@@ -202,9 +202,9 @@ impl Fit {
 
     pub fn label(self) -> &'static str {
         match self {
-            Fit::Letterbox => "Fit (bars)",
-            Fit::Crop => "Fill (crop)",
-            Fit::Blur => "Fill (blurred sides)",
+            Fit::Letterbox => tr!("export.fit.letterbox"),
+            Fit::Crop => tr!("export.fit.crop"),
+            Fit::Blur => tr!("export.fit.blur"),
         }
     }
 
@@ -285,6 +285,17 @@ impl Preset {
     /// A filename tag so exports for different places don't collide.
     pub fn slug(&self) -> String {
         self.name.to_lowercase().replace([' ', '/'], "-").replace("--", "-")
+    }
+
+    /// The name to SHOW. `name` stays the English machine key (slugs, CLI
+    /// `--preset`, queue labels); platform brands are never translated, only
+    /// the presets whose names are ordinary words.
+    pub fn ui_name(&self) -> &'static str {
+        match self.name {
+            "Square" => tr!("export.preset.square"),
+            "Instagram feed" => tr!("export.preset.instagram_feed"),
+            other => other,
+        }
     }
 }
 
@@ -1032,10 +1043,10 @@ pub(crate) fn start_timeline_graph(
     overlays: Overlays<'_>,
 ) -> Result<ExportJob> {
     if segments.is_empty() {
-        return Err(anyhow!("the timeline is empty"));
+        return Err(anyhow!(tr!("export.err.timeline_empty")));
     }
     if Path::new(output).exists() {
-        return Err(anyhow!("output already exists: {output}"));
+        return Err(anyhow!(tr!("export.err.output_exists", output = output)));
     }
     // The static graph can't do everything the frame server can. One
     // honest, complete list — silence would be a preview that lies at
@@ -1590,7 +1601,7 @@ pub fn render_target((pw, ph, fps): (u32, u32, f64), s: &ExportSettings) -> (u32
 /// seconds (drives the progress fraction).
 pub fn start(input: &str, output: &str, settings: &ExportSettings, duration: f64) -> Result<ExportJob> {
     if Path::new(output).exists() {
-        return Err(anyhow!("output already exists: {output}"));
+        return Err(anyhow!(tr!("export.err.output_exists", output = output)));
     }
     spawn_job(build_args(input, output, settings), output, duration)
 }
@@ -1607,7 +1618,7 @@ fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob
         let mut child = match cmd.spawn() {
             Ok(c) => c,
             Err(e) => {
-                t_state.lock().unwrap().error = Some(format!("ffmpeg failed to start: {e}"));
+                t_state.lock().unwrap().error = Some(tr!("export.err.ffmpeg_start", e = e));
                 t_state.lock().unwrap().finished = true;
                 return;
             }
@@ -1615,7 +1626,7 @@ fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob
         let iter = match child.iter() {
             Ok(i) => i,
             Err(e) => {
-                t_state.lock().unwrap().error = Some(format!("ffmpeg output unreadable: {e}"));
+                t_state.lock().unwrap().error = Some(tr!("export.err.ffmpeg_unreadable", e = e));
                 t_state.lock().unwrap().finished = true;
                 return;
             }
@@ -1655,7 +1666,7 @@ fn spawn_job(args: Vec<String>, output: &str, duration: f64) -> Result<ExportJob
         if ok {
             st.fraction = 1.0;
         } else {
-            st.error = Some(last_error.unwrap_or_else(|| "export failed (no output produced)".into()));
+            st.error = Some(last_error.unwrap_or_else(|| tr!("export.err.no_output").into()));
         }
     });
 

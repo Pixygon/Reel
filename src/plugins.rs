@@ -74,9 +74,7 @@ pub fn seed_examples() {
 /// Parse the header + validate the contract. Pure; unit-tested.
 pub fn parse(source: &str) -> Result<(String, Vec<ParamDecl>)> {
     if !source.contains("fn plugin(") {
-        return Err(anyhow!(
-            "a Reel effect must define `fn plugin(rgb: vec3<f32>, uv: vec2<f32>, p: vec4<f32>) -> vec3<f32>`"
-        ));
+        return Err(anyhow!(tr!("engine.plugin.err.contract")));
     }
     let mut name = String::from("Effect");
     let mut params = Vec::new();
@@ -124,7 +122,7 @@ pub fn load(path: &str) -> Result<Arc<Plugin>> {
         }
     }
     let source = std::fs::read_to_string(path)
-        .map_err(|e| anyhow!("could not read the effect {path}: {e}"))?;
+        .map_err(|e| anyhow!(tr!("engine.plugin.err.read", path = path, e = e)))?;
     let (name, params) = parse(&source)?;
     let mut h: u64 = 0xcbf29ce484222325;
     for b in path.as_bytes().iter().chain(mtime.to_le_bytes().iter()) {

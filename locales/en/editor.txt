@@ -1,0 +1,116 @@
+# editor — en
+
+# Viewport, overlays, curve editor, scopes
+editor.drop_hint = drop a video, song or image here
+editor.proxy = PROXY
+editor.proxy_baking = PROXY…
+editor.curve_hint = drag a key · double-click adds · right-click removes · middle-click cycles linear/ease/hold/bezier
+editor.no_picture = No picture yet.
+editor.scopes_caption = Histogram · luma waveform · RGB parade · vectorscope
+
+# Transport chrome
+editor.transport.back_to_start = Back to start
+editor.transport.frame_back = Frame back (,)
+editor.transport.play_pause = Play/pause (Space)
+editor.transport.frame_forward = Frame forward (.)
+editor.transport.export = ⬇ Export
+editor.transport.convert_image_hover = Convert — PNG/JPEG/WebP, resize
+editor.transport.convert_hover = Convert this file — codec, quality, size
+editor.transport.edit = ✂ Edit
+editor.transport.edit_hover = Open on the timeline (E)
+editor.transport.done = ▶ Done
+editor.transport.done_hover = Back to the player (E)
+editor.transport.insert_secs = Insert {t}s
+editor.transport.insert_half = Insert (half-marked)
+editor.transport.insert_all = Insert all
+editor.transport.insert_hover = Three-point edit: source I/O + timeline playhead → a clip at the playhead
+editor.transport.fullscreen_hover = Fullscreen (F)
+editor.transport.mute_hover = Mute (M)
+editor.transport.clip_rate = clip {r}×
+editor.transport.clip_rate_hover = This clip has its own playback rate; it multiplies with yours.
+editor.transport.loop_hover = Loop (L)
+
+# Export dialog
+export_ui.title = Export / Convert
+export_ui.source_file = Source file
+export_ui.range.one = ✂ Range ({n} clip, {t}s)
+export_ui.range.other = ✂ Range ({n} clips, {t}s)
+export_ui.edit.one = ✂ The edit ({n} clip, {t}s)
+export_ui.edit.other = ✂ The edit ({n} clips, {t}s)
+export_ui.range_hover = Only what the in/out markers enclose
+export_ui.edit_hover = The whole timeline as cut
+export_ui.captions_burned.one = • {n} caption will be burned in
+export_ui.captions_burned.other = • {n} captions will be burned in
+export_ui.queue_title = Render queue
+export_ui.waiting = waiting: {list}
+export_ui.cancel_all = Cancel all
+export_ui.clear_finished = Clear finished
+export_ui.encoding = Encoding → {path}
+export_ui.realtime = {x}× realtime
+export_ui.cancel = Cancel
+export_ui.done = ✓ Done → {path}
+export_ui.cancelled = Export cancelled.
+export_ui.ok = OK
+export_ui.where = Where is this going?
+export_ui.names = Names
+export_ui.names_hover = {name} = project, {platform} = preset slug
+export_ui.captions_per_platform = Captions per platform
+export_ui.queue_all = Queue ALL platforms
+export_ui.queue_all_hover = One render per preset — YouTube, TikTok, Reels, feed, square, Facebook, X — named after the platform, delivered at its loudness
+export_ui.queued.one = {n} render queued — keep editing.
+export_ui.queued.other = {n} renders queued — keep editing.
+export_ui.custom_settings = ⚙ Custom settings
+export_ui.custom_hover = Choose format, quality and size yourself
+export_ui.format = Format
+export_ui.quality = Quality
+export_ui.frame = Frame
+export_ui.resolution = Resolution
+export_ui.audio = Audio
+export_ui.audio_from_clips = from the clips
+export_ui.audio_copy = Copy (untouched)
+export_ui.audio_encode = Encode {kbps} kb/s
+export_ui.encoder = Encoder
+export_ui.hw_faster = {name} (faster)
+export_ui.hw_hover = Uncheck for the software encoder — slower, slightly smaller files
+export_ui.save_to = Save to
+export_ui.custom = Custom
+export_ui.queue_one = + Queue {label}
+export_ui.queue_one_hover = Add this to the render queue and keep choosing
+export_ui.start = Start export
+export_ui.error = Export: {e}
+
+# Timeline
+timeline.zoom_out = Zoom out (Ctrl+scroll)
+timeline.zoom_in = Zoom in (Ctrl+scroll)
+timeline.fit = Fit the whole edit
+timeline.split = ✂ Split
+timeline.split_hover = Split under the playhead (S)
+timeline.curve_lane = Curve lane
+timeline.curve_lane_hover = A full-width lane under the tracks: the selected clip's keyframes for the Animate panel's parameter, aligned with the ruler. Drag keys, double-click adds, right-click removes.
+timeline.adjust = + Adjust
+timeline.adjust_hover = Add an ADJUSTMENT LAYER at the playhead: a 4s span whose colour grade applies to everything beneath it — select it and use the Look panel
+timeline.delete = 🗑 Delete
+timeline.delete_hover = Delete selected clip (Del)
+timeline.undo = Undo
+timeline.undo_hover = Undo (Ctrl+Z)
+timeline.redo = Redo
+timeline.redo_hover = Redo (Ctrl+Shift+Z)
+timeline.range_in_hover = Range in at playhead (I)
+timeline.range_out_hover = Range out at playhead (O)
+timeline.clear_range_hover = Clear export range (Shift+I/O)
+timeline.saving = saving…
+timeline.saved = saved
+timeline.project_len = {name}  ·  {t}s
+timeline.close_every_gap = Close every gap
+timeline.close_gap_before = Close gap before this clip
+timeline.delete_clip = Delete clip
+timeline.closed_gaps = Closed {t}s of gaps.
+timeline.closed_gap = Closed a {t}s gap.
+timeline.no_gap = No gap before that clip.
+timeline.clip_deleted = Clip deleted.
+timeline.adjust_label = ADJUST  {t}s
+timeline.clip_label = {name}  {t}s
+timeline.roll = Roll: moving the cut — the total length stays.
+timeline.slip = Slip: source in-point {t}s
+timeline.slide = Slide: neighbours absorb the move.
+timeline.curve_lane_empty = select a clip with keyframes (Animate panel picks the parameter)

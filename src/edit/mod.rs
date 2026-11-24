@@ -329,6 +329,32 @@ impl Param {
     pub fn parse(s: &str) -> Option<Param> {
         Param::ALL.into_iter().find(|p| p.name() == s)
     }
+
+    /// The name to SHOW (keyframe combo, key list). `name()` stays the
+    /// machine key: it is serialised, parsed and typed on the CLI.
+    pub fn ui_label(self) -> &'static str {
+        match self {
+            Param::Exposure => tr!("edit.param.exposure"),
+            Param::Contrast => tr!("edit.param.contrast"),
+            Param::Saturation => tr!("edit.param.saturation"),
+            Param::Zoom => tr!("edit.param.zoom"),
+            Param::PanX => tr!("edit.param.pan_x"),
+            Param::PanY => tr!("edit.param.pan_y"),
+            Param::Opacity => tr!("edit.param.opacity"),
+            Param::PipX => tr!("edit.param.pip_x"),
+            Param::PipY => tr!("edit.param.pip_y"),
+            Param::PipScale => tr!("edit.param.pip_scale"),
+            Param::Speed => tr!("edit.param.speed"),
+            Param::MaskX => tr!("edit.param.mask_x"),
+            Param::MaskY => tr!("edit.param.mask_y"),
+            Param::MaskW => tr!("edit.param.mask_w"),
+            Param::MaskH => tr!("edit.param.mask_h"),
+            Param::Plugin1 => tr!("edit.param.plugin_1"),
+            Param::Plugin2 => tr!("edit.param.plugin_2"),
+            Param::Plugin3 => tr!("edit.param.plugin_3"),
+            Param::Plugin4 => tr!("edit.param.plugin_4"),
+        }
+    }
 }
 
 /// How one clip hands over to the next when they overlap.
@@ -363,14 +389,14 @@ impl TransitionKind {
 
     pub fn label(self) -> &'static str {
         match self {
-            TransitionKind::Fade => "Crossfade",
-            TransitionKind::DipToBlack => "Dip to black",
-            TransitionKind::WipeLeft => "Wipe left",
-            TransitionKind::WipeRight => "Wipe right",
-            TransitionKind::WipeUp => "Wipe up",
-            TransitionKind::WipeDown => "Wipe down",
-            TransitionKind::SlideLeft => "Slide left",
-            TransitionKind::SlideRight => "Slide right",
+            TransitionKind::Fade => tr!("edit.transition.fade"),
+            TransitionKind::DipToBlack => tr!("edit.transition.dip"),
+            TransitionKind::WipeLeft => tr!("edit.transition.wipe_left"),
+            TransitionKind::WipeRight => tr!("edit.transition.wipe_right"),
+            TransitionKind::WipeUp => tr!("edit.transition.wipe_up"),
+            TransitionKind::WipeDown => tr!("edit.transition.wipe_down"),
+            TransitionKind::SlideLeft => tr!("edit.transition.slide_left"),
+            TransitionKind::SlideRight => tr!("edit.transition.slide_right"),
         }
     }
 

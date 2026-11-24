@@ -1,0 +1,147 @@
+# engine — nb
+# Eksport: kodek / kvalitet / oppløsning / tilpasning
+export.codec.h264 = MP4 · H.264 (kompatibel)
+export.codec.h265 = MP4 · H.265 (mindre)
+export.codec.av1 = MP4 · AV1 (minst, treg)
+export.codec.vp9 = WebM · VP9 (nett)
+export.codec.remux = MKV · uten omkoding (umiddelbart)
+export.codec.mp3 = MP3 · kun lyd
+export.codec.m4a = M4A/AAC · kun lyd
+export.codec.opus = Opus · kun lyd
+export.codec.flac = FLAC · lyd, tapsfri
+export.codec.wav = WAV · lyd, ukomprimert
+export.codec.png = PNG · tapsfri
+export.codec.jpeg = JPEG · liten
+export.codec.webp = WebP · nett
+export.quality.high = Høy (nesten tapsfri)
+export.quality.balanced = Balansert
+export.quality.small = Liten fil
+export.quality.custom = Egendefinert CRF
+export.resolution.source = Kilde
+export.fit.letterbox = Tilpass (svarte kanter)
+export.fit.crop = Fyll (beskjær)
+export.fit.blur = Fyll (uskarpe sider)
+# Forhåndsinnstillinger som er ord (merkenavn står urørt)
+export.preset.square = Kvadrat
+export.preset.instagram_feed = Instagram-feed
+# Eksportfeil
+export.err.timeline_empty = tidslinjen er tom
+export.err.output_exists = utdatafilen finnes allerede: {output}
+export.err.ffmpeg_start = ffmpeg kunne ikke starte: {e}
+export.err.ffmpeg_unreadable = kunne ikke lese utdata fra ffmpeg: {e}
+export.err.no_output = eksporten mislyktes (ingen fil ble laget)
+
+# Redigering: overganger og nøkkelbildeparametere
+edit.transition.fade = Krysstoning
+edit.transition.dip = Ton via svart
+edit.transition.wipe_left = Avdekking mot venstre
+edit.transition.wipe_right = Avdekking mot høyre
+edit.transition.wipe_up = Avdekking oppover
+edit.transition.wipe_down = Avdekking nedover
+edit.transition.slide_left = Skyv mot venstre
+edit.transition.slide_right = Skyv mot høyre
+edit.param.exposure = eksponering
+edit.param.contrast = kontrast
+edit.param.saturation = metning
+edit.param.zoom = zoom
+edit.param.pan_x = panorer x
+edit.param.pan_y = panorer y
+edit.param.opacity = opasitet
+edit.param.pip_x = bilde-i-bilde x
+edit.param.pip_y = bilde-i-bilde y
+edit.param.pip_scale = bilde-i-bilde størrelse
+edit.param.speed = hastighet
+edit.param.mask_x = maske x
+edit.param.mask_y = maske y
+edit.param.mask_w = maske bredde
+edit.param.mask_h = maske høyde
+edit.param.plugin_1 = tillegg 1
+edit.param.plugin_2 = tillegg 2
+edit.param.plugin_3 = tillegg 3
+edit.param.plugin_4 = tillegg 4
+# Malplasser og varianter
+edit.variants.no_slots = ingen ennå — koble til en med `reel slot bind`
+edit.variants.err.no_media_slot = ingen medieplass med navnet {name}. Plasser: {slots}
+edit.variants.err.no_text_slot = ingen tekstplass med navnet {name}. Plasser: {slots}
+edit.variants.err.no_variant_list = ingen variant med navnet {name}. Varianter: {variants}
+edit.variants.err.no_variant = ingen variant med navnet {name}
+
+# Teksting: modeller, fremdrift, feil
+captions.model.tiny = Rask (tiny, ~75 MB)
+captions.model.base = Balansert (base, ~148 MB)
+captions.model.small = Nøyaktig (small, ~488 MB)
+captions.stage.starting = Starter…
+captions.stage.fetch_engine_first = Henter tekstingsmotoren (bare første gang)…
+captions.stage.fetch_engine = Henter tekstingsmotoren
+captions.stage.fetch_model_first = Henter talemodellen (bare første gang)…
+captions.stage.fetch_model = Henter talemodellen
+captions.stage.extracting = Henter ut lyden…
+captions.stage.listening = Lytter…
+captions.stage.download = {label} — {done} av {total} MB
+captions.err.no_engine = ingen tekstingsmotor for denne plattformen — installer whisper.cpp for å slå på teksting
+captions.err.unpack = kunne ikke pakke ut tekstingsmotoren
+captions.err.no_binary = tekstingsmotoren ble pakket ut uten et kjørbart program
+captions.err.read_audio = kunne ikke lese lyden i denne filen
+captions.err.engine_start = tekstingsmotoren kunne ikke starte: {e}
+captions.err.engine = feil i tekstingsmotoren: {e}
+captions.err.unknown = ukjent
+captions.err.no_captions = motoren laget ingen undertekster ({e})
+captions.err.no_speech = fant ingen tale i denne filen
+captions.err.download_host = fikk ikke kontakt med nedlastingsserveren: {e}
+
+# Titler
+titles.err.no_preset = finner ingen tittelforhåndsinnstilling {name} ({e}) — forhåndsinnstillingene ligger i {dir} (`reel title presets` viser dem)
+
+# Bildeserver / komposisjon / dekodere
+engine.err.probe_overlay = kunne ikke undersøke bilde-i-bilde-kilden {source}
+engine.err.probe_ramped = kunne ikke undersøke kilden med hastighetsrampe {source}
+engine.err.write = kunne ikke skrive {path}
+engine.err.burnin_start = koderen for innbrenning kunne ikke starte
+engine.err.no_stdin = ingen stdin
+engine.err.burn_still = innbrenning av undertekster i stillbildet mislyktes
+engine.err.audio_start = lydgjengivelsen kunne ikke starte
+engine.err.audio_failed = lydgjengivelsen mislyktes
+engine.err.encoder_start = koderen kunne ikke starte
+engine.err.encoder_no_stdin = koderen har ingen stdin
+engine.err.no_frames = ingen bilder ble dekodet fra {source}
+engine.err.no_frames_overlay = ingen bilder ble dekodet fra bilde-i-bilde-kilden {source}
+engine.err.encoder_stopped = koderen sluttet å ta imot bilder
+engine.err.encoder_exit = koderen avsluttet ikke
+engine.err.encode_failed = kodingen mislyktes: {e}
+engine.err.unknown_encoder = ukjent koderfeil
+engine.err.decoder_start = kunne ikke starte en dekoder for {source}
+engine.err.native_decoder_start = kunne ikke starte en innebygd dekoder for {source}
+engine.err.decoder_no_stdout = dekoderen har ingen stdout
+engine.err.stabilize = stabiliseringsanalysen mislyktes for {source}
+engine.err.no_adapter_compositor = fant ingen GPU-adapter for komposisjonen
+engine.err.no_adapter = fant ingen egnet GPU-adapter
+# LUT-er
+engine.lut.err.one_d = 1D-LUT-er støttes ikke (ennå) — dette krever en LUT_3D_SIZE-kube
+engine.lut.err.bad_size = ugyldig LUT_3D_SIZE
+engine.lut.err.bad_row = ugyldig LUT-rad: {line}
+engine.lut.err.no_size = filen mangler LUT_3D_SIZE
+engine.lut.err.row_count = LUT-en har {rows} rader, men størrelsen tilsier {expect}
+engine.lut.err.read = kunne ikke lese LUT-en {path}: {e}
+# Innlasting av medier
+engine.media.err.read_image = kunne ikke lese bildet {path}: {e}
+engine.media.err.parse_svg = kunne ikke tolke SVG-filen {path}: {e}
+engine.media.err.svg_size = SVG-filen {path} har ingen egen størrelse
+engine.media.err.svg_alloc = SVG-rasteret {w}×{h} er for stort til å lages
+engine.media.err.buffer = bildebufferen har feil størrelse
+# Plater
+engine.plate.err.spec = en plate er color:RRGGBB eller color:transparent, fikk {media}
+engine.plate.err.no_cache = ingen hurtigbuffermappe
+engine.plate.err.write = kunne ikke skrive en plate til {path}
+# Effekttillegg
+engine.plugin.err.contract = en Reel-effekt må definere `fn plugin(rgb: vec3<f32>, uv: vec2<f32>, p: vec4<f32>) -> vec3<f32>`
+engine.plugin.err.read = kunne ikke lese effekten {path}: {e}
+# Taktdeteksjon
+engine.beats.err.too_short = for lite lyd til å finne takten
+engine.beats.err.ffmpeg = kunne ikke starte ffmpeg: {e}
+engine.beats.err.no_pipe = ingen pipe
+engine.beats.err.read = lesing under dekoding mislyktes: {e}
+# Nestede klipp
+engine.compound.err.load = kunne ikke laste inn {path}: {e}
+engine.compound.err.empty = {path} har en tom tidslinje — ingenting å neste
+engine.compound.err.render = eksporten av det nestede prosjektet mislyktes: {e}
+engine.compound.err.finalise = kunne ikke fullføre den flate eksporten: {e}

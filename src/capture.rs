@@ -195,19 +195,16 @@ fn xauthority_file() -> Option<PathBuf> {
 #[cfg(target_os = "linux")]
 fn display_var(var: &str, value: Option<&str>, answers: impl Fn(&str) -> bool) -> Result<(), String> {
     match value.filter(|v| !v.is_empty()) {
-        None => Err(format!("{var} is not set")),
+        None => Err(tr!("capture.headless.unset", var = var)),
         Some(v) if answers(v) => Ok(()),
-        Some(v) => Err(format!("{var}={v} is set but unusable from here (no answer, or access refused)")),
+        Some(v) => Err(tr!("capture.headless.dead", var = var, value = v)),
     }
 }
 
 /// The headless error, naming what is missing and why.
 #[cfg(target_os = "linux")]
 fn headless_error(wayland: &str, x11: &str) -> String {
-    format!(
-        "headless: no reachable display ({wayland}; {x11}), so no capture tool was started. \
-         Run this inside a desktop session, or point DISPLAY at a live X server such as Xvfb"
-    )
+    tr!("capture.headless.error", wayland = wayland, x11 = x11)
 }
 
 /// `(is this a Wayland session, why capture can't run here)`.
@@ -288,7 +285,7 @@ impl Rect {
     /// DOWN, which keeps the rectangle inside what the user asked for.
     pub fn parse(s: &str) -> Result<Rect> {
         let t = s.trim();
-        let bad = || anyhow!("expected a rectangle like 0,0,1280x720 (X,Y,WIDTHxHEIGHT), got {t:?}");
+        let bad = || anyhow!(tr!("capture.rect.bad", got = format!("{t:?}")));
         let (pos, size) = if let Some((size, rest)) = t.split_once('+') {
             // WxH+X+Y
             let (x, y) = rest.split_once('+').ok_or_else(bad)?;
@@ -309,7 +306,7 @@ impl Rect {
             h: h.trim().parse().map_err(|_| bad())?,
         };
         if r.w < 2 || r.h < 2 {
-            bail!("a capture rectangle needs a real size, got {}x{}", r.w, r.h);
+            bail!(tr!("capture.rect.too_small", w = r.w, h = r.h));
         }
         // Even dimensions: every video encoder demands them, and a
         // screenshot loses nothing by it.
@@ -607,7 +604,7 @@ fn crop_in_place(file: &Path, r: Rect) -> Result<()> {
         ])
         .status()?;
     if !st.success() || !tmp.exists() {
-        bail!("could not crop the screenshot to {}x{}", r.w, r.h);
+        bail!(tr!("capture.shot.crop_failed", w = r.w, h = r.h));
     }
     std::fs::rename(&tmp, file)?;
     Ok(())
@@ -671,12 +668,12 @@ pub fn screenshot_with(opts: &ShotOpts) -> Result<PathBuf> {
         return Ok(got);
     }
     if attempts.is_empty() {
-        bail!(
-            "no screenshot backend on this machine — install one of: {}",
-            if env.wayland { "grim, spectacle" } else { "maim, scrot, ffmpeg, imagemagick" }
-        );
+        bail!(tr!(
+            "capture.shot.no_backend",
+            tools = if env.wayland { "grim, spectacle" } else { "maim, scrot, ffmpeg, imagemagick" }
+        ));
     }
-    bail!("no screenshot backend worked")
+    bail!(tr!("capture.shot.all_failed"))
 }
 
 // ── Recording ────────────────────────────────────────────────────────────
@@ -709,7 +706,7 @@ impl AudioSource {
             "system" | "desktop" | "output" => AudioSource::System,
             "mic" | "microphone" | "input" => AudioSource::Mic,
             "both" | "all" => AudioSource::Both,
-            other => bail!("--audio takes none, system, mic or both, got {other:?}"),
+            other => bail!(tr!("capture.audio.bad_arg", got = format!("{other:?}"))),
         })
     }
     pub fn wants_mic(&self) -> bool {
@@ -829,7 +826,7 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
     // A camera is the same everywhere ffmpeg can see it.
     if let Some(dev) = &opts.webcam {
         if !env.has("ffmpeg") {
-            bail!("recording a camera needs ffmpeg on PATH");
+            bail!(tr!("capture.rec.camera_needs_ffmpeg"));
         }
         let (input_fmt, dev_arg) = match env.os {
             Os::Linux => ("v4l2", dev.clone()),
@@ -860,7 +857,7 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
     match env.os {
         Os::Windows => {
             if !env.has("ffmpeg") {
-                bail!("screen recording on Windows needs ffmpeg on PATH");
+                bail!(tr!("capture.rec.windows_needs_ffmpeg"));
             }
             let mut a: Vec<String> = vec![
                 "-y".into(), "-f".into(), "gdigrab".into(),
@@ -882,7 +879,7 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
         }
         Os::Mac => {
             if !env.has("ffmpeg") {
-                bail!("screen recording on macOS needs ffmpeg on PATH");
+                bail!(tr!("capture.rec.mac_needs_ffmpeg"));
             }
             let screen = opts.display.clone().unwrap_or_else(|| "1".into());
             let mut a: Vec<String> = vec![
@@ -956,7 +953,7 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
             }
             if env.has("gpu-screen-recorder") {
                 if opts.area.is_some() {
-                    bail!("gpu-screen-recorder cannot record a rectangle — install wf-recorder or wl-screenrec for --area on Wayland");
+                    bail!(tr!("capture.rec.gsr_no_area"));
                 }
                 let mut a: Vec<String> = vec![
                     "-w".into(), opts.display.clone().unwrap_or_else(|| "screen".into()),
@@ -968,9 +965,7 @@ pub fn plan_recording(opts: &RecordOpts, out: &Path, env: &Env, monitor: Option<
                 a.extend(["-o".into(), o.clone()]);
                 return Ok(RecPlan { tool: "gpu-screen-recorder".into(), args: a, stop: StopMethod::Interrupt, interactive: false });
             }
-            bail!(
-                "no headless screen recorder on this Wayland session — install wf-recorder, wl-screenrec or gpu-screen-recorder (Reel's built-in portal capture works in the app, but it asks the system picker to choose a source)"
-            )
+            bail!(tr!("capture.rec.no_wayland_recorder"))
         }
     }
 }
@@ -1080,7 +1075,7 @@ pub fn start_tool_recording(opts: &RecordOpts) -> Result<Recorder> {
     }
     let child = cmd
         .spawn()
-        .map_err(|e| anyhow!("{} failed to start: {e}", plan.tool))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.failed_to_start", tool = plan.tool, e = e)))?;
     log::info!("recording via {} → {}", plan.tool, out.display());
     Ok(Recorder { child, stop: plan.stop, path: out, tool: plan.tool })
 }
@@ -1088,7 +1083,7 @@ pub fn start_tool_recording(opts: &RecordOpts) -> Result<Recorder> {
 /// Record the WEBCAM (with the default microphone when one answers).
 #[cfg(target_os = "linux")]
 pub fn start_webcam_recording() -> Result<Recording> {
-    let device = webcam_device().ok_or_else(|| anyhow!("no webcam found (looked for /dev/video*)"))?;
+    let device = webcam_device().ok_or_else(|| anyhow!(tr!("capture.rec.no_webcam")))?;
     let audio = if microphone_answers() { AudioSource::Mic } else { AudioSource::None };
     start_tool_recording(&RecordOpts { webcam: Some(device), audio, ..Default::default() })
         .map(Recording::Tool)
@@ -1110,9 +1105,9 @@ pub fn microphone_answers() -> bool {
 /// two existing files — unit-tested with fixtures.
 pub fn assemble_streamer_project(screen: &str, webcam: &str) -> Result<String> {
     let s_info = crate::video::decoder::probe(screen)
-        .map_err(|e| anyhow!("could not probe the screen recording: {e}"))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.probe_screen", e = e)))?;
     let c_info = crate::video::decoder::probe(webcam)
-        .map_err(|e| anyhow!("could not probe the camera recording: {e}"))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.probe_camera", e = e)))?;
     let mut p = crate::edit::Project::default();
     p.width = s_info.width.max(2);
     p.height = s_info.height.max(2);
@@ -1128,7 +1123,7 @@ pub fn assemble_streamer_project(screen: &str, webcam: &str) -> Result<String> {
     }
     let out = std::path::Path::new(screen).with_extension("streamer.reel");
     p.save(&out.to_string_lossy())
-        .map_err(|e| anyhow!("could not save the streamer project: {e}"))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.save_streamer", e = e)))?;
     Ok(out.to_string_lossy().into_owned())
 }
 
@@ -1166,7 +1161,7 @@ impl Recorder {
         if self.path.exists() {
             Ok(self.path)
         } else {
-            Err(anyhow!("{} produced no file at {}", self.tool, self.path.display()))
+            Err(anyhow!(tr!("capture.rec.no_file", tool = self.tool, path = self.path.display())))
         }
     }
 
@@ -1280,11 +1275,7 @@ fn write_session(s: &Session) -> Result<()> {
 /// Start a recording that outlives this process. Returns the session.
 pub fn start_detached(opts: &RecordOpts) -> Result<Session> {
     if let Some(s) = active_session() {
-        bail!(
-            "a recording is already running (pid {}, into {}) — stop it first with `reel record --stop`",
-            s.pid,
-            s.path
-        );
+        bail!(tr!("capture.rec.already_running", pid = s.pid, path = s.path));
     }
     let stem = if opts.webcam.is_some() { "webcam" } else { "rec" };
     let out = opts
@@ -1300,7 +1291,7 @@ pub fn start_detached(opts: &RecordOpts) -> Result<Session> {
     if env.os == Os::Windows {
         // No SIGINT on Windows: a detached recorder could only be killed,
         // which loses the file. Say so instead of writing a broken mp4.
-        bail!("on Windows a recording must be given a length: `reel record --duration SECONDS`");
+        bail!(tr!("capture.rec.windows_needs_duration"));
     }
     let monitor = opts.audio.wants_system().then(audio_monitor).flatten();
     let plan = match plan_recording(opts, &out, &env, monitor.as_deref()) {
@@ -1318,7 +1309,7 @@ pub fn start_detached(opts: &RecordOpts) -> Result<Session> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| anyhow!("{} failed to start: {e}", plan.tool))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.failed_to_start", tool = plan.tool, e = e)))?;
     let s = Session {
         pid: child.id(),
         path: out.to_string_lossy().into_owned(),
@@ -1331,10 +1322,7 @@ pub fn start_detached(opts: &RecordOpts) -> Result<Session> {
     // rather than reporting a session that is already dead.
     std::thread::sleep(Duration::from_millis(600));
     if !alive(s.pid) {
-        bail!(
-            "{} exited immediately — check the source is capturable (try `reel devices`)",
-            s.tool
-        );
+        bail!(tr!("capture.rec.exited_immediately", tool = s.tool));
     }
     write_session(&s)?;
     Ok(s)
@@ -1343,9 +1331,9 @@ pub fn start_detached(opts: &RecordOpts) -> Result<Session> {
 /// Finish the detached recording and return its file.
 pub fn stop_detached() -> Result<(Session, PathBuf)> {
     let raw = std::fs::read_to_string(session_file())
-        .map_err(|_| anyhow!("no recording is running — start one with `reel record`"))?;
+        .map_err(|_| anyhow!(tr!("capture.rec.none_running")))?;
     let s: Session = serde_json::from_str(&raw)
-        .map_err(|e| anyhow!("the recording session file is unreadable: {e}"))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.session_unreadable", e = e)))?;
     let path = PathBuf::from(&s.path);
     // A portal recording ends when its session file disappears: it polls for
     // that and finalizes from inside its own process, where the recorder
@@ -1367,7 +1355,7 @@ pub fn stop_detached() -> Result<(Session, PathBuf)> {
         std::thread::sleep(Duration::from_millis(100));
     }
     if !path.exists() {
-        bail!("{} produced no file at {}", s.tool, s.path);
+        bail!(tr!("capture.rec.no_file", tool = s.tool, path = s.path));
     }
     Ok((s, path))
 }
@@ -1378,7 +1366,7 @@ pub fn stop_detached() -> Result<(Session, PathBuf)> {
 /// when that file disappears.
 #[cfg(target_os = "linux")]
 fn spawn_portal_session(out: &Path) -> Result<Session> {
-    let exe = std::env::current_exe().map_err(|e| anyhow!("cannot find reel itself: {e}"))?;
+    let exe = std::env::current_exe().map_err(|e| anyhow!(tr!("capture.rec.no_self", e = e)))?;
     let child = Command::new(exe)
         .args(["record", &out.to_string_lossy()])
         .env("REEL_PORTAL_SESSION", "1")
@@ -1386,7 +1374,7 @@ fn spawn_portal_session(out: &Path) -> Result<Session> {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| anyhow!("could not start the portal recording: {e}"))?;
+        .map_err(|e| anyhow!(tr!("capture.rec.portal_spawn", e = e)))?;
     // The system picker may be up: wait generously for the child to report
     // that frames are flowing, but not forever, and not past its death.
     let deadline = Instant::now() + Duration::from_secs(120);
@@ -1397,12 +1385,12 @@ fn spawn_portal_session(out: &Path) -> Result<Session> {
             }
         }
         if !alive(child.id()) {
-            bail!("the portal recording ended before it started — was the source picker cancelled?");
+            bail!(tr!("capture.rec.portal_cancelled"));
         }
         std::thread::sleep(Duration::from_millis(200));
     }
     let _ = interrupt(child.id());
-    bail!("the portal recording never started (no answer from the system picker)")
+    bail!(tr!("capture.rec.portal_timeout"))
 }
 
 /// The child half of the above: record until the session file is removed.

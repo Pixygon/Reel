@@ -115,10 +115,10 @@ pub fn start_timeline(
     overlays: &Overlays<'_>,
 ) -> Result<ExportJob> {
     if segments.is_empty() {
-        return Err(anyhow!("the timeline is empty"));
+        return Err(anyhow!(tr!("export.err.timeline_empty")));
     }
     if std::path::Path::new(output).exists() {
-        return Err(anyhow!("output already exists: {output}"));
+        return Err(anyhow!(tr!("export.err.output_exists", output = output)));
     }
     let comp = Compositor::headless()?; // no GPU → caller falls back to the graph
     log::info!("render path: frame server (Reel composites, ffmpeg encodes)");
@@ -142,7 +142,7 @@ pub fn start_timeline(
         .filter(|o| !o.adjustment)
         .map(|o| {
             let info = crate::video::decoder::probe(&o.source)
-                .with_context(|| format!("could not probe overlay source {}", o.source))?;
+                .with_context(|| tr!("engine.err.probe_overlay", source = o.source))?;
             let bw = (((o.pip.scale.clamp(0.02, 1.0) as f64) * target.0 as f64 / 2.0).round()
                 * 2.0) as u32;
             let bh = (((bw as f64 * info.height as f64 / info.width.max(1) as f64) / 2.0).round()
@@ -173,7 +173,7 @@ pub fn start_timeline(
                 Some(
                     crate::video::decoder::probe(&seg.source)
                         .map(|i| i.fps)
-                        .with_context(|| format!("could not probe ramped source {}", seg.source))?
+                        .with_context(|| tr!("engine.err.probe_ramped", source = seg.source))?
                         .max(1.0),
                 )
                 .map(Ok)
@@ -431,7 +431,7 @@ pub fn still_png(
     let burnin = export::burnin_filters(out, overlays, target)?;
     if burnin.is_empty() {
         image::save_buffer(out, &rgba, w, h, image::ColorType::Rgba8)
-            .with_context(|| format!("could not write {out}"))?;
+            .with_context(|| tr!("engine.err.write", path = out))?;
         return Ok((w, h));
     }
     // Shift the lone frame's PTS to `t` so libass shows what belongs at
@@ -448,15 +448,15 @@ pub fn still_png(
         .stdin(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .context("burn-in encoder failed to start")?;
+        .context(tr!("engine.err.burnin_start"))?;
     child
         .stdin
         .take()
-        .ok_or_else(|| anyhow!("no stdin"))?
+        .ok_or_else(|| anyhow!(tr!("engine.err.no_stdin")))?
         .write_all(&rgba)?;
     let status = child.wait()?;
     if !status.success() {
-        anyhow::bail!("burning captions into the still failed");
+        anyhow::bail!(tr!("engine.err.burn_still"));
     }
     Ok((w, h))
 }
@@ -555,9 +555,9 @@ fn run(
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()
-            .context("audio pass failed to start")?;
+            .context(tr!("engine.err.audio_start"))?;
         if !st.success() {
-            return Err(anyhow!("the audio pass failed"));
+            return Err(anyhow!(tr!("engine.err.audio_failed")));
         }
         have_audio = true;
     }
@@ -621,8 +621,8 @@ fn run(
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .context("encoder failed to start")?;
-    let mut enc_in = encoder.stdin.take().ok_or_else(|| anyhow!("encoder has no stdin"))?;
+        .context(tr!("engine.err.encoder_start"))?;
+    let mut enc_in = encoder.stdin.take().ok_or_else(|| anyhow!(tr!("engine.err.encoder_no_stdin")))?;
     let mut enc_err = encoder.stderr.take();
 
     // ── The frame loop ──────────────────────────────────────────────────
@@ -766,7 +766,7 @@ fn run(
                     Feed::Ramped(r) => r.frame_at(seg.source_offset_at(t - p.start), &mut a.buf),
                 };
                 if !got {
-                    return Err(anyhow!("no frames decoded from {}", seg.source));
+                    return Err(anyhow!(tr!("engine.err.no_frames", source = seg.source)));
                 }
                 write_tex(&a.tex, tw, th, &a.buf);
                 // Keyframes: every animated parameter re-evaluated for THIS
@@ -860,7 +860,7 @@ fn run(
                     Feed::Ramped(r) => r.frame_at(t - o.at, &mut a.buf),
                 };
                 if !got {
-                    return Err(anyhow!("no frames decoded from overlay {}", o.source));
+                    return Err(anyhow!(tr!("engine.err.no_frames_overlay", source = o.source)));
                 }
                 write_tex(&a.tex, *bw, *bh, &a.buf);
                 // Animated placement: position and scale re-evaluated per
@@ -904,7 +904,7 @@ fn run(
                 ring.take(&comp, f - 1, &mut rb_buf);
                 enc_in
                     .write_all(&rb_buf)
-                    .map_err(|_| anyhow!("the encoder stopped accepting frames"))?;
+                    .map_err(|_| anyhow!(tr!("engine.err.encoder_stopped")))?;
             }
 
             if f % 8 == 0 {
@@ -918,13 +918,13 @@ fn run(
             ring.take(&comp, frames - 1, &mut rb_buf);
             enc_in
                 .write_all(&rb_buf)
-                .map_err(|_| anyhow!("the encoder stopped accepting frames"))?;
+                .map_err(|_| anyhow!(tr!("engine.err.encoder_stopped")))?;
         }
         Ok(())
     })();
 
     drop(enc_in);
-    let status = encoder.wait().context("encoder did not exit")?;
+    let status = encoder.wait().context(tr!("engine.err.encoder_exit"))?;
     let _ = std::fs::remove_file(&wav);
     if let Some(ch) = &chapters {
         let _ = std::fs::remove_file(ch);
@@ -935,10 +935,10 @@ fn run(
         if let Some(e) = enc_err.as_mut() {
             let _ = e.read_to_string(&mut err);
         }
-        return Err(anyhow!(
-            "encode failed: {}",
-            err.lines().last().unwrap_or("unknown encoder error")
-        ));
+        return Err(anyhow!(tr!(
+            "engine.err.encode_failed",
+            e = err.lines().last().unwrap_or(tr!("engine.err.unknown_encoder"))
+        )));
     }
     Ok(())
 }

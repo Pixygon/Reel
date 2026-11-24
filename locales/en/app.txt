@@ -1,0 +1,97 @@
+# app — en
+# Status lines, file-dialog filters and messages from src/app.rs.
+app.ready = Ready.
+
+app.defaults.none_selected = Nothing selected — Reel stays available under “Open with”.
+app.defaults.done = ✓ Reel is now the default player for your selection.
+app.defaults.failed = Could not set defaults: {e}
+app.defaults.linux_only = Default-app setup is currently Linux-only.
+
+app.filter.audio = Audio
+app.filter.any_media = Any media
+app.filter.media = Media
+app.filter.video = Video
+app.filter.images = Images
+app.filter.project = Reel project
+app.filter.effects = Effects & LUTs
+app.dialog_unavailable = File dialog unavailable — drop a file or paste a path instead.
+
+app.lut_applied = LUT applied — previewed and rendered alike.
+app.lut_bad = Not a usable LUT: {e}
+app.effect_applied = Effect '{name}' applied — previewed and rendered alike.
+app.effect_bad = Not a usable effect: {e}
+app.pool_gathered = Gathered into the pool.
+app.relinked.one = Relinked {n} reference(s).
+app.relinked.other = Relinked {n} reference(s).
+app.music_added = Music bed added — it ducks under speech on export.
+
+app.project_loaded = Project {name} loaded.
+app.project_open_failed = Could not open project {path}: {e}
+app.opening = Opening {name}…
+app.image_info = {name} — {w}×{h} image
+app.open_failed_path = Could not open {path}: {e}
+app.open_failed = Could not open: {e}
+app.open_failed_unexpected = Open failed unexpectedly.
+app.audio_info = ♪ {name} — {d}s [{backend}]
+app.video_info = {name} — {w}×{h} @ {fps}fps, {d}s [{backend}]
+
+app.shot_in = Screenshot in {s}s…
+app.shot_taking = Taking screenshot…
+app.rec_finalizing = Finalizing recording…
+app.rec_starting = Starting recording — pick what to share…
+app.streamer.finalizing = Finalizing the streamer recording…
+app.streamer.starting = Streamer layout: starting camera, then pick the screen…
+app.streamer.recording = ⏺ Streamer layout recording — stop from the ☰ menu.
+app.streamer.error = Streamer recording: {e}
+app.streamer.assembled = Streamer project assembled — trim and publish.
+app.streamer.assemble_failed = Could not assemble the project: {e}
+app.streamer.finalize_failed = Streamer finalize: {e}
+app.webcam.starting = Starting webcam recording…
+app.webcam.recording = ⏺ Recording… click ⏹ to stop
+app.webcam.error = Recording: {e}
+app.capture_error = Capture: {e}
+
+app.queue.empty = Nothing on the timeline to queue.
+app.queue.exists = {output} already exists — change the name first.
+app.queue.queued = Queued {label} ({n} waiting).
+
+app.save.project_failed = Could not save project: {e}
+app.save.autosave_to = Saving automatically to {path}
+app.save.empty = Nothing on the timeline to save yet.
+app.save.done = Project saved → {path}
+app.save.failed = Save failed: {e}
+
+app.captions.running = Captioning — this stays on your machine.
+app.captions.cancelled = Captioning cancelled.
+app.captions.error = Captions: {e}
+app.captions.added.one = {n} captions added — they burn in on export.
+app.captions.added.other = {n} captions added — they burn in on export.
+
+app.copied = Copied {name} — Ctrl+V pastes at the playhead.
+app.copy_empty = Nothing copied yet (select a clip, then Ctrl+C).
+app.pasted = Pasted at {t}s — everything after it moved along.
+app.duplicated = Duplicated.
+app.marker_removed = Marker removed.
+app.marker_added = Marker at {t}s (Ctrl+Left/Right to jump).
+app.timeline_empty = Nothing on the timeline yet.
+app.frame_saved = Frame saved: {path}
+app.frame_failed = Frame export failed: {e}
+app.inserted = Inserted {d}s at the playhead.
+
+app.nested.rendering = Rendering nested edit {name}…
+app.nested.added = Nested edit added at the playhead.
+app.nested.rerendered = Nested edit re-rendered — it plays fresh on the next seek.
+app.nested.failed = Nested render failed: {e}
+
+app.added = Added {name} to the timeline.
+app.split.none = Nothing under the playhead to split.
+app.split.done.one = Split {n} clip(s) at {t}s.
+app.split.done.other = Split {n} clip(s) at {t}s.
+app.ripple.none = Nothing selected to ripple-delete.
+app.ripple.done = Rippled out {t}s.
+app.ripple.nothing = Nothing to remove there.
+app.trim.none = No edit to trim at the playhead.
+app.trim.done = Trimmed {t}s and closed up.
+app.deleted.one = Clip deleted.
+app.deleted.other = {n} clips deleted.
+app.untitled = Untitled

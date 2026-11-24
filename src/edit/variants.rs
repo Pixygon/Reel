@@ -171,7 +171,7 @@ impl Project {
 
     fn known_slots(&self) -> String {
         let names: Vec<String> = self.slots().into_iter().map(|s| s.name).collect();
-        if names.is_empty() { "none yet — bind one with `reel slot bind`".into() } else { names.join(", ") }
+        if names.is_empty() { tr!("edit.variants.no_slots").into() } else { names.join(", ") }
     }
 
     /// Point every clip in slot `name` at new media. The clip keeps its slot
@@ -208,7 +208,7 @@ impl Project {
             changed += 1;
         }
         if changed == 0 {
-            bail!("no media slot named {name:?}. Slots: {}", self.known_slots());
+            bail!(tr!("edit.variants.err.no_media_slot", name = format!("{name:?}"), slots = self.known_slots()));
         }
         Ok((changed, shortened))
     }
@@ -221,7 +221,7 @@ impl Project {
             changed += 1;
         }
         if changed == 0 {
-            bail!("no text slot named {name:?}. Slots: {}", self.known_slots());
+            bail!(tr!("edit.variants.err.no_text_slot", name = format!("{name:?}"), slots = self.known_slots()));
         }
         Ok(changed)
     }
@@ -231,7 +231,7 @@ impl Project {
         self.variants
             .iter_mut()
             .find(|v| v.name == name)
-            .ok_or_else(|| anyhow!("no variant named {name:?}. Variants: {}", known.join(", ")))
+            .ok_or_else(|| anyhow!(tr!("edit.variants.err.no_variant_list", name = format!("{name:?}"), variants = known.join(", "))))
     }
 
     /// Keep title overrides pointing at the right title after one is removed.
@@ -254,7 +254,7 @@ impl Project {
             .variants
             .iter()
             .find(|v| v.name == name)
-            .ok_or_else(|| anyhow!("no variant named {name:?}"))?;
+            .ok_or_else(|| anyhow!(tr!("edit.variants.err.no_variant", name = format!("{name:?}"))))?;
         let (from, to) = ((self.width, self.height), (v.width, v.height));
         let mut out = self.clone();
         out.width = v.width;

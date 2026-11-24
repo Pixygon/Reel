@@ -1,0 +1,78 @@
+# capture — en
+# Screen capture (capture.rs, portal.rs), tracking, probing and playback errors.
+# The CLI never calls i18n::init(), so it always gets these English lines —
+# tests assert on several of them: keep the wording byte-identical.
+
+# Headless detection (Env.headless)
+capture.headless.unset = {var} is not set
+capture.headless.dead = {var}={value} is set but unusable from here (no answer, or access refused)
+capture.headless.error = headless: no reachable display ({wayland}; {x11}), so no capture tool was started. Run this inside a desktop session, or point DISPLAY at a live X server such as Xvfb
+
+# Rectangles
+capture.rect.bad = expected a rectangle like 0,0,1280x720 (X,Y,WIDTHxHEIGHT), got {got}
+capture.rect.too_small = a capture rectangle needs a real size, got {w}x{h}
+
+# Screenshots
+capture.shot.crop_failed = could not crop the screenshot to {w}x{h}
+capture.shot.no_backend = no screenshot backend on this machine — install one of: {tools}
+capture.shot.all_failed = no screenshot backend worked
+
+# Recording
+capture.audio.bad_arg = --audio takes none, system, mic or both, got {got}
+capture.rec.camera_needs_ffmpeg = recording a camera needs ffmpeg on PATH
+capture.rec.windows_needs_ffmpeg = screen recording on Windows needs ffmpeg on PATH
+capture.rec.mac_needs_ffmpeg = screen recording on macOS needs ffmpeg on PATH
+capture.rec.gsr_no_area = gpu-screen-recorder cannot record a rectangle — install wf-recorder or wl-screenrec for --area on Wayland
+capture.rec.no_wayland_recorder = no headless screen recorder on this Wayland session — install wf-recorder, wl-screenrec or gpu-screen-recorder (Reel's built-in portal capture works in the app, but it asks the system picker to choose a source)
+capture.rec.failed_to_start = {tool} failed to start: {e}
+capture.rec.no_file = {tool} produced no file at {path}
+capture.rec.no_webcam = no webcam found (looked for /dev/video*)
+capture.rec.probe_screen = could not probe the screen recording: {e}
+capture.rec.probe_camera = could not probe the camera recording: {e}
+capture.rec.save_streamer = could not save the streamer project: {e}
+capture.rec.already_running = a recording is already running (pid {pid}, into {path}) — stop it first with `reel record --stop`
+capture.rec.windows_needs_duration = on Windows a recording must be given a length: `reel record --duration SECONDS`
+capture.rec.exited_immediately = {tool} exited immediately — check the source is capturable (try `reel devices`)
+capture.rec.none_running = no recording is running — start one with `reel record`
+capture.rec.session_unreadable = the recording session file is unreadable: {e}
+capture.rec.no_self = cannot find reel itself: {e}
+capture.rec.portal_spawn = could not start the portal recording: {e}
+capture.rec.portal_cancelled = the portal recording ended before it started — was the source picker cancelled?
+capture.rec.portal_timeout = the portal recording never started (no answer from the system picker)
+
+# Built-in portal capture (portal.rs)
+capture.portal.non_file_uri = portal returned a non-file uri: {uri}
+capture.portal.stop_timeout = recorder did not finish in time
+capture.portal.pod = pod serialize: {e}
+capture.portal.bad_pod = bad format pod
+capture.portal.no_frames = no frames arrived from the compositor
+capture.portal.no_stdin = encoder stdin missing
+capture.portal.encoder_panicked = encoder thread panicked
+capture.portal.no_file = recording produced no file
+
+# Motion tracking (track.rs)
+playback.track.too_few_frames = not enough frames to track (got {n})
+playback.track.spawn = spawn ffmpeg for tracking
+playback.track.read_failed = tracking decode read failed: {e}
+playback.track.no_mask = clip {id} has no power window to track — add a mask first
+
+# Probing (video/decoder.rs)
+playback.probe.no_ffprobe = ffprobe failed to start ({e}); is ffmpeg installed?
+playback.probe.error = ffprobe error: {e}
+playback.probe.no_video = no video stream in {path}
+playback.probe.no_dims = could not read video dimensions for {path}
+
+# libmpv backend (video/mpv.rs)
+playback.mpv.create_null = mpv_create returned null
+playback.mpv.option = mpv option {k}={v}: {e}
+playback.mpv.render_ctx = mpv render context: {e}
+playback.mpv.open_failed = mpv could not open {path}
+playback.mpv.timeout = mpv timed out opening {path}
+playback.mpv.nothing_playable = nothing playable in {path}
+
+# Audio visualizers (video/player.rs)
+playback.visualizer.off = Art / off
+playback.visualizer.cqt = Spectrum bars
+playback.visualizer.spectrum = Spectrogram
+playback.visualizer.scope = Vectorscope
+playback.visualizer.waves = Waveform
